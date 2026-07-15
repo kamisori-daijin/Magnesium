@@ -11,7 +11,8 @@ build/
 DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
-.xcuserstate
+*.xcworkspasedata
+*.xcuserstate
 *.xccheckout
 *.moved-aside
 
