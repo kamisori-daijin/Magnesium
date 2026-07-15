@@ -1,0 +1,68 @@
+# ====================================================================
+# Apple OS & IDEs (Xcode / macOS)
+# ====================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Xcode user settings and build artifacts
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+.xcuserstate
+*.xccheckout
+*.moved-aside
+
+# macOS system files and security temporary folders
+.tproops
+.DocumentRevisions-V100
+.Spotlight-V100
+.Trashes
+*.DS_Store
+
+# ====================================================================
+# Swift & Package Manager
+# ====================================================================
+.build/
+Packages/
+.swiftpm/
+/*.xcodeproj
+
+# ====================================================================
+# Python (Core AI Authoring / PyTorch Environment)
+# ====================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv
+venv/
+ENV/
+env/
+.env
+
+
+.coreai_cache/
+*.model_specialization/
+*.compiled_specialization/
+.anesubsystem/
+
+*.aimodel/
+
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# ====================================================================
+# Editor Configuration
+# ====================================================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
