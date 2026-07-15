@@ -22,6 +22,7 @@ class ANERenderer {
     private(set) var displayBuffer: MTLBuffer?
     
     init(modelURL: URL, metalDevice: MTLDevice) async throws {
+        let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
         self.aiModel = try await AIModel(contentsOf: modelURL)
         
         guard let function = try aiModel?.loadFunction(named: "main") else {
