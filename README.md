@@ -11,7 +11,7 @@ high-performance 2D software rasterizer pipeline executed on the **Apple Neural 
 ## Implementation Deep Dive
 
 ### 1. The 2-Channel Static UV Input Structure
-Instead of wasteful 32-channel padding, the geometry coordinates are clamped into a static `` matrix:
+Instead of wasteful 32-channel padding, the geometry coordinates are clamped into a static [1, 2, 1024, 1024]
 - **Channel 0**: X coordinates ($[-1.0 \dots 1.0]$ Grid)
 - **Channel 1**: Y coordinates ($[1.0 \dots -1.0]$ Grid)
 
