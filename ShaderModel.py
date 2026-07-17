@@ -26,26 +26,27 @@ class ANE3DRenderer(nn.Module):
 
     def forward(self, transformed_vertices):
         """
-        transformed_vertices: [1, 3, 1, MAX_VERTICES] (第1段のMVPプロセッサから吐き出された直撃データ)
-                              0ch: 画面X, 1ch: 画面Y, 2ch: 深度Z
+        transformed_vertices: [1, 3, 1, MAX_VERTICES]
         """
         # =========================================================================
-        # ステップA: 頂点バッファを三角形（3頂点ずつ）の並びへ1x1 Conv互換で切り出し
+        # ステップA: 頂点バッファを三角形（3頂点ずつ）の並びへ綺麗に抽出 ★端数カット版
         # =========================================================================
-        # ANEにへそを曲げさせないため、reshapeの代わりに 1x1 Conv のストライドや
-        # チャンネルスライスを使って、p0, p1, p2 の座標 [1, 2, 1, max_triangles] を綺麗に抽出します。
-        # 3万〜6万頂点の中から、三角形の各角のXYを綺麗に並列化
-        p0_X = transformed_vertices[:, 0:1, :, 0::3] # [1, 1, 1, max_triangles]
-        p0_Y = transformed_vertices[:, 1:2, :, 0::3]
-        p1_X = transformed_vertices[:, 0:1, :, 1::3]
-        p1_Y = transformed_vertices[:, 1:2, :, 1::3]
-        p2_X = transformed_vertices[:, 0:1, :, 2::3]
-        p2_Y = transformed_vertices[:, 1:2, :, 2::3]
+        # max_triangles * 3 の長さだけを正確に切り出すことで、お尻のゴミ（余り）を完全に無視します
+        valid_len = self.max_triangles * 3
+        v_buffer = transformed_vertices[:, :, :, :valid_len]
+        
+        # これで p0, p1, p2 の長さが寸分の狂いもなく [1, 1, 1, max_triangles] でカチッと一致します！
+        p0_X = v_buffer[:, 0:1, :, 0::3]
+        p0_Y = v_buffer[:, 1:2, :, 0::3]
+        p1_X = v_buffer[:, 0:1, :, 1::3]
+        p1_Y = v_buffer[:, 1:2, :, 1::3]
+        p2_X = v_buffer[:, 0:1, :, 2::3]
+        p2_Y = v_buffer[:, 1:2, :, 2::3]
 
-        # 深度Zも同様に3頂点の平均を一撃で計算 [1, 1, 1, max_triangles]
-        z0 = transformed_vertices[:, 2:3, :, 0::3]
-        z1 = transformed_vertices[:, 2:3, :, 1::3]
-        z2 = transformed_vertices[:, 2:3, :, 2::3]
+        # 深度Zも完全に [1, 1, 1, max_triangles] 同士の足し算になるので、1ミリもエラーになりません
+        z0 = v_buffer[:, 2:3, :, 0::3]
+        z1 = v_buffer[:, 2:3, :, 1::3]
+        z2 = v_buffer[:, 2:3, :, 2::3]
         avg_z = (z0 + z1 + z2) / 3.0
 
         # =========================================================================
