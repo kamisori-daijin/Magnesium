@@ -11,41 +11,63 @@ HEIGHT = 256
 model = ANE3DRenderer(steps=STEPS, width=WIDTH, height=HEIGHT)
 model.eval()
 
-def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=-2.0):
-    yaw = np.radians(yaw_deg)
-    pitch = np.radians(pitch_deg)
+# -------------------------------------------------------------------------
+# 2. カメラ行列（4x4ビューマトリクス）の作成 ★格闘の末に勝ち取ったLookAt仕様
+# -------------------------------------------------------------------------
+def create_camera_matrix(eye, target, up):
+    """
+    eye: カメラの位置 (X, Y, Z)
+    target: 注視点 (今回は原点)
+    up: カメラの上方向
+    """
+    eye = np.array(eye, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
+    up = np.array(up, dtype=np.float32)
     
-    cos_y, sin_y = np.cos(yaw), np.sin(yaw)
-    R_y = np.array([
-        [cos_y,  0.0, sin_y, 0.0],
-        [0.0,    1.0, 0.0,   0.0],
-        [-sin_y, 0.0, cos_y, 0.0],
-        [0.0,    0.0, 0.0,   1.0]
-    ], dtype=np.float32)
+    # 視線方向（Z軸）
+    z_axis = (eye - target)
+    z_axis = z_axis / np.linalg.norm(z_axis)
     
-    cos_x, sin_x = np.cos(pitch), np.sin(pitch)
-    R_x = np.array([
-        [1.0, 0.0,   0.0,    0.0],
-        [0.0, cos_x, -sin_x, 0.0],
-        [0.0, sin_x, cos_x,  0.0],
-        [0.0, 0.0,   0.0,    1.0]
-    ], dtype=np.float32)
+    # 右方向（X軸）
+    x_axis = np.cross(up, z_axis)
+    x_axis = x_axis / np.linalg.norm(x_axis)
     
-    T = np.array([
-        [1.0, 0.0, 0.0, -tx],
-        [0.0, 1.0, 0.0, -ty],
-        [0.0, 0.0, 1.0, -tz], 
-        [0.0, 0.0, 0.0, 1.0]
-    ], dtype=np.float32)
+    # 上方向（Y軸）
+    y_axis = np.cross(z_axis, x_axis)
     
-    matrix = torch.from_numpy(R_x @ R_y @ T)
+    # ビューの回転成分
+    R = np.eye(4, dtype=np.float32)
+    R[0, :3] = x_axis
+    R[1, :3] = y_axis
+    R[2, :3] = z_axis
+    
+    # ビューの平行移動成分
+    T = np.eye(4, dtype=np.float32)
+    T[:3, 3] = -eye
+    
+    # ビュー行列を合成してTorchテンソルで返却
+    matrix = torch.from_numpy(R @ T)
     return matrix
 
-# 2. カメラ設定
-camera_mat = create_camera_matrix(yaw_deg=30.0, pitch_deg=15.0, tx=0.0, ty=0.0, tz=-2.0)
+# カメラの位置を計算（仰角15度、方位角30度、距離2.0）
+distance = 2.0
+yaw = np.radians(30.0)
+pitch = np.radians(15.0)
 
+cam_x = distance * np.cos(pitch) * np.sin(yaw)
+cam_y = distance * np.sin(pitch)
+cam_z = distance * np.cos(pitch) * np.cos(yaw)
+
+# 原点 (0,0,0) をロックオンする完璧なカメラ行列を生成
+camera_mat = create_camera_matrix(
+    eye=[cam_x, cam_y, cam_z], 
+    target=[0.0, 0.0, 0.0], 
+    up=[0.0, 1.0, 0.0]
+)
+
+# -------------------------------------------------------------------------
 # 3. 【17枚拡張対応】モデルの features の並びに1対1で対応するウェイト
-# 次元エラーを完全に黙らせつつ、綺麗な球体を現像する数値の塊です
+# -------------------------------------------------------------------------
 shape_weights = torch.tensor([
     # 基本の1次・2次項 (計6枚)
     0.0,   # 1. X_prime
@@ -84,4 +106,4 @@ img_data = np.clip(img_data * 255.0, 0, 255).astype(np.uint8)
 img = Image.fromarray(img_data, mode='RGB')
 img.save("ane_3d_color_test.png")
 
-print("17枚の最強基底に適合したPNG出力が完了しました！次元ミスマッチも完全解消です！")
+print("LookAtカメラを組み込んだ最終テスト版のPNG出力が完了しました！")

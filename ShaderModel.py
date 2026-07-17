@@ -1,96 +1,125 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class ANE3DRenderer(nn.Module):
-    def __init__(self, steps=128, width=256, height=256, num_features=64):
+    def __init__(self, max_triangles=2000, width=256, height=256):
+        """
+        max_triangles: ANE側に確保させる一度にラスタライズできる最大三角形数。
+                       今回はトレース用（固定枠）として2000ポリゴンをデフォルトに設定。
+        """
         super().__init__()
-        self.steps = steps
+        self.max_triangles = max_triangles
         self.width = width
         self.height = height
-        self.num_features = num_features # 空間を表現する基底の数
         
-        # 1. 固定のスクリーン2D空間バッファ
+        # 1. 画面のピクセル位置 [X, Y, 1] の固定グリッドバッファ (256x256)
+        # 形状: [1, 3, height, width] の4次元画像として最初から綺麗に登録
         y_coords = torch.linspace(1.0, -1.0, height).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
         X = x_coords.expand(1, 1, height, width)
         Y = y_coords.expand(1, 1, height, width)
-        Z = torch.ones_like(X)
-        W = torch.zeros_like(X)
-        self.register_buffer("static_space", torch.cat([X, Y, Z, W], dim=1))
-
-        # 2. 奥方向へのステップ
-        self.register_buffer("z_steps", torch.linspace(0.1, 4.0, steps).view(steps, 1, 1, 1))
-
-        # 3. 最終画面へ一撃プレスするグループ 1x1 Conv2d
-        self.compress_z_conv = nn.Conv2d(
-            in_channels=steps * 3, out_channels=3, kernel_size=1, groups=3, bias=False
-        )
-        with torch.no_grad():
-            z_weights = torch.linspace(1.0, 0.05, steps).view(1, steps, 1, 1).repeat(3, 1, 1, 1)
-            self.compress_z_conv.weight.copy_(z_weights)
-
-    # ★【完全数値現像】カメラ行列と、「何でも描画できる形状ウェイト」だけを受け取る
-    def forward(self, camera_matrix, shape_weights):
-        # ─────────────────────────────────────────────────────────
-        # ステップA: カメラ回転
-        # ─────────────────────────────────────────────────────────
-        space_reshaped = self.static_space.squeeze(0).permute(1, 2, 0)
-        ray_dir = torch.einsum('ij,hwj->hwi', camera_matrix, space_reshaped).permute(2, 0, 1).unsqueeze(0)
+        One = torch.ones_like(X)
         
-        X_prime = ray_dir[:, 0:1, :, :] * self.z_steps
-        Y_prime = ray_dir[:, 1:2, :, :] * self.z_steps
-        Z_prime = ray_dir[:, 2:3, :, :] * self.z_steps
+        pixel_grid = torch.cat([X, Y, One], dim=1) # 形状: [1, 3, H, W]
+        self.register_buffer("pixel_grid", pixel_grid)
 
-        # ─────────────────────────────────────────────────────────
-        # ステップB: 空間の「基底テンソル」を自動生成 [steps, num_features, H, W]
-        # ─────────────────────────────────────────────────────────
-        # 条件分岐を一切排除するため、空間の多項式（X, Y, Z, X^2, Y^2, Z^2, X*Y...）を自動で並べます
-        # ANEは要素ごとの掛け算（**2など）が超得意なので一瞬です
-        # モデルのステップBのfeaturesリストにこれを追加するだけで表現力が化けます
-        x_base = X_prime[:, 0:1, :, :]
-        y_base = Y_prime[:, 0:1, :, :]
-        z_base = Z_prime[:, 0:1, :, :]
+    def forward(self, transformed_vertices):
+        """
+        transformed_vertices: [1, 3, 1, MAX_VERTICES] (第1段のMVPプロセッサから吐き出された直撃データ)
+                              0ch: 画面X, 1ch: 画面Y, 2ch: 深度Z
+        """
+        # =========================================================================
+        # ステップA: 頂点バッファを三角形（3頂点ずつ）の並びへ1x1 Conv互換で切り出し
+        # =========================================================================
+        # ANEにへそを曲げさせないため、reshapeの代わりに 1x1 Conv のストライドや
+        # チャンネルスライスを使って、p0, p1, p2 の座標 [1, 2, 1, max_triangles] を綺麗に抽出します。
+        # 3万〜6万頂点の中から、三角形の各角のXYを綺麗に並列化
+        p0_X = transformed_vertices[:, 0:1, :, 0::3] # [1, 1, 1, max_triangles]
+        p0_Y = transformed_vertices[:, 1:2, :, 0::3]
+        p1_X = transformed_vertices[:, 0:1, :, 1::3]
+        p1_Y = transformed_vertices[:, 1:2, :, 1::3]
+        p2_X = transformed_vertices[:, 0:1, :, 2::3]
+        p2_Y = transformed_vertices[:, 1:2, :, 2::3]
 
-        features = [
-            x_base, y_base, z_base,
-            x_base**2, y_base**2, z_base**2,
-            # ★【周波数を変えたサイン・コサイン波を濃密に並べる】
-            torch.sin(x_base * 2.0), torch.cos(x_base * 2.0),
-            torch.sin(y_base * 2.0), torch.cos(y_base * 2.0),
-            torch.sin(z_base * 2.0), torch.cos(z_base * 2.0),
-            torch.sin(x_base * 8.0), torch.sin(y_base * 8.0), torch.sin(z_base * 8.0),
-            # ★【絶対値のノイズ（マルチフラクタル基底）】
-            torch.abs(torch.sin(x_base * 5.0)), 
-            torch.abs(torch.sin(y_base * 5.0))
-        ]
-        # これで正真正銘、純粋な1チャンネルが17枚集まった「形状決定テンソル」になります！
-        space_features = torch.cat(features, dim=1)
+        # 深度Zも同様に3頂点の平均を一撃で計算 [1, 1, 1, max_triangles]
+        z0 = transformed_vertices[:, 2:3, :, 0::3]
+        z1 = transformed_vertices[:, 2:3, :, 1::3]
+        z2 = transformed_vertices[:, 2:3, :, 2::3]
+        avg_z = (z0 + z1 + z2) / 3.0
 
-        # ─────────────────────────────────────────────────────────
-        # ステップC: ★1x1 Convの代わりに einsum で「外から渡された数値」と掛け算！
-        # ─────────────────────────────────────────────────────────
-        # shape_weights の形状: [features] (外から渡すただの数値配列)
-        # この1行だけで、球体、立方体、その他すべての形状への「現像」が走ります
-        sphere_sdf = torch.einsum('f,sfhw->shw', shape_weights, space_features).unsqueeze(1)
+        # =========================================================================
+        # ステップB: 全ポリゴンの3辺の直線方程式（A, B, C）をANEの要素別演算で自動生成
+        # =========================================================================
+        # 1行のループも条件分岐もなし。形状はすべて [1, 1, 1, max_triangles]
+        A0 = p0_Y - p1_Y
+        B0 = p1_X - p0_X
+        C0 = -(A0 * p0_X + B0 * p0_Y)
 
-        # ─── あとの床の模様やRGBブレンド、最後の1個のConv2dプレスは100%これまで通り ───
-        floor_base = -0.4 - Y_prime
-        floor_sdf = torch.clamp(floor_base, max=0.2)
-        floor_world_Z = (Z_prime / (Y_prime - 1e-5)) * -0.4
-        floor_world_X = (X_prime / (Y_prime - 1e-5)) * -0.4
-        grid_pattern = torch.relu(torch.sin(floor_world_X * 3.0) * torch.sin(floor_world_Z * 3.0))
-        floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15)
+        A1 = p1_Y - p2_Y
+        B1 = p2_X - p1_X
+        C1 = -(A1 * p1_X + B1 * p1_Y)
 
-        sphere_mask = torch.relu(sphere_sdf) # ★ここでReLUに流す！
-        floor_mask = torch.relu(floor_textured)
+        A2 = p2_Y - p0_Y
+        B2 = p0_X - p2_X
+        C2 = -(A2 * p0_X + B2 * p0_Y)
+
+        # =========================================================================
+        # ステップC: ピクセルグリッドへの一斉ラスタライズ（内外判定）
+        # =========================================================================
+        # ピクセルグリッド [1, 3, H, W] の X と Y に対して、直線方程式を直接評価！
+        # ANEが大好きな要素ごとの掛け算と足し算だけで、全ピクセルの内外判定が並列で走ります
+        # max_trianglesの次元を「幅」ではなく「チャンネル次元」に変形してConvに直撃させるため、
+        # ここでは [1, max_triangles, H, W] の巨大な空間マスクを生成します。
+        pixel_X = self.pixel_grid[:, 0:1, :, :] # [1, 1, H, W]
+        pixel_Y = self.pixel_grid[:, 1:2, :, :]
         
-        sphere_color = torch.tensor([0.9, 0.2, 0.1]).view(1, 3, 1, 1)
-        grid_color_A = torch.tensor([0.1, 0.7, 0.4]).view(1, 3, 1, 1)
-        grid_color_B = torch.tensor([0.9, 0.9, 0.9]).view(1, 3, 1, 1)
-        floor_color = grid_color_A * grid_pattern + grid_color_B * (1.0 - grid_pattern)
+        # 三角形のパラメータを [1, max_triangles, 1, 1] に見立ててブロードキャスト
+        # ANEは「画像 [1, 1, H, W] と ウェイト [1, N, 1, 1] の掛け算」が一番の好物です
+        A0_t = A0.permute(0, 3, 1, 2) # [1, max_triangles, 1, 1]
+        B0_t = B0.permute(0, 3, 1, 2)
+        C0_t = C0.permute(0, 3, 1, 2)
+        edges0 = pixel_X * A0_t + pixel_Y * B0_t + C0_t
+
+        A1_t = A1.permute(0, 3, 1, 2)
+        B1_t = B1.permute(0, 3, 1, 2)
+        C1_t = C1.permute(0, 3, 1, 2)
+        edges1 = pixel_X * A1_t + pixel_Y * B1_t + C1_t
+
+        A2_t = A2.permute(0, 3, 1, 2)
+        B2_t = B2.permute(0, 3, 1, 2)
+        C2_t = C2.permute(0, 3, 1, 2)
+        edges2 = pixel_X * A2_t + pixel_Y * B2_t + C2_t
+
+        # =========================================================================
+        # ステップD: 判定は100%これまで通り `ReLU` で！
+        # =========================================================================
+        # 3つの辺すべてに対して内側（プラス）の場所をパキパキに現像
+        mask_edge0 = torch.relu(edges0 * 100.0)
+        mask_edge1 = torch.relu(edges1 * 100.0)
+        mask_edge2 = torch.relu(edges2 * 100.0)
         
-        valid_space_rgb = (sphere_mask * sphere_color) + (floor_mask * floor_color)
-        space_channels = valid_space_rgb.permute(1, 0, 2, 3).reshape(1, 3 * self.steps, self.height, self.width)
+        # 形状: [1, max_triangles, H, W] (各ポリゴンごとのクッキリした三角形マスク)
+        all_triangles_mask = torch.clamp(mask_edge0 * mask_edge1 * mask_edge2, min=0.0, max=1.0)
+
+        # =========================================================================
+        # ステップE: Zバッファ（深度隠面消去）＆一撃プレス
+        # =========================================================================
+        # 平均Z [1, 1, 1, max_triangles] を [1, max_triangles, 1, 1] に変換
+        avg_z_t = avg_z.permute(0, 3, 1, 2)
         
-        framebuffer = self.compress_z_conv(space_channels)
-        return torch.clamp(framebuffer, min=0.0, max=1.0)
+        # 手前にある（Zが小さい）ポリゴンほど強い輝度ウェイトにするハック
+        z_weight = torch.clamp(1.0 - (avg_z_t / 4.0), min=0.0, max=1.0)
+        
+        # ポリゴンごとの三角形マスクに、そのポリゴンの手前優先ウェイトを乗算
+        weighted_triangles = all_triangles_mask * z_weight
+        
+        # 2000個のポリゴンの重なりを、チャンネル次元（max_triangles）からの
+        # torch.max によって一撃で1枚の2D画面（モノクロ）へプレス！
+        # 形状: [1, max_triangles, H, W] -> [1, 1, H, W]
+        rendered_space, _ = torch.max(weighted_triangles, dim=1, keepdim=True)
+        
+        # 最後に3チャンネル（RGB）に拡張してフルカラーフレームバッファとして返却！
+        framebuffer = rendered_space.repeat(1, 3, 1, 1)
+        
+        return framebuffer
