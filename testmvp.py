@@ -36,7 +36,7 @@ def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=-2.0):
         [0.0, 0.0,   0.0,    1.0]
     ], dtype=np.float32)
     
-    # 平行移動（カメラを後ろに下げる）
+    # 平行移動（カメラを配置位置の「逆方向」に移動させることでビュー行列にする）
     T = np.array([
         [1.0, 0.0, 0.0, -tx],
         [0.0, 1.0, 0.0, -ty],
@@ -47,17 +47,16 @@ def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=-2.0):
     matrix = torch.from_numpy(R_x @ R_y @ T)
     return matrix
 
-# 「右斜め45度から回り込み、30度見下ろすカメラ」
-camera_mat = create_camera_matrix(yaw_deg=45.0, pitch_deg=30.0, tx=0.0, ty=0.0, tz=-2.5)
+# ★【ココを修正】カメラを「手前（tz=-3.5）」に引く。
+# これで原点にあるオブジェクトがカメラの正面（プラスZ方向）に綺麗に収まります！
+camera_mat = create_camera_matrix(yaw_deg=45.0, pitch_deg=30.0, tx=0.0, ty=0.0, tz=-3.5) 
 
 # -------------------------------------------------------------------------
 # 3. テスト用の3D頂点データ（生の頂点バッファ）の生成
 # -------------------------------------------------------------------------
-# 空間の [-1.0 〜 1.0] の間にランダムに1万個のXYZ座標をばらまく
 np.random.seed(42)
 raw_xyz = np.random.uniform(-0.8, 0.8, (3, NUM_VERTICES)).astype(np.float32)
 
-# W成分（1.0）を追加して 4次元ベクトルにする [1, 4, NUM_VERTICES]
 raw_w = np.ones((1, NUM_VERTICES), dtype=np.float32)
 vertex_buffer_np = np.vstack([raw_xyz, raw_w])[np.newaxis, ...] # 形状: (1, 4, 10000)
 vertex_buffer = torch.from_numpy(vertex_buffer_np)
@@ -66,38 +65,29 @@ vertex_buffer = torch.from_numpy(vertex_buffer_np)
 # 4. MVPプロセッサ（einsumハック）を実行！
 # -------------------------------------------------------------------------
 with torch.no_grad():
-    # 1万個の頂点を一撃並列変換
-    output_buffer = model(camera_mat, vertex_buffer) # 形状: [1, 4, 10000]
+    output_buffer = model(camera_mat, vertex_buffer) # 形状: [1, 3, 10000]
 
 # -------------------------------------------------------------------------
-# 5. 結果を可視化（2Dスクリーン座標への投影テスト）
+# 5. 【超スッキリ】結果をそのまま可視化
 # -------------------------------------------------------------------------
-# 変換後のカメラ空間の X, Y, Z を抽出
 transformed_points = output_buffer.squeeze(0).numpy()
-X_c = transformed_points[0]
-Y_c = transformed_points[1]
-Z_c = transformed_points[2]
 
-# 【3D透視投影ハック】奥（Z）の座標を使って、XとYに遠近感を適用（パースペクティブ割算）
-# Zがマイナスや0に近づいた時のゼロ除算を防ぐ安全対策を挟む
-safe_Z = Z_c + 1e-5
-screen_x = X_c / safe_Z
-screen_y = Y_c / safe_Z
+screen_x = transformed_points[0] # 0chがすでに画面X
+screen_y = transformed_points[1] # 1chがすでに画面Y
+depth = transformed_points[2]    # 2chがすでに深度Z
 
-# Matplotlibを使って散布図（ポイントクラウド）として描画
+# あとはそのままプロットするだけ！
 plt.figure(figsize=(6, 6))
-plt.scatter(screen_x, screen_y, s=1, c=Z_c, cmap='viridis_r', alpha=0.6)
+# 綺麗に見えるように、カラーマップの基準を depth に指定
+plt.scatter(screen_x, screen_y, s=1, c=depth, cmap='viridis', alpha=0.6)
 plt.title(f"ANE MVP Processor Test ({NUM_VERTICES} Vertices)")
 plt.xlim(-1.5, 1.5)
 plt.ylim(-1.5, 1.5)
 plt.grid(True)
 plt.gca().set_aspect('equal', adjustable='box')
 
-# 画像として保存
 output_png = "mvp_processor_test.png"
 plt.savefig(output_png, dpi=150)
 plt.close()
 
-print(f"頂点変換テストが完了しました！")
-print(f"1万個の頂点が一瞬で処理され、画像 `{output_png}` にプロットされました。")
-print("カメラ視線で立体的に回転したポイントクラウド（手前ほど黄色、奥ほど紫）を確認してください！")
+print(f"内蔵パース割算でのテストが完了しました！画像を確認してください！")

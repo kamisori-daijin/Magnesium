@@ -3,27 +3,32 @@ import torch.nn as nn
 
 class ANEMVPProcessor(nn.Module):
     def __init__(self, max_vertices=65536):
-        """
-        max_vertices: ANE側に確保させる動的頂点インプットの最大枠。
-                      標準的な1メッシュの上限である65536頂点をデフォルトに設定。
-        """
         super().__init__()
         self.max_vertices = max_vertices
 
     def forward(self, camera_matrix, vertex_buffer):
         """
-        camera_matrix: [4, 4] (MVP行列 / float16)
-        vertex_buffer: [1, 4, max_vertices] (生のXYZW座標配列 / float16)
+        camera_matrix: (MVP行列)
+        vertex_buffer: [1, 4, max_vertices] (生のXYZW座標配列)
         """
-        # ANEに1x1 Convとして100%美しく最適化させるため、次元を並び替えます
-        # [1, 4, max_vertices] -> [max_vertices, 4]
+        # 1. ANEの全結合（1x1 Conv互換）で一斉に行列乗算
         v_reshaped = vertex_buffer.squeeze(0).permute(1, 0)
-        
-        # ij (4x4カメラ行列) と vj (max_vertices × 4次元) のお尻の次元(4)を縮約
-        # ANEの並列積和演算コアが、数万個の頂点を完全に同時並行で一撃MVP変換します！
         transformed = torch.einsum('ij,vj->vi', camera_matrix, v_reshaped)
+        transformed = transformed.permute(1, 0).unsqueeze(0) # [1, 4, max_vertices]
         
-        # 再び元のレイアウト [1, 4, max_vertices] に戻して返却
-        output_buffer = transformed.permute(1, 0).unsqueeze(0)
+        X_c = transformed[:, 0:1, :]
+        Y_c = transformed[:, 1:2, :]
+        Z_c = transformed[:, 2:3, :]
+
+        # 2. ★【超ストレート仕様】符号反転を一切やめ、純粋にZの距離を奥行きにする
+        # Z_c が 0 に近づいたときのゼロ除算を防ぐ安全対策（ANEセーフティ）
+        safe_Z = torch.clamp(Z_c, min=1e-5)
+        
+        # ANEが大好きな要素ごとのディヴィジョン（割り算）
+        screen_x = X_c / safe_Z
+        screen_y = Y_c / safe_Z
+        
+        # [1, 3, max_vertices] の形状（X, Y, 深度Z）にまとめて返却
+        output_buffer = torch.cat([screen_x, screen_y, Z_c], dim=1)
         
         return output_buffer
