@@ -11,50 +11,56 @@ NUM_VERTICES = 10000
 model = ANEMVPProcessor(max_vertices=NUM_VERTICES)
 model.eval()
 
-# -------------------------------------------------------------------------
-# 2. カメラ行列（4x4ビューマトリクス）の作成 (Unity互換 R @ T)
-# -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-# 2. カメラ行列（4x4ビューマトリクス）の作成 ★Unity/OpenGL完全互換版
-# -------------------------------------------------------------------------
-def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=3.5):
-    yaw = np.radians(yaw_deg)
-    pitch = np.radians(pitch_deg)
+def create_camera_matrix(eye, target, up):
+    """
+    eye: カメラの位置
+    target: 注視点（今回は原点）
+    up: カメラの上方向
+    """
+    eye = np.array(eye, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
+    up = np.array(up, dtype=np.float32)
     
-    # Y軸回転（左右の首振り）
-    cos_y, sin_y = np.cos(yaw), np.sin(yaw)
-    R_y = np.array([
-        [cos_y,  0.0, sin_y, 0.0],
-        [0.0,    1.0, 0.0,   0.0],
-        [-sin_y, 0.0, cos_y, 0.0],
-        [0.0,    0.0, 0.0,   1.0]
-    ], dtype=np.float32)
+    # 視線方向（Z軸）
+    z_axis = (eye - target)
+    z_axis = z_axis / np.linalg.norm(z_axis)
     
-    # X軸回転（上下の見下ろし）
-    cos_x, sin_x = np.cos(pitch), np.sin(pitch)
-    R_x = np.array([
-        [1.0, 0.0,   0.0,    0.0],
-        [0.0, cos_x, -sin_x, 0.0],
-        [0.0, sin_x, cos_x,  0.0],
-        [0.0, 0.0,   0.0,    1.0]
-    ], dtype=np.float32)
+    # 右方向（X軸）
+    x_axis = np.cross(up, z_axis)
+    x_axis = x_axis / np.linalg.norm(x_axis)
     
-    # ★【ここが最重要ハック】カメラを後ろに引く ＝ 世界全体を「マイナス方向」に引き寄せる逆変換
-    # tx, ty, tz の符号にすべてマイナスをつけます。これが本物のビュー行列の数学です。
-    T = np.array([
-        [1.0, 0.0, 0.0, -tx],
-        [0.0, 1.0, 0.0, -ty],
-        [0.0, 0.0, 1.0, -tz], 
-        [0.0, 0.0, 0.0, 1.0]
-    ], dtype=np.float32)
+    # 上方向（Y軸）
+    y_axis = np.cross(z_axis, x_axis)
     
-    # ★【順序も修正】回転(R_x @ R_y)を適用してから平行移動(T)を掛け算する
-    matrix = torch.from_numpy(R_x @ R_y @ T)
+    # 回転行列
+    R = np.eye(4, dtype=np.float32)
+    R[0, :3] = x_axis
+    R[1, :3] = y_axis
+    R[2, :3] = z_axis
+    
+    # 平行移動行列
+    T = np.eye(4, dtype=np.float32)
+    T[:3, 3] = -eye
+    
+    # ビュー行列 = R * T
+    matrix = torch.from_numpy(R @ T)
     return matrix
 
-# カメラ設定：右斜め45度、見下ろし30度、オブジェクトからしっかり「3.5」手前に引く
-camera_mat = create_camera_matrix(yaw_deg=45.0, pitch_deg=30.0, tx=0.0, ty=0.0, tz=-3.5) 
+# カメラの位置を計算（仰角30度、方位角45度、距離3.5）
+distance = 3.5
+yaw = np.radians(45.0)
+pitch = np.radians(30.0)
 
+cam_x = distance * np.cos(pitch) * np.sin(yaw)
+cam_y = distance * np.sin(pitch)
+cam_z = distance * np.cos(pitch) * np.cos(yaw)
+
+# 原点 (0,0,0) を見るようにカメラを設定
+camera_mat = create_camera_matrix(
+    eye=[cam_x, cam_y, cam_z], 
+    target=[0.0, 0.0, 0.0], 
+    up=[0.0, 1.0, 0.0]
+)
 
 # -------------------------------------------------------------------------
 # 3. テスト用の3D頂点データ（生の頂点バッファ）の生成

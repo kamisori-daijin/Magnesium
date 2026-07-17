@@ -23,7 +23,7 @@ class ANEMVPProcessor(nn.Module):
         # 2. ★【超ストレート仕様】トリッキーなマイナス符号を全廃
         # 純粋にZの距離をそのまま奥行きとして分母にします
         # Z_c が 0 に近づいたときのゼロ除算を防ぐ安全対策（ANEセーフティ）
-        safe_Z = torch.clamp(Z_c, min=1e-5)
+        safe_Z = torch.clamp(torch.abs(Z_c), min=1e-5)
         
         # ANEが大好きな要素ごとのディヴィジョン（割り算）
         screen_x = X_c / safe_Z
