@@ -3,39 +3,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ANE3DRenderer(nn.Module):
-    def __init__(self, max_triangles=2000, width=256, height=256):
-        """
-        max_triangles: ANE側に確保させる一度にラスタライズできる最大三角形数。
-                       今回はトレース用（固定枠）として2000ポリゴンをデフォルトに設定。
-        """
+    def __init__(self, max_triangles=21845, width=256, height=256):
         super().__init__()
         self.max_triangles = max_triangles
         self.width = width
         self.height = height
         
-        # 1. 画面のピクセル位置 [X, Y, 1] の固定グリッドバッファ (256x256)
-        # 形状: [1, 3, height, width] の4次元画像として最初から綺麗に登録
+        # 画面のピクセル位置 [1, 3, H, W] をあらかじめ平坦化して [1, 3, H*W, 1] で登録！
+        # これにより、実行時のreshapeを完全にこの世から消滅させます
         y_coords = torch.linspace(1.0, -1.0, height).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
-        X = x_coords.expand(1, 1, height, width)
-        Y = y_coords.expand(1, 1, height, width)
+        X = x_coords.expand(1, 1, height, width).reshape(1, 1, height * width, 1)
+        Y = y_coords.expand(1, 1, height, width).reshape(1, 1, height * width, 1)
         One = torch.ones_like(X)
         
-        pixel_grid = torch.cat([X, Y, One], dim=1) # 形状: [1, 3, H, W]
-        self.register_buffer("pixel_grid", pixel_grid)
+        self.register_buffer("pixel_X_flat", X)
+        self.register_buffer("pixel_Y_flat", Y)
 
     def forward(self, transformed_vertices):
         """
         transformed_vertices: [1, 3, 1, MAX_VERTICES]
         """
         # =========================================================================
-        # ステップA: 頂点バッファを三角形（3頂点ずつ）の並びへ綺麗に抽出 ★端数カット版
+        # ステップA: 頂点バッファを三角形の並びへ抽出 (形状はすべて [1, 1, 1, max_triangles])
         # =========================================================================
-        # max_triangles * 3 の長さだけを正確に切り出すことで、お尻のゴミ（余り）を完全に無視します
         valid_len = self.max_triangles * 3
         v_buffer = transformed_vertices[:, :, :, :valid_len]
         
-        # これで p0, p1, p2 の長さが寸分の狂いもなく [1, 1, 1, max_triangles] でカチッと一致します！
+        # すべてお尻の「幅（W）」の次元のまま処理！ANEの上限（2048ch）に1ミリも触れません！
         p0_X = v_buffer[:, 0:1, :, 0::3]
         p0_Y = v_buffer[:, 1:2, :, 0::3]
         p1_X = v_buffer[:, 0:1, :, 1::3]
@@ -43,16 +38,14 @@ class ANE3DRenderer(nn.Module):
         p2_X = v_buffer[:, 0:1, :, 2::3]
         p2_Y = v_buffer[:, 1:2, :, 2::3]
 
-        # 深度Zも完全に [1, 1, 1, max_triangles] 同士の足し算になるので、1ミリもエラーになりません
         z0 = v_buffer[:, 2:3, :, 0::3]
         z1 = v_buffer[:, 2:3, :, 1::3]
         z2 = v_buffer[:, 2:3, :, 2::3]
         avg_z = (z0 + z1 + z2) / 3.0
 
         # =========================================================================
-        # ステップB: 全ポリゴンの3辺の直線方程式（A, B, C）をANEの要素別演算で自動生成
+        # ステップB: 直線方程式（A, B, C）の生成 [1, 1, 1, max_triangles]
         # =========================================================================
-        # 1行のループも条件分岐もなし。形状はすべて [1, 1, 1, max_triangles]
         A0 = p0_Y - p1_Y
         B0 = p1_X - p0_X
         C0 = -(A0 * p0_X + B0 * p0_Y)
@@ -66,110 +59,73 @@ class ANE3DRenderer(nn.Module):
         C2 = -(A2 * p0_X + B2 * p0_Y)
 
         # =========================================================================
-        # ステップC: ピクセルグリッドへの一斉ラスタライズ（内外判定）
+        # ステップC: ★【Warning完全全滅ハック】1Dフラット空間での並列ブロードキャスト
         # =========================================================================
-        # ピクセルグリッド [1, 3, H, W] の X と Y に対して、直線方程式を直接評価！
-        # ANEが大好きな要素ごとの掛け算と足し算だけで、全ピクセルの内外判定が並列で走ります
-        # max_trianglesの次元を「幅」ではなく「チャンネル次元」に変形してConvに直撃させるため、
-        # ここでは [1, max_triangles, H, W] の巨大な空間マスクを生成します。
-        pixel_X = self.pixel_grid[:, 0:1, :, :] # [1, 1, H, W]
-        pixel_Y = self.pixel_grid[:, 1:2, :, :]
-        
-        # 三角形のパラメータを [1, max_triangles, 1, 1] に見立ててブロードキャスト
-        # ANEは「画像 [1, 1, H, W] と ウェイト [1, N, 1, 1] の掛け算」が一番の好物です
-        A0_t = A0.permute(0, 3, 1, 2) # [1, max_triangles, 1, 1]
-        B0_t = B0.permute(0, 3, 1, 2)
-        C0_t = C0.permute(0, 3, 1, 2)
-        edges0 = pixel_X * A0_t + pixel_Y * B0_t + C0_t
-
-        A1_t = A1.permute(0, 3, 1, 2)
-        B1_t = B1.permute(0, 3, 1, 2)
-        C1_t = C1.permute(0, 3, 1, 2)
-        edges1 = pixel_X * A1_t + pixel_Y * B1_t + C1_t
-
-        A2_t = A2.permute(0, 3, 1, 2)
-        B2_t = B2.permute(0, 3, 1, 2)
-        C2_t = C2.permute(0, 3, 1, 2)
-        edges2 = pixel_X * A2_t + pixel_Y * B2_t + C2_t
+        # pixel_X_flat 形状: [1, 1, H*W, 1]
+        # A0 形状:          [1, 1, 1,   max_triangles]
+        # 掛け算した瞬間、自動的に [1, 1, H*W, max_triangles] の4Dテンソルがビュー変更なしで爆誕！
+        # ANEが最も得意とする「1ch画像の純粋な行列積（マトリクスユニット）」に直撃します！
+        edges0 = self.pixel_X_flat * A0 + self.pixel_Y_flat * B0 + C0
+        edges1 = self.pixel_X_flat * A1 + self.pixel_Y_flat * B1 + C1
+        edges2 = self.pixel_X_flat * A2 + self.pixel_Y_flat * B2 + C2
 
         # =========================================================================
-        # ステップD: 判定は100%これまで通り `ReLU` で！
+        # ステップD: 両面描画・カリング無効化 (ReLU) [1, 1, H*W, max_triangles]
         # =========================================================================
-        # 3つの辺すべてに対して内側（プラス）の場所をパキパキに現像
-        valid_poly_mask = torch.relu((A0_t**2 + B0_t**2) * 100.0)
+        valid_poly_mask = torch.relu((A0**2 + B0**2) * 100.0)
         valid_poly_mask = torch.clamp(valid_poly_mask, min=0.0, max=1.0)
 
-        # ★【ここが究極ハック】
-        # 3辺の符号が（プラス、プラス、プラス）または（マイナス、マイナス、マイナス）の時に
-        # 「内側」にいることになるため、3つの判定値をそのまま掛け算した後に
-        # torch.abs（絶対値）を取るか、あるいは符号のねじれを吸収させます。
-        # ANEは大好物の ReLU だけの組み合わせで「両面の内側」を一撃抽出できます。
-        
-        # パターン1: 時計回りの内側
         inside_clockwise = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
-        
-        # パターン2: 反時計回りの内側 (マイナスを掛けて反転させてからReLUに流す)
         inside_counter = torch.relu(-edges0 * 100.0) * torch.relu(-edges1 * 100.0) * torch.relu(-edges2 * 100.0)
         
-        # 2つのパターンのどちらかに引っかかっていれば「内側」！
-        # ANEが大好きな torch.maximum で一撃結合します
         raw_mask = torch.maximum(inside_clockwise, inside_counter) * valid_poly_mask
         all_triangles_mask = torch.clamp(raw_mask, min=0.0, max=1.0)
 
         # =========================================================================
-        # ステップE: Zバッファ（深度隠面消去）＆一撃プレス
-        # =========================================================================
-        # 平均Z [1, 1, 1, max_triangles] を [1, max_triangles, 1, 1] に変換
-        # =========================================================================
         # ステップE: Zバッファ ＆ 3Dフラットシェーディング
         # =========================================================================
-        poly_normal_Z = torch.abs(A0 * B2 - B0 * A2).permute(0, 3, 1, 2)
+        poly_normal_Z = torch.abs(A0 * B2 - B0 * A2)
         shading = torch.clamp(poly_normal_Z * 5.0, min=0.3, max=1.0)
 
-        avg_z_t = avg_z.permute(0, 3, 1, 2)
-        z_weight = torch.clamp(1.0 - (avg_z_t / 4.0), min=0.0, max=1.0)
+        z_weight = torch.clamp(1.0 - (avg_z / 4.0), min=0.0, max=1.0)
         
-        # 三角形ポリゴン自体の現像マスク (形状: [1, 1, H, W])
         weighted_triangles = all_triangles_mask * z_weight * shading
-        poly_space, _ = torch.max(weighted_triangles, dim=1, keepdim=True)
+        
+        # ★【ココが真の終着点】お尻の「幅」の次元（dim=3）から一撃で最大値プレス！
+        # 吐き出される形状は [1, 1, H*W, 1]。変形ロスが完全にゼロです
+        poly_space_flat, _ = torch.max(weighted_triangles, dim=3, keepdim=True)
+        
+        # 最後の画面の 256x256 へ現像する、たった1回の正方形reshape
+        # チャンネル上限を跨がない平面の変形なので、ANECコンパイラは120%警告を出さずに通します！
+        poly_space = poly_space_flat.reshape(1, 1, self.height, self.width)
 
         # =========================================================================
-        # ★【新規追加】ステップF: Unity風の「3Dグリッドの地面（背景）」を裏側に敷く
+        # ステップF: Unity風の「3Dグリッドの地面」の現像 (2Dのままストレート合成)
         # =========================================================================
-        # 画面のピクセル座標 [1, 3, H, W] から、奥（Z）へ向かう視線ベクトルを逆算
-        pixel_X = self.pixel_grid[:, 0:1, :, :]
-        pixel_Y = self.pixel_grid[:, 1:2, :, :]
-        
-        # Yが下（-0.3）の位置に無限の床を敷くための、奥行きプロジェクションハック
-        # ゼロ除算防止。Yが上空のピクセルはマイナスになってReLUで消え飛びます
+        # 地面の展開用のピクセル位置をここで一時復元（背景なので低コスト）
+        y_coords_2d = torch.linspace(1.0, -1.0, self.height).view(1, 1, self.height, 1)
+        x_coords_2d = torch.linspace(-1.0, 1.0, self.width).view(1, 1, 1, self.width)
+        pixel_X = x_coords_2d.expand(1, 1, self.height, self.width)
+        pixel_Y = y_coords_2d.expand(1, 1, self.height, self.width)
+
         safe_Y = torch.clamp(-pixel_Y - 0.2, min=1e-5)
-        
         floor_world_Z = 0.4 / safe_Y
         floor_world_X = pixel_X * floor_world_Z
         
-        # 床の衝突減衰（奥に行くほど薄暗くフェードアウトさせる）
         floor_sdf = torch.clamp(safe_Y * 4.0, max=0.2)
-        
-        # 均等なサイン波で綺麗なチェッカー模様を作る
         grid_pattern = torch.relu(torch.sin(floor_world_X * 6.0) * torch.sin(floor_world_Z * 6.0))
-        floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15) # [1, 1, H, W]
+        floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15)
 
         # =========================================================================
-        # ステップG: ポリゴン（手前）と床（背景）を Zバッファ合成してRGB現像
+        # ステップG: カラー現像
         # =========================================================================
-        # ポリゴンが存在する場所（poly_space > 0）のマスクを作成
         poly_mask = torch.clamp(poly_space * 1000.0, min=0.0, max=1.0)
         
-        # カラーの定義
-        poly_color = torch.tensor([0.9, 0.9, 0.9]).view(1, 3, 1, 1) # ポリゴンは白いハコ
-        grid_color_A = torch.tensor([0.1, 0.6, 0.4]).view(1, 3, 1, 1) # 床の網目はエメラルド
-        grid_color_B = torch.tensor([0.15, 0.15, 0.15]).view(1, 3, 1, 1) # 床のベースはダークグレー
+        poly_color = torch.tensor([0.9, 0.9, 0.9]).view(1, 3, 1, 1)
+        grid_color_A = torch.tensor([0.1, 0.6, 0.4]).view(1, 3, 1, 1)
+        grid_color_B = torch.tensor([0.15, 0.15, 0.15]).view(1, 3, 1, 1)
         
-        # 床の色をブレンド
         floor_color = grid_color_A * grid_pattern + grid_color_B * (1.0 - grid_pattern)
-        
-        # ポリゴンマスクを使って、手前のポリゴン（ライティング付き）と背景の床をガッチャンコ！
-        # poly_spaceの調光（0.3〜1.0）をそのままポリゴンの陰影として乗算
         final_rgb = (poly_mask * poly_color * poly_space) + ((1.0 - poly_mask) * floor_color * floor_textured * 5.0)
         
         return torch.clamp(final_rgb, min=0.0, max=1.0)
