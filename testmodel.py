@@ -1,64 +1,71 @@
 import torch
 import numpy as np
 from PIL import Image
-from ShaderModel import ANEShaderTriangle
+from ShaderModel import ANE3DRenderer
 
-# 1. Initialize model (Float16)
-model = ANEShaderTriangle().eval().half()
+STEPS = 128
+WIDTH = 256
+HEIGHT = 256
 
-# 2. Generate 1024x1024 UV coordinates (Float16)
-H, W = 1024, 1024
-y_coords = torch.linspace(1.0, -1.0, H, dtype=torch.float16) 
-x_coords = torch.linspace(-1.0, 1.0, W, dtype=torch.float16)
-grid_y, grid_x = torch.meshgrid(y_coords, x_coords, indexing='ij')
+# 1. 動的パラメータ対応の3Dカラーレンダラーを初期化
+model = ANE3DRenderer(steps=STEPS, width=WIDTH, height=HEIGHT)
+model.eval()
 
-
-# X and Y UV coordinates
-uv_input = torch.stack([grid_x, grid_y], dim=0).unsqueeze(0)  # Shape : (1, 2, 1024, 1024)
-
-# 3. triangle vertex（clockwise）
-p0, p1, p2 = (0.0, 0.6), (0.5, -0.4), (-0.5, -0.4)
-
-def get_line_eq(pa, pb):
-    A = pa[1] - pb[1]  
-    B = pb[0] - pa[0]  
-    C = -(A * pa[0] + B * pa[1])
+def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=-2.0):
+    yaw = np.radians(yaw_deg)
+    pitch = np.radians(pitch_deg)
     
-    length = (A**2 + B**2)**0.5
-    if length > 0:
-        A, B, C = A / length, B / length, C / length
-        
-    edge_sharpness = 500.0
-    return A * edge_sharpness, B * edge_sharpness, C * edge_sharpness
+    cos_y, sin_y = np.cos(yaw), np.sin(yaw)
+    R_y = np.array([
+        [cos_y,  0.0, sin_y, 0.0],
+        [0.0,    1.0, 0.0,   0.0],
+        [-sin_y, 0.0, cos_y, 0.0],
+        [0.0,    0.0, 0.0,   1.0]
+    ], dtype=np.float32)
+    
+    cos_x, sin_x = np.cos(pitch), np.sin(pitch)
+    R_x = np.array([
+        [1.0, 0.0,   0.0,    0.0],
+        [0.0, cos_x, -sin_x, 0.0],
+        [0.0, sin_x, cos_x,  0.0],
+        [0.0, 0.0,   0.0,    1.0]
+    ], dtype=np.float32)
+    
+    T = np.array([
+        [1.0, 0.0, 0.0, -tx],
+        [0.0, 1.0, 0.0, -ty],
+        [0.0, 0.0, 1.0, -tz], 
+        [0.0, 0.0, 0.0, 1.0]
+    ], dtype=np.float32)
+    
+    matrix = torch.from_numpy(R_x @ R_y @ T)
+    return matrix
 
-A0, B0, C0 = get_line_eq(p0, p1)
-A1, B1, C1 = get_line_eq(p1, p2)
-A2, B2, C2 = get_line_eq(p2, p0)
+# 2. カメラ設定（右斜め30度、見下ろし15度、後ろに2.0引く）
+camera_mat = create_camera_matrix(yaw_deg=30.0, pitch_deg=15.0, tx=0.0, ty=0.0, tz=-2.0)
 
+# 3. 【追加】配置したい3つの球体のパラメータ (X, Y, Z, 半径)
+# 好きな位置や大きさにいつでも自由に変更できます
+object_params = torch.tensor([
+    [ 0.0,  0.1,  2.0, 0.5], # 1個目: 中央の大きな球体
+    [-0.7,  0.2,  2.4, 0.3], # 2個目: 左奥の小さな球体
+    [ 0.6, -0.1,  1.7, 0.35],# 3個目: 右手前の球体
+], dtype=torch.float32)
 
-# (A, B)、[3, 2, 1, 1] Reshape
-w_flat = torch.tensor([
-    A0, B0, # edge0
-    A1, B1, # edge1
-    A2, B2  # edge2
-], dtype=torch.float16)
-tri_weight = w_flat.view(3, 2, 1, 1) # Shape: (3, 2, 1, 1)
-
-tri_bias = torch.tensor([C0, C1, C2], dtype=torch.float16)
-
-# 5. Run Rendering
+# レンダリング実行 (引数としてカメラと物体データを一気に渡す)
 with torch.no_grad():
-    output_rgba = model(uv_input, tri_weight, tri_bias) # Shape: (1, 4, 1024, 1024)
+    output = model(camera_mat, object_params) # 形状: [1, 3, H, W]
 
-# Debug output
-print("--- Tensor raw data debug ---")
-print("Output shape:", output_rgba.shape)
-print("R channel - Max:", output_rgba[:, 0, :, :].max().item(), "Min:", output_rgba[:, 0, :, :].min().item())
+# -------------------------------------------------------------------------
+# 4. 【カラー版】PNG画像として出力
+# -------------------------------------------------------------------------
+# [1, 3, H, W] -> [H, W, 3] に並び替え
+img_data = output.squeeze(0).permute(1, 2, 0).numpy()
+img_data = np.clip(img_data * 255.0, 0, 255).astype(np.uint8)
 
-# 6. Save as image
-img_data = output_rgba.squeeze(0).permute(1, 2, 0).cpu().float().numpy()
-img_data = (np.clip(img_data, 0.0, 1.0) * 255).astype(np.uint8)
+# PILを使ってRGB（カラー）モードで保存
+img = Image.fromarray(img_data, mode='RGB')
+img.save("ane_3d_color_test.png")
 
-img = Image.fromarray(img_data, 'RGBA')
-img.save("ane_triangle_test.png")
-print("Rendering complete! 'ane_triangle_test.png' is saved.")
+print("おめでとうございます！汎用カラー3D空間のPNG出力が完了しました！")
+print("`ane_3d_color_test.png` を開いて、複数の真っ赤な球体が並んでいるか確認してください！")
