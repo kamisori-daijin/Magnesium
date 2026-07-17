@@ -120,20 +120,18 @@ class ANE3DRenderer(nn.Module):
         # ステップE: Zバッファ（深度隠面消去）＆一撃プレス
         # =========================================================================
         # 平均Z [1, 1, 1, max_triangles] を [1, max_triangles, 1, 1] に変換
+        poly_normal_Z = torch.abs(A0 * B2 - B0 * A2).permute(0, 3, 1, 2) # [1, max_triangles, 1, 1]
+        # 数値をマイルドな輝度グラデーション（0.3 〜 1.0）へ正規化
+        shading = torch.clamp(poly_normal_Z * 5.0, min=0.3, max=1.0)
+
+        # 深度テスト用のウェイト計算（これはそのまま）
         avg_z_t = avg_z.permute(0, 3, 1, 2)
-        
-        # 手前にある（Zが小さい）ポリゴンほど強い輝度ウェイトにするハック
         z_weight = torch.clamp(1.0 - (avg_z_t / 4.0), min=0.0, max=1.0)
         
-        # ポリゴンごとの三角形マスクに、そのポリゴンの手前優先ウェイトを乗算
-        weighted_triangles = all_triangles_mask * z_weight
+        # ★マスクに対して「奥行き重み」と「面の明るさ（shading）」を同時に掛け算！
+        weighted_triangles = all_triangles_mask * z_weight * shading
         
-        # 2000個のポリゴンの重なりを、チャンネル次元（max_triangles）からの
-        # torch.max によって一撃で1枚の2D画面（モノクロ）へプレス！
-        # 形状: [1, max_triangles, H, W] -> [1, 1, H, W]
         rendered_space, _ = torch.max(weighted_triangles, dim=1, keepdim=True)
-        
-        # 最後に3チャンネル（RGB）に拡張してフルカラーフレームバッファとして返却！
         framebuffer = rendered_space.repeat(1, 3, 1, 1)
         
         return framebuffer
