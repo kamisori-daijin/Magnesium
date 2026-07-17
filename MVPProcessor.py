@@ -20,7 +20,8 @@ class ANEMVPProcessor(nn.Module):
         Y_c = transformed[:, 1:2, :]
         Z_c = transformed[:, 2:3, :]
 
-        # 2. ★【超ストレート仕様】符号反転を一切やめ、純粋にZの距離を奥行きにする
+        # 2. ★【超ストレート仕様】トリッキーなマイナス符号を全廃
+        # 純粋にZの距離をそのまま奥行きとして分母にします
         # Z_c が 0 に近づいたときのゼロ除算を防ぐ安全対策（ANEセーフティ）
         safe_Z = torch.clamp(Z_c, min=1e-5)
         
@@ -28,7 +29,7 @@ class ANEMVPProcessor(nn.Module):
         screen_x = X_c / safe_Z
         screen_y = Y_c / safe_Z
         
-        # [1, 3, max_vertices] の形状（X, Y, 深度Z）にまとめて返却
+        # [1, 3, max_vertices] の形状（X, Y, 深度Z）にまとめて一気に返却！
         output_buffer = torch.cat([screen_x, screen_y, Z_c], dim=1)
         
         return output_buffer
