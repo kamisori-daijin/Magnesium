@@ -120,18 +120,56 @@ class ANE3DRenderer(nn.Module):
         # ステップE: Zバッファ（深度隠面消去）＆一撃プレス
         # =========================================================================
         # 平均Z [1, 1, 1, max_triangles] を [1, max_triangles, 1, 1] に変換
-        poly_normal_Z = torch.abs(A0 * B2 - B0 * A2).permute(0, 3, 1, 2) # [1, max_triangles, 1, 1]
-        # 数値をマイルドな輝度グラデーション（0.3 〜 1.0）へ正規化
+        # =========================================================================
+        # ステップE: Zバッファ ＆ 3Dフラットシェーディング
+        # =========================================================================
+        poly_normal_Z = torch.abs(A0 * B2 - B0 * A2).permute(0, 3, 1, 2)
         shading = torch.clamp(poly_normal_Z * 5.0, min=0.3, max=1.0)
 
-        # 深度テスト用のウェイト計算（これはそのまま）
         avg_z_t = avg_z.permute(0, 3, 1, 2)
         z_weight = torch.clamp(1.0 - (avg_z_t / 4.0), min=0.0, max=1.0)
         
-        # ★マスクに対して「奥行き重み」と「面の明るさ（shading）」を同時に掛け算！
+        # 三角形ポリゴン自体の現像マスク (形状: [1, 1, H, W])
         weighted_triangles = all_triangles_mask * z_weight * shading
+        poly_space, _ = torch.max(weighted_triangles, dim=1, keepdim=True)
+
+        # =========================================================================
+        # ★【新規追加】ステップF: Unity風の「3Dグリッドの地面（背景）」を裏側に敷く
+        # =========================================================================
+        # 画面のピクセル座標 [1, 3, H, W] から、奥（Z）へ向かう視線ベクトルを逆算
+        pixel_X = self.pixel_grid[:, 0:1, :, :]
+        pixel_Y = self.pixel_grid[:, 1:2, :, :]
         
-        rendered_space, _ = torch.max(weighted_triangles, dim=1, keepdim=True)
-        framebuffer = rendered_space.repeat(1, 3, 1, 1)
+        # Yが下（-0.3）の位置に無限の床を敷くための、奥行きプロジェクションハック
+        # ゼロ除算防止。Yが上空のピクセルはマイナスになってReLUで消え飛びます
+        safe_Y = torch.clamp(-pixel_Y - 0.2, min=1e-5)
         
-        return framebuffer
+        floor_world_Z = 0.4 / safe_Y
+        floor_world_X = pixel_X * floor_world_Z
+        
+        # 床の衝突減衰（奥に行くほど薄暗くフェードアウトさせる）
+        floor_sdf = torch.clamp(safe_Y * 4.0, max=0.2)
+        
+        # 均等なサイン波で綺麗なチェッカー模様を作る
+        grid_pattern = torch.relu(torch.sin(floor_world_X * 6.0) * torch.sin(floor_world_Z * 6.0))
+        floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15) # [1, 1, H, W]
+
+        # =========================================================================
+        # ステップG: ポリゴン（手前）と床（背景）を Zバッファ合成してRGB現像
+        # =========================================================================
+        # ポリゴンが存在する場所（poly_space > 0）のマスクを作成
+        poly_mask = torch.clamp(poly_space * 1000.0, min=0.0, max=1.0)
+        
+        # カラーの定義
+        poly_color = torch.tensor([0.9, 0.9, 0.9]).view(1, 3, 1, 1) # ポリゴンは白いハコ
+        grid_color_A = torch.tensor([0.1, 0.6, 0.4]).view(1, 3, 1, 1) # 床の網目はエメラルド
+        grid_color_B = torch.tensor([0.15, 0.15, 0.15]).view(1, 3, 1, 1) # 床のベースはダークグレー
+        
+        # 床の色をブレンド
+        floor_color = grid_color_A * grid_pattern + grid_color_B * (1.0 - grid_pattern)
+        
+        # ポリゴンマスクを使って、手前のポリゴン（ライティング付き）と背景の床をガッチャンコ！
+        # poly_spaceの調光（0.3〜1.0）をそのままポリゴンの陰影として乗算
+        final_rgb = (poly_mask * poly_color * poly_space) + ((1.0 - poly_mask) * floor_color * floor_textured * 5.0)
+        
+        return torch.clamp(final_rgb, min=0.0, max=1.0)
