@@ -1,49 +1,51 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from ShaderModel import ANE3DRenderer  
+from ShaderModel import ANE3DRenderer  # グリッド地面＆調光内蔵の最新ラスタライザ
 from pathlib import Path
 
-# 1. モデルの初期化（128ステップ）
-STEPS = 128
+# 解像度はテストコードと完全に一致する 256x256、半精度(FP16)
 WIDTH = 256
 HEIGHT = 256
-model = ANE3DRenderer(steps=STEPS, width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
+
+# ★【ここが最重要ハック】
+# 第1段（MVP）の最大頂点数 65536 にポートの幅を100%カチッと一致させます！
+# 三角形1枚につき3頂点が必要なため、一度に処理できる最大三角形数は 65536 // 3 = 21845枚 に自動拡張されます。
+MAX_VERTICES = 65536
+MAX_TRIANGLES = MAX_VERTICES // 3
+
+model = ANE3DRenderer(
+    max_triangles=MAX_TRIANGLES, 
+    width=WIDTH, 
+    height=HEIGHT
+).to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
-# 2. 僕たちが毎フレーム動的に流し込む「2つの入力ポート」のシェイプ定義
+# 2. 第1段（MVPプロセッサ）の出力形状 [1, 3, 1, 65536] と完全に一致するポートを開ける
 # -------------------------------------------------------------------------
-# ① 外部カメラ行列 [4, 4]
-sample_camera = torch.eye(4, dtype=torch.float16)
-
-# ② 自由に配置・移動できる3つのオブジェクト枠 [3, 4] (X, Y, Z, Radius)
-# コンパイル時にこの「オブジェクト最大数（3個）」を固定枠として焼き付けます
-sample_objects = torch.tensor([
-    [ 0.0,  0.1,  2.0, 0.5], 
-    [-0.7,  0.2,  2.4, 0.3], 
-    [ 0.6, -0.1,  1.7, 0.35],
-], dtype=torch.float16)
+sample_transformed_vertices = torch.zeros(1, 3, 1, MAX_VERTICES, dtype=torch.float16)
 
 # -------------------------------------------------------------------------
-# 3. CoreAI 用のエクスポート設定（動的インプットを2つ並べてトレース）
+# 3. CoreAI 用のエクスポート設定
 # -------------------------------------------------------------------------
 converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
         m, 
-        args=(sample_camera, sample_objects) # 2つの動的ポートを同時に開ける！
+        args=(sample_transformed_vertices,) # 第1段の出力ポート [1, 3, 1, 65536] と完全合体！
     ).run_decompositions(
         coreai_torch.get_decomp_table()
     ),
 )
 
-# 4. CoreAIプログラムのビルドと最適化
+# 4. CoreAIプログラムのビルド・ANE最適化
 coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
-# 保存
-output_path = Path("ane_3d_renderer_universal.aimodel")
+# 資産（アセット）として保存
+output_path = Path("ane_3d_rasterizer.aimodel")
 coreai_program.save_asset(output_path)
 
-print(f"動的カメラ＆動的複数オブジェクト対応のユニバーサル3Dモデルが完成しました: `{output_path}`")
+print(f"🎉 プラグサイズ完全互換・動的ラスタライザのビルドが完了しました: `{output_path}`")
+print("これで第1段 [1, 3, 1, 65536] のバトンをポインタのまま100%直撃させられるアセットの完成です！")
