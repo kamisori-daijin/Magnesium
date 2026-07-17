@@ -96,12 +96,25 @@ class ANE3DRenderer(nn.Module):
         # ステップD: 判定は100%これまで通り `ReLU` で！
         # =========================================================================
         # 3つの辺すべてに対して内側（プラス）の場所をパキパキに現像
-        mask_edge0 = torch.relu(edges0 * 100.0)
-        mask_edge1 = torch.relu(edges1 * 100.0)
-        mask_edge2 = torch.relu(edges2 * 100.0)
+        valid_poly_mask = torch.relu((A0_t**2 + B0_t**2) * 100.0)
+        valid_poly_mask = torch.clamp(valid_poly_mask, min=0.0, max=1.0)
+
+        # ★【ここが究極ハック】
+        # 3辺の符号が（プラス、プラス、プラス）または（マイナス、マイナス、マイナス）の時に
+        # 「内側」にいることになるため、3つの判定値をそのまま掛け算した後に
+        # torch.abs（絶対値）を取るか、あるいは符号のねじれを吸収させます。
+        # ANEは大好物の ReLU だけの組み合わせで「両面の内側」を一撃抽出できます。
         
-        # 形状: [1, max_triangles, H, W] (各ポリゴンごとのクッキリした三角形マスク)
-        all_triangles_mask = torch.clamp(mask_edge0 * mask_edge1 * mask_edge2, min=0.0, max=1.0)
+        # パターン1: 時計回りの内側
+        inside_clockwise = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
+        
+        # パターン2: 反時計回りの内側 (マイナスを掛けて反転させてからReLUに流す)
+        inside_counter = torch.relu(-edges0 * 100.0) * torch.relu(-edges1 * 100.0) * torch.relu(-edges2 * 100.0)
+        
+        # 2つのパターンのどちらかに引っかかっていれば「内側」！
+        # ANEが大好きな torch.maximum で一撃結合します
+        raw_mask = torch.maximum(inside_clockwise, inside_counter) * valid_poly_mask
+        all_triangles_mask = torch.clamp(raw_mask, min=0.0, max=1.0)
 
         # =========================================================================
         # ステップE: Zバッファ（深度隠面消去）＆一撃プレス

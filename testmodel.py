@@ -65,31 +65,61 @@ camera_mat = create_camera_matrix(
 # -------------------------------------------------------------------------
 # 原点付近に、3つの頂点（p0, p1, p2）を持つ綺麗で大きめの正三角形を1枚定義
 # 座標: [X, Y, Z, W=1]
-p0 = [ 0.0,  0.5, 0.0, 1.0]
-p1 = [ 0.5, -0.4, 0.0, 1.0]
-p2 = [-0.5, -0.4, 0.0, 1.0]
+xs = [0.0, 0.5, -0.5]  # p0_X, p1_X, p2_X
+ys = [0.5, -0.4, -0.4] # p0_Y, p1_Y, p2_Y
+zs = [-0.5, -0.5, -0.5] # ★Z座標を0.0から「-0.5」へ引き出す！
+ws = [1.0, 1.0, 1.0]   # W成分
 
-# 三角形1枚（3頂点分）を配列にする
-active_vertices = np.array([p0, p1, p2], dtype=np.float32).T # 形状: (4, 3)
+active_vertices = np.array([xs, ys, zs, ws], dtype=np.float32)
 
-# ANEの固定ポート枠（MAX_VERTICES = 65536）に合わせて残りを0でパディング
+# 残りを0でパディング
 padding = np.zeros((4, MAX_VERTICES - 3), dtype=np.float32)
 combined_vertices = np.hstack([active_vertices, padding])
 
-# 第1段が要求する完璧な4次元画像レイアウト [1, 4, 1, MAX_VERTICES] に拡張
-vertex_buffer = torch.from_numpy(combined_vertices).unsqueeze(0).unsqueeze(2)
+# [1, 4, 1, MAX_VERTICES] に拡張
+vertex_buffer = torch.zeros(1, 4, 1, MAX_VERTICES, dtype=torch.float32)
 
-# -------------------------------------------------------------------------
-# 4. 究極の「2段プレス」パイプラインの実行
-# -------------------------------------------------------------------------
+# ② 最初の3つの頂点（p0, p1, p2）の [X, Y, Z, W] を、チャンネル次元（dim=1）に直接カチッと仕込む
+# p0: (0.0, 0.5, 0.0, 1.0)
+vertex_buffer[0, 0, 0, 0] = 0.0  # X
+vertex_buffer[0, 1, 0, 0] = 0.5  # Y
+vertex_buffer[0, 2, 0, 0] = 0.0  # Z
+vertex_buffer[0, 3, 0, 0] = 1.0  # W
+
+# p1: (0.5, -0.4, 0.0, 1.0)
+vertex_buffer[0, 0, 0, 1] = 0.5
+vertex_buffer[0, 1, 0, 1] = -0.4
+vertex_buffer[0, 2, 0, 1] = 0.0
+vertex_buffer[0, 3, 0, 1] = 1.0
+
+# p2: (-0.5, -0.4, 0.0, 1.0)
+vertex_buffer[0, 0, 0, 2] = -0.5
+vertex_buffer[0, 1, 0, 2] = -0.4
+vertex_buffer[0, 2, 0, 2] = 0.0
+vertex_buffer[0, 3, 0, 2] = 1.0
+
+# メモリの連続性を完全に保証してロック
+vertex_buffer = vertex_buffer.contiguous()
 with torch.no_grad():
     # 【第1段：MVP】カメラ行列を使って、頂点を一撃で2Dスクリーン座標へ変換
-    # 吐き出される形状: [1, 3, 1, MAX_VERTICES]
     transformed_vertices = mvp_processor(camera_mat, vertex_buffer)
     
+    # ─── ★ここからデバッグプリント追加 ─────────────────────────────────
+    print("\n--- 2段パイプライン 結合デバッグログ ---")
+    print(f"[第1段 出力シェイプ]: {list(transformed_vertices.shape)}")
+    
+    # 最初の三角形（p0, p1, p2）のスクリーン変換後の(X, Y, 深度Z)を生データで表示
+    v_data = transformed_vertices[0, :, 0, :3].numpy()
+    print(f"[最初の三角形の頂点データ (3ch × 3頂点)]:\n{v_data}")
+    # ──────────────────────────────────────────────────────────────────
+    
     # 【第2段：ラスタライザ】変換後のバトンをそのまま直撃させ、画面にピクセルとして現像！
-    # 吐き出される形状: [1, 3, H, W]
     output = rasterizer(transformed_vertices)
+    
+    # ─── ★出力バッファの状態もチェック ────────────────────────────────
+    print(f"[第2段 出力シェイプ]: {list(output.shape)}")
+    print(f"[最終ピクセル輝度] max: {output.max().item():.4f}, min: {output.min().item():.4f}\n")
+    # ──────────────────────────────────────────────────────────────────
 
 # -------------------------------------------------------------------------
 # 5. 【カラー版】PNG画像として出力
