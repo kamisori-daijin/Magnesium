@@ -103,18 +103,17 @@ class ANE3DRenderer(nn.Module):
         # ステップF: Unity風の「3Dグリッドの地面」の現像 (2Dのままストレート合成)
         # =========================================================================
         # 地面の展開用のピクセル位置をここで一時復元（背景なので低コスト）
-        y_coords_2d = torch.linspace(1.0, -1.0, self.height).view(1, 1, self.height, 1)
-        x_coords_2d = torch.linspace(-1.0, 1.0, self.width).view(1, 1, 1, self.width)
-        pixel_X = x_coords_2d.expand(1, 1, self.height, self.width)
-        pixel_Y = y_coords_2d.expand(1, 1, self.height, self.width)
+        safe_Y_flat = torch.clamp(-self.pixel_Y_flat - 0.2, min=1e-5)
+        floor_world_Z_flat = 0.4 / safe_Y_flat
+        floor_world_X_flat = self.pixel_X_flat * floor_world_Z_flat
 
-        safe_Y = torch.clamp(-pixel_Y - 0.2, min=1e-5)
-        floor_world_Z = 0.4 / safe_Y
-        floor_world_X = pixel_X * floor_world_Z
-        
-        floor_sdf = torch.clamp(safe_Y * 4.0, max=0.2)
-        grid_pattern = torch.relu(torch.sin(floor_world_X * 6.0) * torch.sin(floor_world_Z * 6.0))
-        floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15)
+        floor_sdf_flat = torch.clamp(safe_Y_flat * 4.0, max=0.2)
+        grid_pattern_flat = torch.relu(torch.sin(floor_world_X_flat * 6.0) * torch.sin(floor_world_Z_flat * 6.0))
+        floor_textured_flat = floor_sdf_flat * (grid_pattern_flat * 0.85 + 0.15)
+
+        # 最後に1度だけ、ポリゴン描画と同じタイミングで 256x256 に reshape します
+        grid_pattern = grid_pattern_flat.reshape(1, 1, self.height, self.width)
+        floor_textured = floor_textured_flat.reshape(1, 1, self.height, self.width)
 
         # =========================================================================
         # ステップG: カラー現像
