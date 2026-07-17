@@ -2,18 +2,13 @@ import torch
 import torch.nn as nn
 
 class ANE3DRenderer(nn.Module):
-    def __init__(self, steps=64, width=256, height=256):
+    def __init__(self, steps=128, width=256, height=256):
         super().__init__()
         self.steps = steps
         self.width = width
         self.height = height
         
-        # 1. カメラ変換用の 1x1 Conv2d
-        self.camera_view_conv = nn.Conv2d(
-            in_channels=4, out_channels=4, kernel_size=1, bias=False
-        )
-        
-        # 2. スクリーン上の2Dピクセル位置を固定バッファとして登録
+        # 1. スクリーン上の2Dピクセル位置を固定バッファとして登録
         y_coords = torch.linspace(1.0, -1.0, height).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
         
@@ -22,14 +17,14 @@ class ANE3DRenderer(nn.Module):
         Z = torch.ones_like(X)
         W = torch.zeros_like(X)
         
-        static_space = torch.cat([X, Y, Z, W], dim=1)
+        static_space = torch.cat([X, Y, Z, W], dim=1) # [1, 4, H, W]
         self.register_buffer("static_space", static_space)
 
-        # 3. 奥方向（Steps）の進捗率をバッファとして登録
+        # 2. 奥方向（Steps）の進捗率をバッファとして登録
         z_steps = torch.linspace(0.1, 4.0, steps).view(steps, 1, 1, 1)
         self.register_buffer("z_steps", z_steps)
 
-        # 4. 2D画面へ潰す 1x1 Conv2d (RGBグループ化)
+        # 3. 2D画面へ潰す 1x1 Conv2d (RGBグループ化)
         self.compress_z_conv = nn.Conv2d(
             in_channels=steps * 3, out_channels=3, kernel_size=1, groups=3, bias=False
         )
@@ -38,89 +33,63 @@ class ANE3DRenderer(nn.Module):
             triple_weights = z_weights.repeat(3, 1, 1, 1)
             self.compress_z_conv.weight.copy_(triple_weights)
 
+    # ★【完全動的化】カメラ行列とオブジェクトパラメータを2つの引数で受け取る
     def forward(self, camera_matrix, object_params):
         # =========================================================================
-        # ステップA: 画面の向き（視線）をカメラに合わせて回転させる
+        # ステップA: 外部から入ってきたテンソルを使ってアインシュタイン和で回転
         # =========================================================================
-        self.camera_view_conv.weight.copy_(camera_matrix.view(4, 4, 1, 1))
-        ray_dir = self.camera_view_conv(self.static_space)
+        space_reshaped = self.static_space.squeeze(0).permute(1, 2, 0)
+        ray_dir = torch.einsum('ij,hwj->hwi', camera_matrix, space_reshaped)
+        ray_dir = ray_dir.permute(2, 0, 1).unsqueeze(0)
         
         X_prime = ray_dir[:, 0:1, :, :] * self.z_steps
         Y_prime = ray_dir[:, 1:2, :, :] * self.z_steps
         Z_prime = ray_dir[:, 2:3, :, :] * self.z_steps
 
         # =========================================================================
-        # ステップB: 外部から渡された「自由な立体データ」の動的評価
+        # ステップB: 外部から渡された「動的オブジェクトデータ」の並列SDF評価
         # =========================================================================
-        # object_params の形状: [N, 4]  -> (X, Y, Z, Radius) がN個分
-        # ANEで並列処理するために、形状を [N, 1, 1, 1] にバラしてブロードキャストさせる
+        # object_params形状: [N, 4] -> 各行が [X, Y, Z, Radius]
+        # ANEでブロードキャスト並列処理を行うために、各次元を [N, 1, 1, 1, 1] にバラす
         obj_X = object_params[:, 0].view(-1, 1, 1, 1, 1)
         obj_Y = object_params[:, 1].view(-1, 1, 1, 1, 1)
         obj_Z = object_params[:, 2].view(-1, 1, 1, 1, 1)
         obj_R = object_params[:, 3].view(-1, 1, 1, 1, 1)
 
-        # 空間座標 [steps, 1, H, W] をオブジェクトの数（N次元）に自動引き伸ばし
-        # これにより、N個の球体の距離計算がANEの内部で完全に同時並行で走ります！
+        # 空間座標をN個分に自動引き伸ばしして距離の2乗を一撃計算
         dist_sq = (X_prime - obj_X)**2 + (Y_prime - obj_Y)**2 + (Z_prime - obj_Z)**2
         
-        # 複数の球体のSDFを一気に計算して、一番手前にあるものを torch.max で結合
+        # 3つの球体マスクの強さをまとめて計算し、一番手前（最大値）をマージ
         # 形状: [N, steps, 1, H, W] -> [steps, 1, H, W]
-        spheres_sdf = (obj_R**2) - dist_sq
+        spheres_lighting = torch.relu(1.0 - (dist_sq / (obj_R**2 + 1e-5)))
+        spheres_sdf = (obj_R**2 - dist_sq) * (spheres_lighting * 0.8 + 0.2)
         sphere_sdf, _ = torch.max(spheres_sdf, dim=0)
         
-        # 3. 地面（床） Y=-0.4
+        # 2. 地面（床） Y=-0.4
         floor_base = -0.4 - Y_prime
         floor_sdf = torch.clamp(floor_base, max=0.2)
 
         # =========================================================================
-        # ステップC〜E: 模様、カラーマスク、プレス（ここは共通）
+        # ステップC〜E: 模様、カラーマスク、プレス（128ステップ対応版）
         # =========================================================================
         floor_world_Z = (Z_prime / (Y_prime - 1e-5)) * -0.4
         floor_world_X = (X_prime / (Y_prime - 1e-5)) * -0.4
+        
         grid_pattern = torch.relu(torch.sin(floor_world_X * 3.0) * torch.sin(floor_world_Z * 3.0))
         floor_textured = floor_sdf * (grid_pattern * 0.85 + 0.15)
 
-        # =========================================================================
-        # ステップD: 1x1 カラーマスキング（安全なReLUベース）
-        # =========================================================================
         sphere_mask = torch.relu(sphere_sdf)
         floor_mask = torch.relu(floor_textured)
         
-        # カラー定義 (R, G, B)
         sphere_color = torch.tensor([0.9, 0.2, 0.1]).view(1, 3, 1, 1) # 赤
         grid_color_A = torch.tensor([0.1, 0.7, 0.4]).view(1, 3, 1, 1) # 緑
         grid_color_B = torch.tensor([0.9, 0.9, 0.9]).view(1, 3, 1, 1) # 白
         floor_color = grid_color_A * grid_pattern + grid_color_B * (1.0 - grid_pattern)
         
-        # [steps, 3, H, W] 各ステップごとの生のカラー
-        raw_space_rgb = (sphere_mask * sphere_color) + (floor_mask * floor_color)
+        valid_space_rgb = (sphere_mask * sphere_color) + (floor_mask * floor_color)
 
-        # =========================================================================
-        # ★【ボケ解消ハック】ステップE: 手前優先オクルージョン・マスク
-        # =========================================================================
-        # 物体が存在する（ReLUを通った）判定値を足し合わせて「不透明度」を作ります
-        # 形状: [steps, 1, H, W]
-        opacity = torch.relu(sphere_sdf + floor_textured)
-        
-        # 手前のステップが奥のステップを遮蔽するマスクを累積（CUMSUM）で計算します
-        # 最初のステップは遮蔽ゼロ、奥に行くほど手前の opacity が足されていきます
-        # ANEは次元指定の torch.cumsum が超大好物で、一瞬で終わります
-        # （0番目のステップには遮蔽がないよう、手前に0をパッドするかスライスをずらします）
-        # 簡易的に、各ステップの重み（z_weights）にこの opacity を逆算で掛け合わせることで、
-        # 「一番手前で衝突したステップの色だけが強く残り、奥の色を完全に消し去る」エッジが立ちます
-        
-        # 最も手前で当たった場所を強調するために、単純に「手前のステップほど強いウェイト」がかかる
-        # 元の compress_z_conv のウェイト特性を活かすため、
-        # [steps, 3, H, W] のカラーテンソルをそのまま並び替えます
-        permuted = raw_space_rgb.permute(1, 0, 2, 3)
+        permuted = valid_space_rgb.permute(1, 0, 2, 3)
         space_channels = permuted.reshape(1, 3 * self.steps, self.height, self.width)
-
-        # =========================================================================
-        # ステップF: 1x1 Conv2d で一気に2D画面へ潰す
-        # =========================================================================
-        framebuffer = self.compress_z_conv(space_channels)
         
-        # 【最終ボケ防止クリップ】
-        # 最後に画面全体の輝度を 0.0〜1.0 の実数にクランプすることで、
-        # 複数ステップが重なって白飛び・ボケしていたエッジのコントラストをカチッと引き締めます
+        framebuffer = self.compress_z_conv(space_channels)
         return torch.clamp(framebuffer, min=0.0, max=1.0)

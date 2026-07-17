@@ -6,11 +6,46 @@ from PIL import Image
 from coreai.authoring import AIModelAsset
 from coreai.runtime import InferenceFunction, NDArray
 
+# カメラを回転させるためのヘルパー関数（Unity互換 R @ T）
+def create_camera_matrix(yaw_deg, pitch_deg, tx=0.0, ty=0.0, tz=-2.0):
+    yaw = np.radians(yaw_deg)
+    pitch = np.radians(pitch_deg)
+    
+    # Y軸回転
+    cos_y, sin_y = np.cos(yaw), np.sin(yaw)
+    R_y = np.array([
+        [cos_y,  0.0, sin_y, 0.0],
+        [0.0,    1.0, 0.0,   0.0],
+        [-sin_y, 0.0, cos_y, 0.0],
+        [0.0,    0.0, 0.0,   1.0]
+    ], dtype=np.float16)
+    
+    # X軸回転
+    cos_x, sin_x = np.cos(pitch), np.sin(pitch)
+    R_x = np.array([
+        [1.0, 0.0,   0.0,    0.0],
+        [0.0, cos_x, -sin_x, 0.0],
+        [0.0, sin_x, cos_x,  0.0],
+        [0.0, 0.0,   0.0,    1.0]
+    ], dtype=np.float16)
+    
+    # 平行移動（カメラを引く）
+    T = np.array([
+        [1.0, 0.0, 0.0, -tx],
+        [0.0, 1.0, 0.0, -ty],
+        [0.0, 0.0, 1.0, -tz], 
+        [0.0, 0.0, 0.0, 1.0]
+    ], dtype=np.float16)
+    
+    # ビュー行列
+    return R_x @ R_y @ T
+
 async def main():
-    asset_path = Path("./shader_triangle.aimodel")
+    # 前の手順で書き出した3Dアセットを指定
+    asset_path = Path("./ane_3d_renderer_universal.aimodel")
     
     if not asset_path.exists():
-        print(f"Error: {asset_path} not found.")
+        print(f"Error: {asset_path} not found. Please compile the model first.")
         return
 
     print("Loading AIModel Asset...")
@@ -21,71 +56,46 @@ async def main():
         desc = function.desc
 
         # -----------------------------------------------------------
-        # 1. make input data (no padding, 2 channels only)
+        # 1. 外部から流し込む「カメラビュー行列」を生成
         # -----------------------------------------------------------
-        H, W = 1024, 1024
+        # 右に30度回り込み、15度見下ろすカメラ
+        camera_matrix_np = create_camera_matrix(yaw_deg=30.0, pitch_deg=15.0, tx=0.0, ty=0.0, tz=-2.0)
         
-        y_coords = np.linspace(1.0, -1.0, H, dtype=np.float16)
-        x_coords = np.linspace(-1.0, 1.0, W, dtype=np.float16)
-        grid_x, grid_y = np.meshgrid(x_coords, y_coords)
-        
-        # X and Y only (2 channels)
-        uv_data = np.stack([grid_x, grid_y], axis=0)[np.newaxis, ...] # Shape: (1, 2, 1024, 1024)
-
-        # 2. calculate triangle vertices
-        p0, p1, p2 = (0.0, 0.6), (0.5, -0.4), (-0.5, -0.4)
-        
-        def get_line_eq(pa, pb):
-            A = pa[1] - pb[1]
-            B = pb[0] - pa[0]
-            C = -(A * pa[0] + B * pa[1])
-            
-            length = (A**2 + B**2)**0.5
-            if length > 0:
-                A, B, C = A / length, B / length, C / length
-                
-            edge_sharpness = 500.0
-            return A * edge_sharpness, B * edge_sharpness, C * edge_sharpness
-
-        A0, B0, C0 = get_line_eq(p0, p1)
-        A1, B1, C1 = get_line_eq(p1, p2)
-        A2, B2, C2 = get_line_eq(p2, p0)
-
-        # No padding (3, 2, 1, 1) weights
-        weight_flat = [A0, B0, A1, B1, A2, B2]
-        weight_data = np.array(weight_flat, dtype=np.float16).reshape(3, 2, 1, 1)
-        bias_data = np.array([C0, C1, C2], dtype=np.float16)
-
+        # モデルのエクスポート時の名前（例: "camera_matrix" や "x"）を動的に検出し、入力をマッピング
+        input_key = desc.input_names[0]
         inputs = {
-            "x": NDArray(uv_data),
-            "tri_weight": NDArray(weight_data),
-            "tri_bias": NDArray(bias_data)
+            input_key: NDArray(camera_matrix_np)
         }
 
-        print("🚀 Running Inference...")
+        # -----------------------------------------------------------
+        # 2. ANE（Apple Neural Engine）で一撃プレスを実行！
+        # -----------------------------------------------------------
+        print("🚀 Running 3D Raymarching Inference on ANE...")
         outputs = await function(inputs)
         
         output_key = desc.output_names[0]
         result = outputs[output_key].numpy()
 
     # -----------------------------------------------------------
-    # 2. Save as RGBA image
+    # 3. 3Dフルカラー画像（RGB）として保存
     # -----------------------------------------------------------
-    print("📸 Inference completed. Saving as RGBA image...")
+    print("📸 Inference completed. Saving as RGB image...")
     
-    # Change Shape (4, 1024, 1024) to (1024, 1024, 4)
-    img_data = np.squeeze(result)
-    if img_data.shape[0] == 4:
+    # 形状 [1, 3, 256, 256] から バッチ(1)を絞り出して [3, 256, 256] に
+    img_data = np.squeeze(result, axis=0)
+    
+    # [3, 256, 256] -> PILが要求する [256, 256, 3]（H, W, C）に並び替え
+    if img_data.shape[0] == 3:
         img_data = np.transpose(img_data, (1, 2, 0))
 
-    # 0.0〜1.0 value 0〜255 (uint8) clamp convert
+    # 0.0〜1.0 の実数値を 0〜255 (uint8) へクランプして変換
     final_img_data = (np.clip(img_data, 0.0, 1.0) * 255).astype(np.uint8)
 
-    # Write as RGBA image
-    img = Image.fromarray(final_img_data, 'RGBA')
-    img.save("coreai_pure_test.png")
+    # RGBモードの画像として書き出し
+    img = Image.fromarray(final_img_data, 'RGB')
+    img.save("coreai_3d_ane_result.png")
     
-    print("'coreai_pure_test.png' saved！")
+    print("'coreai_3d_ane_result.png' saved！")
 
 if __name__ == "__main__":
     asyncio.run(main())
