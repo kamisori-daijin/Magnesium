@@ -39,16 +39,20 @@ async def main():
         mvp_function: InferenceFunction = mvp_model.load_function("main")
         rast_function: InferenceFunction = rast_model.load_function("main")
 
-        # 1. カメラと頂点データの準備
+        # 1. カメラと頂点データの準備 (4面 × 3頂点 = 12頂点)
         camera_matrix_np = create_camera_matrix([2.0, 2.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
         MAX_VERTICES = 65536
         vertex_buffer_np = np.zeros((1, 4, 1, MAX_VERTICES), dtype=np.float16)
         
-        # テスト用の三角形を1つ設定
-        vertex_buffer_np[0, :, 0, 0] = [0.0, 1.0, 0.0, 1.0]
-        vertex_buffer_np[0, :, 0, 1] = [-1.0, -1.0, 0.0, 1.0]
-        vertex_buffer_np[0, :, 0, 2] = [1.0, -1.0, 0.0, 1.0]
+        vertices_data = [
+            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0],
+        ]
+        for i, v in enumerate(vertices_data):
+            vertex_buffer_np[0, :, 0, i] = v
 
         # 2. 第1段：MVP変換 (ANE)
         print("🚀 [1/2] Running MVP Transformation on ANE...")
@@ -59,84 +63,64 @@ async def main():
         print("🚀 [2/2] Running 3D Rasterization on ANE...")
         final_image = np.zeros((1, 1, 256, 256), dtype=np.float16)
         
-        p0 = transformed_vertices[0, :2, 0, 0]
-        p1 = transformed_vertices[0, :2, 0, 1]
-        p2 = transformed_vertices[0, :2, 0, 2]
-        print(f"Transformed P0: {p0}")
-        print(f"Transformed P1: {p1}")
-        print(f"Transformed P2: {p2}")
-        
         def get_edge(p_a, p_b):
             A = p_a[1] - p_b[1]
             B = p_b[0] - p_a[0]
-            # PyTorch版と全く同じ式にする
             C = -(A * p_a[0] + B * p_a[1])
             return A, B, C
 
-        A0, B0, C0 = get_edge(p0, p1)
-        A1, B1, C1 = get_edge(p1, p2)
-        A2, B2, C2 = get_edge(p2, p0)
-        z_depth = transformed_vertices[0, 2, 0, 0]
-        inv_z = 1.0 / z_depth if z_depth != 0 else 1.0
- 
-        input_names = rast_function.desc.input_names
-        rast_inputs = {}
-         
         def pack(val):
             t = np.full((1, 1, 1, 64), 0.0, dtype=np.float16)
             t[0, 0, 0, 0] = val
             return NDArray(t)
- 
-        for name in input_names:
-    
-            if "_col" in name or name in ["r0", "r1", "r2", "g0", "g1", "g2"]:
-                rast_inputs[name] = pack(1.0)
-            # 2. 次にエッジ情報を判定
-            elif name == "a0": rast_inputs[name] = pack(A0)
-            elif name == "b0": rast_inputs[name] = pack(B0)
-            elif name == "c0": rast_inputs[name] = pack(C0)
-            elif name == "a1": rast_inputs[name] = pack(A1)
-            elif name == "b1": rast_inputs[name] = pack(B1)
-            elif name == "c1": rast_inputs[name] = pack(C1)
-            elif name == "a2": rast_inputs[name] = pack(A2)
-            elif name == "b2": rast_inputs[name] = pack(B2)
-            elif name == "c2": rast_inputs[name] = pack(C2)
-            # 3. 深度情報
-            elif "z" in name or "weight" in name:
-                rast_inputs[name] = pack(inv_z)
-            else:
-                rast_inputs[name] = pack(0.0)
-                
-        rast_outputs = await rast_function(rast_inputs)
-        chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
-        print("--- Debug: ANE Inputs ---")
-        for name, ndarray in rast_inputs.items():
-            arr = ndarray.numpy()
-            # 0番目のチャンネルの値だけを表示
-            print(f"{name}: {arr[0, 0, 0, 0]}")
-        
-        # ★ デバッグログ：ANEの出力を詳細に確認
-        print("="*50)
-        print(f"Chunk Output Shape: {chunk_result.shape}")
-        print(f"Chunk Output Min: {np.min(chunk_result)}")
-        print(f"Chunk Output Max: {np.max(chunk_result)}")
-        print(f"Chunk Output Mean: {np.mean(chunk_result)}")
-        
-        # 0以外の値がどれくらいあるか（描画されているピクセル数）
-        non_zero = np.count_nonzero(chunk_result)
-        print(f"Non-zero pixels: {non_zero} / {chunk_result.size} ({non_zero/chunk_result.size*100:.2f}%)")
-        print("="*50)
-        
-        if chunk_result.ndim == 4:
-            chunk_result = np.max(chunk_result[0], axis=0, keepdims=True)
-        
-        final_image = np.maximum(final_image, chunk_result)
+
+        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
+        input_names = rast_function.desc.input_names
+
+        for i in range(4):
+            idx = i * 3
+            p0 = transformed_vertices[0, :2, 0, idx]
+            p1 = transformed_vertices[0, :2, 0, idx+1]
+            p2 = transformed_vertices[0, :2, 0, idx+2]
+            
+            A0, B0, C0 = get_edge(p0, p1)
+            A1, B1, C1 = get_edge(p1, p2)
+            A2, B2, C2 = get_edge(p2, p0)
+            
+            z_depth = transformed_vertices[0, 2, 0, idx]
+            inv_z = 1.0 / z_depth if z_depth != 0 else 1.0
+            
+            rast_inputs = {}
+            c = colors[i]
+            
+            for name in input_names:
+                if "_col" in name or name in ["r0", "r1", "r2", "g0", "g1", "g2"]:
+                    if "r" in name: rast_inputs[name] = pack(c[0])
+                    elif "g" in name: rast_inputs[name] = pack(c[1])
+                    elif "b" in name: rast_inputs[name] = pack(c[2])
+                    else: rast_inputs[name] = pack(1.0)
+                elif name == "a0": rast_inputs[name] = pack(A0)
+                elif name == "b0": rast_inputs[name] = pack(B0)
+                elif name == "c0": rast_inputs[name] = pack(C0)
+                elif name == "a1": rast_inputs[name] = pack(A1)
+                elif name == "b1": rast_inputs[name] = pack(B1)
+                elif name == "c1": rast_inputs[name] = pack(C1)
+                elif name == "a2": rast_inputs[name] = pack(A2)
+                elif name == "b2": rast_inputs[name] = pack(B2)
+                elif name == "c2": rast_inputs[name] = pack(C2)
+                elif "z" in name or "weight" in name: rast_inputs[name] = pack(inv_z)
+                else: rast_inputs[name] = pack(0.0)
+                    
+            rast_outputs = await rast_function(rast_inputs)
+            chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
+            
+            if chunk_result.ndim == 4:
+                chunk_result = np.max(chunk_result[0], axis=0, keepdims=True)
+            
+            final_image = np.maximum(final_image, chunk_result)
 
     # 4. 画像保存
-    if final_image.ndim == 4:
-        img_data = final_image[0, 0] # 1枚目の画像だけを抽出
-    else:
-        img_data = final_image
+    img_data = final_image[0, 0] if final_image.ndim == 4 else final_image
     min_val, max_val = np.min(img_data), np.max(img_data)
     if max_val > min_val:
         img_data = (img_data - min_val) / (max_val - min_val)
