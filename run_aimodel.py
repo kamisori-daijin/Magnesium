@@ -40,7 +40,7 @@ async def main():
         rast_function: InferenceFunction = rast_model.load_function("main")
 
         # 1. カメラと頂点データの準備
-        camera_matrix_np = create_camera_matrix([0.0, 0.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        camera_matrix_np = create_camera_matrix([2.0, 2.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
         MAX_VERTICES = 65536
         vertex_buffer_np = np.zeros((1, 4, 1, MAX_VERTICES), dtype=np.float16)
