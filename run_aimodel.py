@@ -78,7 +78,9 @@ async def main():
         
         # ★修正：1枚目だけに値を入れ、残り63枚は0にする
         def pack(val):
-            t = np.zeros((1, 1, 1, 64), dtype=np.float16)
+            t = np.full((1, 1, 1, 64), 1.0, dtype=np.float16)
+            
+            # 1枚目だけ正しい値を入れる
             t[0, 0, 0, 0] = val
             return NDArray(t)
 
