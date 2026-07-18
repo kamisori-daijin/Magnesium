@@ -88,20 +88,21 @@ async def main():
             return NDArray(t)
  
         for name in input_names:
-            if "a0" in name: rast_inputs[name] = pack(A0)
-            elif "b0" in name: rast_inputs[name] = pack(B0)
-            elif "c0" in name: rast_inputs[name] = pack(C0)
-            elif "a1" in name: rast_inputs[name] = pack(A1)
-            elif "b1" in name: rast_inputs[name] = pack(B1)
-            elif "c1" in name: rast_inputs[name] = pack(C1)
-            elif "a2" in name: rast_inputs[name] = pack(A2)
-            elif "b2" in name: rast_inputs[name] = pack(B2)
-            elif "c2" in name: rast_inputs[name] = pack(C2)
-            # 色情報（白で描画する場合）
-            elif "r" in name or "g" in name or "b" in name:
+    
+            if "_col" in name or name in ["r0", "r1", "r2", "g0", "g1", "g2"]:
                 rast_inputs[name] = pack(1.0)
-            # 深度情報
-            elif "z" in name or "depth" in name.lower():
+            # 2. 次にエッジ情報を判定
+            elif name == "a0": rast_inputs[name] = pack(A0)
+            elif name == "b0": rast_inputs[name] = pack(B0)
+            elif name == "c0": rast_inputs[name] = pack(C0)
+            elif name == "a1": rast_inputs[name] = pack(A1)
+            elif name == "b1": rast_inputs[name] = pack(B1)
+            elif name == "c1": rast_inputs[name] = pack(C1)
+            elif name == "a2": rast_inputs[name] = pack(A2)
+            elif name == "b2": rast_inputs[name] = pack(B2)
+            elif name == "c2": rast_inputs[name] = pack(C2)
+            # 3. 深度情報
+            elif "z" in name or "weight" in name:
                 rast_inputs[name] = pack(inv_z)
             else:
                 rast_inputs[name] = pack(0.0)
