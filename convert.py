@@ -1,30 +1,26 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from ShaderModel import ANE3DRenderer  # グリッド地面＆調光内蔵の最新ラスタライザ
+from ShaderModel import ANE3DRenderer64  # 64枚版のラスタライザ
 from pathlib import Path
 
-# 解像度はテストコードと完全に一致する 256x256、半精度(FP16)
 WIDTH = 256
 HEIGHT = 256
 
-# ★【ここが最重要ハック】
-# 第1段（MVP）の最大頂点数 65536 にポートの幅を100%カチッと一致させます！
-# 三角形1枚につき3頂点が必要なため、一度に処理できる最大三角形数は 65536 // 3 = 21845枚 に自動拡張されます。
-MAX_VERTICES = 65536
-MAX_TRIANGLES = MAX_VERTICES // 3
-
-model = ANE3DRenderer(
-    max_triangles=MAX_TRIANGLES, 
-    width=WIDTH, 
-    height=HEIGHT
-).to(dtype=torch.float16)
+# ★【ANE最適化の鉄則】
+# 一度にすべてを処理するのではなく、ANEが最も得意とする「64枚」のチャンクに分割して変換します。
+model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
-# 2. 第1段（MVPプロセッサ）の出力形状 [1, 3, 1, 65536] と完全に一致するポートを開ける
+# 2. 入力ポートの定義（64枚の三角形データ）
 # -------------------------------------------------------------------------
-sample_transformed_vertices = torch.zeros(1, 3, 1, MAX_VERTICES, dtype=torch.float16)
+# A0, B0, C0 などの係数と、RGBカラー、Zウェイトのダミーデータを作成
+def make_dummy():
+    return torch.zeros(1, 1, 1, 64, dtype=torch.float16)
+
+# forwardメソッドの引数に合わせてダミーデータを用意
+args = tuple([make_dummy() for _ in range(19)]) # 19個の引数
 
 # -------------------------------------------------------------------------
 # 3. CoreAI 用のエクスポート設定
@@ -33,7 +29,7 @@ converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
         m, 
-        args=(sample_transformed_vertices,) # 第1段の出力ポート [1, 3, 1, 65536] と完全合体！
+        args=args
     ).run_decompositions(
         coreai_torch.get_decomp_table()
     ),
@@ -44,8 +40,8 @@ coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
 # 資産（アセット）として保存
-output_path = Path("ane_3d_rasterizer.aimodel")
+output_path = Path("ane_3d_rasterizer_64.aimodel")
 coreai_program.save_asset(output_path)
 
-print(f"🎉 プラグサイズ完全互換・動的ラスタライザのビルドが完了しました: `{output_path}`")
-print("これで第1段 [1, 3, 1, 65536] のバトンをポインタのまま100%直撃させられるアセットの完成です！")
+print(f"🎉 ANE最適化済みラスタライザのビルドが完了しました: `{output_path}`")
+print("64枚単位で処理を行うため、ANEのメモリを溢れさせることなく安全に動作します！")
