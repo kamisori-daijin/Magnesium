@@ -26,9 +26,9 @@ def run_full_pipeline():
         transformed = mvp_processor(camera_matrix, vertices)
         
     # 5. 変換された座標を取り出す
-    p0_2d = transformed[:, :2, 0, 0]
-    p1_2d = transformed[:, :2, 0, 1]
-    p2_2d = transformed[:, :2, 0, 2]
+    p0_2d = transformed[0, :2, 0, 0].squeeze()
+    p1_2d = transformed[0, :2, 0, 1].squeeze()
+    p2_2d = transformed[0, :2, 0, 2].squeeze()
     
     # 6. エッジ関数 (A, B, C) の計算
     def get_edge(p_a, p_b):
