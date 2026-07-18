@@ -59,48 +59,72 @@ async def main():
         print("🚀 [2/2] Running 3D Rasterization on ANE...")
         final_image = np.zeros((1, 1, 256, 256), dtype=np.float16)
         
-        ACTIVE_VERTICES = 3
-        chunk_triangles = 64
-        chunk_vertices = chunk_triangles * 3
+        p0 = transformed_vertices[0, :2, 0, 0]
+        p1 = transformed_vertices[0, :2, 0, 1]
+        p2 = transformed_vertices[0, :2, 0, 2]
         
+        def get_edge(p_a, p_b):
+            A = p_a[1] - p_b[1]
+            B = p_b[0] - p_a[0]
+            C = -(A * p_a[0] + B * p_a[1])
+            return A, B, C
+
+        A0, B0, C0 = get_edge(p0, p1)
+        A1, B1, C1 = get_edge(p1, p2)
+        A2, B2, C2 = get_edge(p2, p0)
+
         input_names = rast_function.desc.input_names
+        rast_inputs = {}
         
-        for i in range(0, ACTIVE_VERTICES, chunk_vertices):
-            rast_inputs = {}
-            for name in input_names:
-                # 1.0 ではなく、0.001 のような小さな値を使うことでゼロ除算を防ぐ
-                val = 0.001 if "weight" in name else 1.0
-                rast_inputs[name] = NDArray(np.full((1, 1, 1, 64), val, dtype=np.float16))
+        # ★修正：1枚目だけに値を入れ、残り63枚は0にする
+        def pack(val):
+            t = np.zeros((1, 1, 1, 64), dtype=np.float16)
+            t[0, 0, 0, 0] = val
+            return NDArray(t)
+
+        for name in input_names:
+            if "A0" in name: rast_inputs[name] = pack(A0)
+            elif "B0" in name: rast_inputs[name] = pack(B0)
+            elif "C0" in name: rast_inputs[name] = pack(C0)
+            elif "A1" in name: rast_inputs[name] = pack(A1)
+            elif "B1" in name: rast_inputs[name] = pack(B1)
+            elif "C1" in name: rast_inputs[name] = pack(C1)
+            elif "A2" in name: rast_inputs[name] = pack(A2)
+            elif "B2" in name: rast_inputs[name] = pack(B2)
+            elif "C2" in name: rast_inputs[name] = pack(C2)
+            else: rast_inputs[name] = pack(1.0)
             
-            rast_outputs = await rast_function(rast_inputs)
-            chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
-            
-            print(f"Chunk Output Shape: {chunk_result.shape}")
-            print(f"Chunk Output Min: {np.min(chunk_result)}, Max: {np.max(chunk_result)}")
-            
-            if chunk_result.ndim == 4:
-                chunk_result = np.max(chunk_result[0], axis=0, keepdims=True)
-            
-            final_image = np.maximum(final_image, chunk_result)
+        rast_outputs = await rast_function(rast_inputs)
+        chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
+        
+        # ★ デバッグログ：ANEの出力を詳細に確認
+        print("="*50)
+        print(f"Chunk Output Shape: {chunk_result.shape}")
+        print(f"Chunk Output Min: {np.min(chunk_result)}")
+        print(f"Chunk Output Max: {np.max(chunk_result)}")
+        print(f"Chunk Output Mean: {np.mean(chunk_result)}")
+        
+        # 0以外の値がどれくらいあるか（描画されているピクセル数）
+        non_zero = np.count_nonzero(chunk_result)
+        print(f"Non-zero pixels: {non_zero} / {chunk_result.size} ({non_zero/chunk_result.size*100:.2f}%)")
+        print("="*50)
+        
+        if chunk_result.ndim == 4:
+            chunk_result = np.max(chunk_result[0], axis=0, keepdims=True)
+        
+        final_image = np.maximum(final_image, chunk_result)
 
     # 4. 画像保存
     img_data = final_image[0, 0]
-    
-    # ★自動正規化（0.0 〜 1.0 の範囲に引き伸ばす）
-    min_val = np.min(img_data)
-    max_val = np.max(img_data)
-    
+    min_val, max_val = np.min(img_data), np.max(img_data)
     if max_val > min_val:
         img_data = (img_data - min_val) / (max_val - min_val)
-    else:
-        img_data = np.zeros_like(img_data)
         
-    print(f"Normalized Image Min: {np.min(img_data)}, Max: {np.max(img_data)}")
-    
     final_img_data = (np.clip(img_data, 0.0, 1.0) * 255).astype(np.uint8)
     final_img_data = np.repeat(final_img_data[:, :, np.newaxis], 3, axis=2)
     
     Image.fromarray(final_img_data, 'RGB').save("ane_final_output.png")
+    print("✨ 'ane_final_output.png' saved successfully!")
 
 if __name__ == "__main__":
     asyncio.run(main())
