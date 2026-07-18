@@ -40,7 +40,7 @@ async def main():
         rast_function: InferenceFunction = rast_model.load_function("main")
 
         # 1. カメラと頂点データの準備
-        camera_matrix_np = create_camera_matrix([0.0, 0.0, 5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        camera_matrix_np = create_camera_matrix([0.0, 0.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
         MAX_VERTICES = 65536
         vertex_buffer_np = np.zeros((1, 4, 1, MAX_VERTICES), dtype=np.float16)
@@ -69,14 +69,8 @@ async def main():
         def get_edge(p_a, p_b):
             A = p_a[1] - p_b[1]
             B = p_b[0] - p_a[0]
-            # 修正：[-1.0, 1.0] の座標系に合わせた C の計算
-            C = p_a[0] * p_b[1] - p_a[1] * p_b[0]
-            
-            # float16のアンダーフローを防ぐために正規化
-            length = np.sqrt(A*A + B*B)
-            if length > 1e-5:
-                A, B, C = A / length, B / length, C / length
-                
+            # PyTorch版と全く同じ式にする
+            C = -(A * p_a[0] + B * p_a[1])
             return A, B, C
 
         A0, B0, C0 = get_edge(p0, p1)
@@ -94,25 +88,31 @@ async def main():
             return NDArray(t)
  
         for name in input_names:
-            if "A0" in name: rast_inputs[name] = pack(A0)
-            elif "B0" in name: rast_inputs[name] = pack(B0)
-            elif "C0" in name: rast_inputs[name] = pack(C0)
-            elif "A1" in name: rast_inputs[name] = pack(A1)
-            elif "B1" in name: rast_inputs[name] = pack(B1)
-            elif "C1" in name: rast_inputs[name] = pack(C1)
-            elif "A2" in name: rast_inputs[name] = pack(A2)
-            elif "B2" in name: rast_inputs[name] = pack(B2)
-            elif "C2" in name: rast_inputs[name] = pack(C2)
+            if "a0" in name: rast_inputs[name] = pack(A0)
+            elif "b0" in name: rast_inputs[name] = pack(B0)
+            elif "c0" in name: rast_inputs[name] = pack(C0)
+            elif "a1" in name: rast_inputs[name] = pack(A1)
+            elif "b1" in name: rast_inputs[name] = pack(B1)
+            elif "c1" in name: rast_inputs[name] = pack(C1)
+            elif "a2" in name: rast_inputs[name] = pack(A2)
+            elif "b2" in name: rast_inputs[name] = pack(B2)
+            elif "c2" in name: rast_inputs[name] = pack(C2)
             # 色情報（白で描画する場合）
-            elif "R" in name or "G" in name or "B" in name:
+            elif "r" in name or "g" in name or "b" in name:
                 rast_inputs[name] = pack(1.0)
             # 深度情報
-            elif "Z" in name or "depth" in name.lower():
+            elif "z" in name or "depth" in name.lower():
                 rast_inputs[name] = pack(inv_z)
             else:
                 rast_inputs[name] = pack(0.0)
+                
         rast_outputs = await rast_function(rast_inputs)
         chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
+        print("--- Debug: ANE Inputs ---")
+        for name, ndarray in rast_inputs.items():
+            arr = ndarray.numpy()
+            # 0番目のチャンネルの値だけを表示
+            print(f"{name}: {arr[0, 0, 0, 0]}")
         
         # ★ デバッグログ：ANEの出力を詳細に確認
         print("="*50)
