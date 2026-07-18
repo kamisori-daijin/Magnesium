@@ -62,28 +62,37 @@ async def main():
         p0 = transformed_vertices[0, :2, 0, 0]
         p1 = transformed_vertices[0, :2, 0, 1]
         p2 = transformed_vertices[0, :2, 0, 2]
+        print(f"Transformed P0: {p0}")
+        print(f"Transformed P1: {p1}")
+        print(f"Transformed P2: {p2}")
         
         def get_edge(p_a, p_b):
             A = p_a[1] - p_b[1]
             B = p_b[0] - p_a[0]
-            C = -(A * p_a[0] + B * p_a[1])
+            # 修正：[-1.0, 1.0] の座標系に合わせた C の計算
+            C = p_a[0] * p_b[1] - p_a[1] * p_b[0]
+            
+            # float16のアンダーフローを防ぐために正規化
+            length = np.sqrt(A*A + B*B)
+            if length > 1e-5:
+                A, B, C = A / length, B / length, C / length
+                
             return A, B, C
 
         A0, B0, C0 = get_edge(p0, p1)
         A1, B1, C1 = get_edge(p1, p2)
         A2, B2, C2 = get_edge(p2, p0)
-
+        z_depth = transformed_vertices[0, 2, 0, 0]
+        inv_z = 1.0 / z_depth if z_depth != 0 else 1.0
+ 
         input_names = rast_function.desc.input_names
         rast_inputs = {}
-        
-        # ★修正：1枚目だけに値を入れ、残り63枚は0にする
+         
         def pack(val):
-            t = np.full((1, 1, 1, 64), 1.0, dtype=np.float16)
-            
-            # 1枚目だけ正しい値を入れる
+            t = np.full((1, 1, 1, 64), 0.0, dtype=np.float16)
             t[0, 0, 0, 0] = val
             return NDArray(t)
-
+ 
         for name in input_names:
             if "A0" in name: rast_inputs[name] = pack(A0)
             elif "B0" in name: rast_inputs[name] = pack(B0)
@@ -94,8 +103,14 @@ async def main():
             elif "A2" in name: rast_inputs[name] = pack(A2)
             elif "B2" in name: rast_inputs[name] = pack(B2)
             elif "C2" in name: rast_inputs[name] = pack(C2)
-            else: rast_inputs[name] = pack(1.0)
-            
+            # 色情報（白で描画する場合）
+            elif "R" in name or "G" in name or "B" in name:
+                rast_inputs[name] = pack(1.0)
+            # 深度情報
+            elif "Z" in name or "depth" in name.lower():
+                rast_inputs[name] = pack(inv_z)
+            else:
+                rast_inputs[name] = pack(0.0)
         rast_outputs = await rast_function(rast_inputs)
         chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
         
@@ -117,7 +132,10 @@ async def main():
         final_image = np.maximum(final_image, chunk_result)
 
     # 4. 画像保存
-    img_data = final_image[0, 0]
+    if final_image.ndim == 4:
+        img_data = final_image[0, 0] # 1枚目の画像だけを抽出
+    else:
+        img_data = final_image
     min_val, max_val = np.min(img_data), np.max(img_data)
     if max_val > min_val:
         img_data = (img_data - min_val) / (max_val - min_val)
