@@ -12,19 +12,40 @@ struct VertexOut {
     float2 uv;
 };
 
-// ANEの出力を受け取るための構造体
+// 1. 頂点シェーダーの追加
+vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
+    // 画面全体を覆う三角形ストリップの座標
+    float4 positions[4] = {
+        float4(-1.0, -1.0, 0.0, 1.0),
+        float4( 1.0, -1.0, 0.0, 1.0),
+        float4(-1.0,  1.0, 0.0, 1.0),
+        float4( 1.0,  1.0, 0.0, 1.0)
+    };
+    
+    float2 uvs[4] = {
+        float2(0.0, 1.0),
+        float2(1.0, 1.0),
+        float2(0.0, 0.0),
+        float2(1.0, 0.0)
+    };
+    
+    VertexOut out;
+    out.position = positions[vertexID];
+    out.uv = uvs[vertexID];
+    return out;
+}
+
 struct ANEPixel {
     half r, g, b, a;
 };
 
+// 2. フラグメントシェーダー（既存のもの）
 fragment float4 textureFragment(VertexOut in [[stage_in]],
                                  constant ANEPixel* aneBuffer [[buffer(0)]]) {
-    // 1024x1024の解像度を前提としたインデックス計算
     uint2 coord = uint2(in.uv.x * 1024.0, in.uv.y * 1024.0);
     uint index = coord.y * 1024 + coord.x;
     
     ANEPixel pixel = aneBuffer[index];
     
-    // half (Float16) から float4 に変換して出力
     return float4(float(pixel.r), float(pixel.g), float(pixel.b), float(pixel.a));
 }
