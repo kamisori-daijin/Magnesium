@@ -22,7 +22,7 @@ class ANERenderContext {
     var isShowingPicker = false
     var isComputing = false
     
-    private let geometryEvaluator = ANETriangleGeometry(radius: 0.5, speed: 2.5)
+    private let geometry = ANE3DGeometry()
     private let startTime = Date()
     var activeDevice: MTLDevice?
     
@@ -42,11 +42,11 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true // 2つのファイルを選択可能に
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.item, .content, .data]
-        panel.message = "Please select an .aimodel file."
+        panel.message = "Please select both MVP and Rasterizer .aimodel files."
         
         if let mainWindow = NSApplication.shared.windows.first(where: { $0.canBecomeKey }) {
             panel.beginSheetModal(for: mainWindow) { response in
@@ -56,56 +56,59 @@ class ANERenderContext {
     }
     
     private func handlePanelResponse(response: NSApplication.ModalResponse, panel: NSOpenPanel, device: MTLDevice) {
-        guard response == .OK, let selectedURL = panel.url else { return }
-        let fixedURL = selectedURL.standardizedFileURL
+        guard response == .OK, panel.urls.count == 2 else { return }
+        
+        // ファイル名からMVPとRasterizerを判別
+        let urls = panel.urls.map { $0.standardizedFileURL }
+        guard let mvpURL = urls.first(where: { $0.lastPathComponent.contains("mvp") }),
+              let rastURL = urls.first(where: { $0.lastPathComponent.contains("rasterizer") }) else {
+            print("Error: Could not identify MVP and Rasterizer models.")
+            return
+        }
+        
         self.isLoading = true
         
         Task {
-            defer {
-                fixedURL.stopAccessingSecurityScopedResource()
-                self.isLoading = false
-            }
+            defer { self.isLoading = false }
             do {
-                let loadedRenderer = try await ANERenderer(modelURL: fixedURL, metalDevice: device)
+                let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, metalDevice: device)
                 self.renderer = loadedRenderer
-                print("Model loaded successfully.")
+                print("Models loaded successfully.")
             } catch {
-                print("Failed to load model: \(error)")
+                print("Failed to load models: \(error)")
             }
         }
     }
-    
     
     func triggerSingleCompute() {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
         
-        let currentTime = Float(Date().timeIntervalSince(startTime))
-        let params = geometryEvaluator.calculatePackedParameters(forTime: currentTime)
-        renderer.updateGeometryParameters(weights: params.weights, biases: params.biases)
+        // カメラを回転させるなどのアニメーション処理をここに追加可能
+        let cameraMatrix = geometry.createCameraMatrix(
+            eye: SIMD3<Float>(2.0, 2.0, -5.0),
+            target: SIMD3<Float>(0.0, 0.0, 0.0),
+            up: SIMD3<Float>(0.0, 1.0, 0.0)
+        )
+        let vertices = geometry.getPyramidVertices()
         
+        renderer.updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix)
         
         Task { @MainActor in
             do {
                 print("Inference for a single frame")
-                
-                // Here, we wait completely until the ANE finishes writing its output to the MetalBuffer.
                 try await renderer.drawFrame()
-                
-                print("Inference complete. Synchronous commit to Metal confirmed.")
+                print("Inference complete.")
             } catch {
                 print("Inference error: \(error)")
             }
-            // Ensure the completion flag is cleared.
             self.isComputing = false
         }
     }
     
-   
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
-       
         
         guard let renderer = self.renderer,
               let queue = self.commandQueue,
@@ -113,7 +116,6 @@ class ANERenderContext {
               let renderPassDescriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable else { return }
         
-        // Safely copy the ANE output to a Metal buffer here.
         if let displayBuffer = renderer.displayBuffer {
             renderer.updateDisplayBuffer(displayBuffer)
         }

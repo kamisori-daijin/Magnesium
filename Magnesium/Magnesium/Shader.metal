@@ -12,33 +12,19 @@ struct VertexOut {
     float2 uv;
 };
 
-vertex VertexOut textureVertex(uint vid [[vertex_id]]) {
-    float2 positions[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
-    float2 uvs[4]       = { float2(0, 1),   float2(1, 1),   float2(0, 0),   float2(1, 0) };
-    
-    VertexOut out;
-    out.position = float4(positions[vid], 0, 1);
-    out.uv = uvs[vid];
-    return out;
-}
+// ANEの出力を受け取るための構造体
+struct ANEPixel {
+    half r, g, b, a;
+};
 
-
-fragment half4 textureFragment(VertexOut in [[stage_in]],
-                               device const half* aneBuffer [[buffer(0)]])
-{
-    uint x = uint(in.uv.x * 1023.0f);
-    uint y = uint(in.uv.y * 1023.0f);
+fragment float4 textureFragment(VertexOut in [[stage_in]],
+                                 constant ANEPixel* aneBuffer [[buffer(0)]]) {
+    // 1024x1024の解像度を前提としたインデックス計算
+    uint2 coord = uint2(in.uv.x * 1024.0, in.uv.y * 1024.0);
+    uint index = coord.y * 1024 + coord.x;
     
-    unsigned int planeSize = 1024 * 1024;
-    unsigned int pixelIndex = y * 1024 + x;
+    ANEPixel pixel = aneBuffer[index];
     
-    // Extract individual channels from CoreAI's planar output (4 channels, 4 MB total)
-    half r = clamp(aneBuffer[pixelIndex + 0 * planeSize], 0.0h, 1.0h);
-    half g = clamp(aneBuffer[pixelIndex + 1 * planeSize], 0.0h, 1.0h);
-    half b = clamp(aneBuffer[pixelIndex + 2 * planeSize], 0.0h, 1.0h);
-    half a = clamp(aneBuffer[pixelIndex + 3 * planeSize], 0.0h, 1.0h);
-    
-    // Directly output the RGBA data produced by the ANE as Metal pixels!
-    // If the destination MTKView supports alpha transparency, the background will be automatically removed.
-    return half4(r, g, b, a);
+    // half (Float16) から float4 に変換して出力
+    return float4(float(pixel.r), float(pixel.g), float(pixel.b), float(pixel.a));
 }

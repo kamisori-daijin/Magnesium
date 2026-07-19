@@ -5,17 +5,13 @@
 //  Created by kamisori-daijin on 2026/07/11.
 //
 import SwiftUI
-public import Combine
 
 struct ContentView: View {
     @State private var renderContext = ANERenderContext()
     
-    // Start a timer on the SwiftUI side for real-time rendering (running at 60 frames per second)
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
-    
     var body: some View {
         VStack(spacing: 20) {
-            Text("Pure ANE Shader Renderer")
+            Text("Pure ANE 3D Renderer")
                 .font(.title)
                 .bold()
             
@@ -30,9 +26,9 @@ struct ContentView: View {
                     VStack(spacing: 16) {
                         if renderContext.isLoading {
                             ProgressView()
-                            Text("Loading...")
+                            Text("Loading Models...")
                         } else {
-                            Button("Select a model file.") {
+                            Button("Select MVP & Rasterizer Models") {
                                 renderContext.openModelPicker()
                             }
                             .buttonStyle(.borderedProminent)
@@ -44,18 +40,13 @@ struct ContentView: View {
                 }
             }
             
-          
             if renderContext.renderer != nil {
-                Text("Rasterization in progress (60 FPS)")
+                Text("3D Rasterization in progress (ANE)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
         }
         .padding()
         .frame(width: 600, height: 680)
-      
-        .onReceive(timer) { _ in
-            renderContext.triggerSingleCompute()
-        }
     }
 }
