@@ -118,6 +118,14 @@ class ANERenderContext {
         
         if let displayBuffer = renderer.displayBuffer {
             renderer.updateDisplayBuffer(displayBuffer)
+            let pointer = displayBuffer.contents().bindMemory(to: Float16.self, capacity: 1024 * 1024 * 4)
+            var nonZeroCount = 0
+            for i in stride(from: 0, to: 1024 * 1024 * 4, by: 1000) {
+                if pointer[i] != 0 {
+                    nonZeroCount += 1
+                }
+            }
+            print("Metal Buffer Non-zero samples: \(nonZeroCount)")
         }
         
         guard let commandBuffer = queue.makeCommandBuffer() else { return }

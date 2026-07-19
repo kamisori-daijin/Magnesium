@@ -67,6 +67,7 @@ class ANERenderer {
     }
 
     func drawFrame() async throws {
+        print("drawFrame started")
         guard let mvp = mvpFunction, let rast = rastFunction else { return }
         
         let mvpInputs: [String: NDArray] = [
@@ -76,15 +77,32 @@ class ANERenderer {
         let mvpOutputs = try await mvp.run(inputs: mvpInputs)
         
         var mutableOutputs = mvpOutputs
-        guard let transformedVertices = mutableOutputs.remove("output") else { return }
+        guard mutableOutputs.remove("output") != nil else { return }
         
-        var rastInputs: [String: NDArray] = [:]
+    
+        
+        let rastInputs: [String: NDArray] = [:]
         // TODO: transformedVertices からエッジ(A,B,C)を計算して rastInputs にセットする処理をここに実装
         
         var outputViews = InferenceFunction.MutableViews()
         outputViews.insert(self.outputArray.mutableView(as: Float16.self), for: "final_output")
         
         _ = try await rast.run(inputs: rastInputs, outputViews: outputViews)
+        var mutableView = self.outputArray.mutableView(as: Float16.self)
+        
+        mutableView.withUnsafeMutablePointer { pointer, _, _ in
+            var nonZeroCount = 0
+            let totalElements = 1024 * 1024 * 4
+            
+            for i in stride(from: 0, to: totalElements, by: 1000) {
+                if pointer[i] != 0 {
+                    nonZeroCount += 1
+                }
+            }
+            // クロージャの内部でprintする
+            print("ANE Output Non-zero samples: \(nonZeroCount)")
+        }
+    
     }
     
     func updateDisplayBuffer(_ metalBuffer: MTLBuffer) {
@@ -93,6 +111,7 @@ class ANERenderer {
             let dest = metalBuffer.contents()
             let byteCount = 1024 * 1024 * 4 * 2
             memcpy(dest, UnsafeRawPointer(pointer), byteCount)
+            print("Buffer copied successfully.")
         }
     }
 }
