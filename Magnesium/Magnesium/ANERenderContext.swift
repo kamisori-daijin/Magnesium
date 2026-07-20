@@ -18,17 +18,20 @@ class ANERenderContext {
     private(set) var commandQueue: MTLCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
     
+    // 同期用のShared Event
+    private var sharedEvent: MTLSharedEvent?
+    private var currentEventValue: UInt64 = 0
+    
     var isLoading = false
-    var isShowingPicker = false
     var isComputing = false
     
     private let geometry = ANE3DGeometry()
-    private let startTime = Date()
     var activeDevice: MTLDevice?
     
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
+        self.sharedEvent = device.makeSharedEvent()
         
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
@@ -74,18 +77,18 @@ class ANERenderContext {
                 let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, metalDevice: device)
                 self.renderer = loadedRenderer
                 print("Models loaded successfully.")
+                self.triggerSingleCompute() 
             } catch {
                 print("Failed to load models: \(error)")
             }
         }
     }
-    
+
     func triggerSingleCompute() {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
         
-        // カメラを回転させるなどのアニメーション処理をここに追加可能
         let cameraMatrix = geometry.createCameraMatrix(
             eye: SIMD3<Float>(2.0, 2.0, -5.0),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
@@ -97,9 +100,16 @@ class ANERenderContext {
         
         Task { @MainActor in
             do {
-                print("Inference for a single frame")
                 try await renderer.drawFrame()
-                print("Inference complete.")
+                
+                if let displayBuffer = renderer.displayBuffer {
+                    renderer.updateDisplayBuffer(displayBuffer)
+                }
+                
+                // ANEの処理が完了したらイベント値をインクリメントして通知
+                self.currentEventValue += 1
+                self.sharedEvent?.signaledValue = self.currentEventValue
+                
             } catch {
                 print("Inference error: \(error)")
             }
@@ -113,22 +123,16 @@ class ANERenderContext {
         guard let renderer = self.renderer,
               let queue = self.commandQueue,
               let pipeline = self.renderPipelineState,
+              let sharedEvent = self.sharedEvent,
               let renderPassDescriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable else { return }
         
-        if let displayBuffer = renderer.displayBuffer {
-            renderer.updateDisplayBuffer(displayBuffer)
-            let pointer = displayBuffer.contents().bindMemory(to: Float16.self, capacity: 1024 * 1024 * 4)
-            var nonZeroCount = 0
-            for i in stride(from: 0, to: 1024 * 1024 * 4, by: 1000) {
-                if pointer[i] != 0 {
-                    nonZeroCount += 1
-                }
-            }
-            print("Metal Buffer Non-zero samples: \(nonZeroCount)")
-        }
-        
         guard let commandBuffer = queue.makeCommandBuffer() else { return }
+        
+        // GPUは、ANEが現在のフレームの計算を終える（currentEventValueになる）まで待機
+        if self.currentEventValue > 0 {
+            commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
+        }
         
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
