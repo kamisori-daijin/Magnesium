@@ -148,6 +148,14 @@ class ANERenderer {
             outputViews.insert(currentOutputView, for: "final_output")
             
             _ = try await rast.run(inputs: rastInputs, outputViews: outputViews)
+            
+            self.outputArray.view(as: Float16.self).withUnsafePointer { ptr, _, _ in
+                var nonZeroCount = 0
+                // 1024 * 1024 * 4 は全要素数
+                for i in stride(from: 0, to: 1024 * 1024 * 4, by: 100) {
+                    if ptr[i] != 0 { nonZeroCount += 1 }
+                }
+                print("📊 ANE Output Non-zero samples: \(nonZeroCount)")
         }
     }
     

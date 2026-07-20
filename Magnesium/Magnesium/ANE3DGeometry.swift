@@ -21,20 +21,22 @@ struct ANE3DGeometry {
         let xAxis = simd.normalize(simd.cross(up, zAxis))
         let yAxis = simd.cross(zAxis, xAxis)
         
+        // Pythonコードと同じ計算ロジックに修正
         var R = matrix_identity_float4x4
-        R.columns.0 = SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0)
-        R.columns.1 = SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0)
-        R.columns.2 = SIMD4<Float>(xAxis.z, yAxis.z, zAxis.z, 0)
+        R.columns.0 = SIMD4<Float>(xAxis.x, xAxis.y, xAxis.z, 0)
+        R.columns.1 = SIMD4<Float>(yAxis.x, yAxis.y, yAxis.z, 0)
+        R.columns.2 = SIMD4<Float>(zAxis.x, zAxis.y, zAxis.z, 0)
         
         var T = matrix_identity_float4x4
-        T.columns.3 = SIMD4<Float>(-simd.dot(xAxis, eye), -simd.dot(yAxis, eye), -simd.dot(zAxis, eye), 1)
+        T.columns.3 = SIMD4<Float>(-eye.x, -eye.y, -eye.z, 1)
         
-        let viewMatrix = R * T
+        // 行列の掛け算の順序を修正
+        let viewMatrix = R.transpose * T
         
         var packed = [Float16](repeating: 0, count: 16)
         for i in 0..<4 {
             for j in 0..<4 {
-                packed[i * 4 + j] = Float16(viewMatrix[j][i]) // Row-major
+                packed[i * 4 + j] = Float16(viewMatrix[i][j])
             }
         }
         return packed
@@ -53,7 +55,6 @@ struct ANE3DGeometry {
         
         for (i, v) in vertices.enumerated() {
             for channel in 0..<4 {
-                // [1, 4, 1, maxVertices] のレイアウトに合わせたインデックス計算
                 let index = (channel * maxVertices) + i
                 buffer[index] = Float16(v[channel])
             }
