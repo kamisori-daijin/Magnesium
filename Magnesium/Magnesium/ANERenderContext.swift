@@ -108,6 +108,7 @@ class ANERenderContext {
                 
             } catch {
                 print("Inference error: \(error)")
+            
             }
             self.isComputing = false
         }

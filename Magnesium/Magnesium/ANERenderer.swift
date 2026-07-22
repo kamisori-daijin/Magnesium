@@ -37,8 +37,9 @@ class ANERenderer {
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
-        let byteCount = 1024 * 1024 * 4 * 2 // 1024x1024 * 4 channels * 2 bytes (Float16)
+        let byteCount = 256 * 256 * 4 * 2
         self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
+      
         
         setupInitialGeometry()
     }
@@ -90,7 +91,7 @@ class ANERenderer {
         let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
         var mvpOutputs = try await mvp.run(inputs: mvpInputs)
         
-        guard let outputValue = mvpOutputs.remove("output") else { return }
+        guard let outputValue = mvpOutputs.remove("cat") else { return }
         guard var transformedArray = outputValue.ndArray else { return }
         let vertView = transformedArray.view(as: Float16.self)
         
@@ -117,7 +118,6 @@ class ANERenderer {
         // 3. ラスタライズ処理（非同期処理）
         let colors: [(Float16, Float16, Float16)] = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
         
-        // MTLBufferをゼロクリア
         memset(buffer.contents(), 0, buffer.length)
         
         for (i, face) in faces.enumerated() {
@@ -132,23 +132,23 @@ class ANERenderer {
             rastInputs["a1"] = pack(A1); rastInputs["b1"] = pack(B1); rastInputs["c1"] = pack(C1)
             rastInputs["a2"] = pack(A2); rastInputs["b2"] = pack(B2); rastInputs["c2"] = pack(C2)
             
-            rastInputs["r0"] = pack(c.0); rastInputs["g0"] = pack(c.1); rastInputs["b0"] = pack(c.2)
-            rastInputs["r1"] = pack(c.0); rastInputs["g1"] = pack(c.1); rastInputs["b1"] = pack(c.2)
-            rastInputs["r2"] = pack(c.0); rastInputs["g2"] = pack(c.1); rastInputs["b2"] = pack(c.2)
+            rastInputs["r0"] = pack(c.0); rastInputs["g0"] = pack(c.1); rastInputs["b0_col"] = pack(c.2)
+            rastInputs["r1"] = pack(c.0); rastInputs["g1"] = pack(c.1); rastInputs["b1_col"] = pack(c.2)
+            rastInputs["r2"] = pack(c.0); rastInputs["g2"] = pack(c.1); rastInputs["b2_col"] = pack(c.2)
             
-            rastInputs["z0"] = pack(face.invZ); rastInputs["z1"] = pack(face.invZ); rastInputs["z2"] = pack(face.invZ)
+            rastInputs["z_weight"] = pack(face.invZ)
             
-            // MTLBufferからMutableRawViewを作成
             let currentOutputView = NDArray.MutableRawView(
                 metalBuffer: buffer,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape: [1, 4, 1024, 1024],
-                strides: [4 * 1024 * 1024, 1024 * 1024, 1024, 1]
+                shape: [1, 4, 256, 256],
+                // 64という数字をストライドに組み込むことでANEを騙す（アライメントを合わせる）
+                strides: [64 * 256 * 256, 64 * 256, 256, 1]
             )
             
             var outputViews = InferenceFunction.MutableViews()
-            outputViews.insert(currentOutputView, for: "final_output")
+            outputViews.insert(currentOutputView, for: "mul_24")
             
             _ = try await rast.run(inputs: rastInputs, outputViews: outputViews)
         }
