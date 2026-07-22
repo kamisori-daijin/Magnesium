@@ -20,7 +20,6 @@ class ANERenderer {
     internal var vertexBufferArray: NDArray
     internal var cameraMatrixArray: NDArray
     
-    private var outputArray: NDArray
     private(set) var displayBuffer: MTLBuffer?
     
     private let geometry = ANE3DGeometry()
@@ -38,8 +37,7 @@ class ANERenderer {
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
-        self.outputArray = NDArray(shape: [1, 4, 1024, 1024], scalarType: .float16)
-        let byteCount = 1024 * 1024 * 4 * 2
+        let byteCount = 1024 * 1024 * 4 * 2 // 1024x1024 * 4 channels * 2 bytes (Float16)
         self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
         
         setupInitialGeometry()
@@ -86,7 +84,7 @@ class ANERenderer {
     }
 
     func drawFrame() async throws {
-        guard let mvp = mvpFunction, let rast = rastFunction else { return }
+        guard let mvp = mvpFunction, let rast = rastFunction, let buffer = displayBuffer else { return }
         
         // 1. MVP変換
         let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
@@ -105,7 +103,7 @@ class ANERenderer {
             
             for i in 0..<4 {
                 let idx = i * 3
-                let p0 = (vertPtr[xOffset + idx],     vertPtr[yOffset + idx])
+                let p0 = (vertPtr[xOffset + idx], vertPtr[yOffset + idx])
                 let p1 = (vertPtr[xOffset + idx + 1], vertPtr[yOffset + idx + 1])
                 let p2 = (vertPtr[xOffset + idx + 2], vertPtr[yOffset + idx + 2])
                 
@@ -119,10 +117,8 @@ class ANERenderer {
         // 3. ラスタライズ処理（非同期処理）
         let colors: [(Float16, Float16, Float16)] = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
         
-        var initialView = self.outputArray.mutableView(as: Float16.self)
-        initialView.withUnsafeMutablePointer { outPtr, _, _ in
-            memset(outPtr, 0, 1024 * 1024 * 4 * 2)
-        }
+        // MTLBufferをゼロクリア
+        memset(buffer.contents(), 0, buffer.length)
         
         for (i, face) in faces.enumerated() {
             let (A0, B0, C0) = getEdge(pA: face.p0, pB: face.p1)
@@ -142,29 +138,19 @@ class ANERenderer {
             
             rastInputs["z0"] = pack(face.invZ); rastInputs["z1"] = pack(face.invZ); rastInputs["z2"] = pack(face.invZ)
             
-            let currentOutputView = self.outputArray.mutableView(as: Float16.self)
+            // MTLBufferからMutableRawViewを作成
+            let currentOutputView = NDArray.MutableRawView(
+                metalBuffer: buffer,
+                byteOffset: 0,
+                scalarType: .float16,
+                shape: [1, 4, 1024, 1024],
+                strides: [4 * 1024 * 1024, 1024 * 1024, 1024, 1]
+            )
             
             var outputViews = InferenceFunction.MutableViews()
             outputViews.insert(currentOutputView, for: "final_output")
             
             _ = try await rast.run(inputs: rastInputs, outputViews: outputViews)
-            
-            self.outputArray.view(as: Float16.self).withUnsafePointer { ptr, _, _ in
-                var nonZeroCount = 0
-                // 1024 * 1024 * 4 は全要素数
-                for i in stride(from: 0, to: 1024 * 1024 * 4, by: 100) {
-                    if ptr[i] != 0 { nonZeroCount += 1 }
-                }
-                print("📊 ANE Output Non-zero samples: \(nonZeroCount)")
-        }
-    }
-    
-    func updateDisplayBuffer(_ metalBuffer: MTLBuffer) {
-        var mutableView = self.outputArray.mutableView(as: Float16.self)
-        mutableView.withUnsafeMutablePointer { pointer, _, _ in
-            let dest = metalBuffer.contents()
-            let byteCount = 1024 * 1024 * 4 * 2
-            memcpy(dest, UnsafeRawPointer(pointer), byteCount)
         }
     }
 }

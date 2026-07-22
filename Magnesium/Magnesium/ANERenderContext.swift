@@ -77,7 +77,7 @@ class ANERenderContext {
                 let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, metalDevice: device)
                 self.renderer = loadedRenderer
                 print("Models loaded successfully.")
-                self.triggerSingleCompute() 
+                self.triggerSingleCompute()
             } catch {
                 print("Failed to load models: \(error)")
             }
@@ -101,10 +101,6 @@ class ANERenderContext {
         Task { @MainActor in
             do {
                 try await renderer.drawFrame()
-                
-                if let displayBuffer = renderer.displayBuffer {
-                    renderer.updateDisplayBuffer(displayBuffer)
-                }
                 
                 // ANEの処理が完了したらイベント値をインクリメントして通知
                 self.currentEventValue += 1
