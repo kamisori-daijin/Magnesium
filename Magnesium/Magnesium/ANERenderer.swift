@@ -37,9 +37,8 @@ class ANERenderer {
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
-        let byteCount = 256 * 256 * 4 * 2
+        let byteCount = 256 * 256 * 4 * 2 // 256x256 * 4 channels * 2 bytes (Float16)
         self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
-      
         
         setupInitialGeometry()
     }
@@ -138,19 +137,18 @@ class ANERenderer {
             
             rastInputs["z_weight"] = pack(face.invZ)
             
-            let currentOutputView = NDArray.MutableRawView(
-                metalBuffer: buffer,
-                byteOffset: 0,
-                scalarType: .float16,
-                shape: [1, 4, 256, 256],
-                // 64という数字をストライドに組み込むことでANEを騙す（アライメントを合わせる）
-                strides: [64 * 256 * 256, 64 * 256, 256, 1]
-            )
+            // ANEにメモリ管理を任せて実行
+            var rastOutputs = try await rast.run(inputs: rastInputs)
             
-            var outputViews = InferenceFunction.MutableViews()
-            outputViews.insert(currentOutputView, for: "mul_24")
+            guard let outputValue = rastOutputs.remove("mul_24"),
+                  var outputArray = outputValue.ndArray else { continue }
             
-            _ = try await rast.run(inputs: rastInputs, outputViews: outputViews)
+            // 必要なデータだけを displayBuffer にコピー
+            let view = outputArray.view(as: Float16.self)
+            try view.withUnsafePointer { ptr, _, _ in
+                let dest = buffer.contents()
+                memcpy(dest, ptr, 256 * 256 * 2)
+            }
         }
     }
 }
