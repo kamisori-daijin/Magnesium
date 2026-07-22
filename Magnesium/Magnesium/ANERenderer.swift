@@ -37,7 +37,7 @@ class ANERenderer {
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
-        let byteCount = 256 * 256 * 4 * 2 // 256x256 * 4 channels * 2 bytes (Float16)
+        let byteCount = 256 * 256 * 2 // 256x256 * 1 channel * 2 bytes (Float16)
         self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
         
         setupInitialGeometry()

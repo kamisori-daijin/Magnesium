@@ -4,6 +4,7 @@
 //
 //  Created by kamisori-daijin on 2026/07/14.
 //
+
 #include <metal_stdlib>
 using namespace metal;
 
@@ -29,15 +30,19 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
 
 fragment float4 textureFragment(VertexOut in [[stage_in]],
                                  constant half* aneBuffer [[buffer(0)]]) {
-    // Swift側のバッファサイズ(1024x1024)に合わせる
-    uint width = 1024;
-    uint height = 1024;
+    uint width = 256;
+    uint height = 256;
     
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
+    // 1チャンネルのデータを取得
     half gray = aneBuffer[pixelIndex];
     
-    // 値が小さすぎる場合に備えて、少し明るくするテスト
-    return float4(float(gray), float(gray), float(gray), 1.0);
+    // Python側の正規化の簡易版（値が小さすぎるため、適当な係数をかけて可視化する）
+    // ※ 本来はCPU側でmin/maxをとって正規化するのがベストですが、まずは表示確認用です
+    float normalized = float(gray) * 100.0;
+    
+    // RGBすべてに同じ値を入れてグレースケールとして出力（アルファは1.0）
+    return float4(normalized, normalized, normalized, 1.0);
 }
