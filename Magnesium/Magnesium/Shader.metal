@@ -40,6 +40,11 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     
     half val = aneBuffer[pixelIndex];
     float normalized = float(val);
+        
+
+        
+  
+
     
     // アルファ値にも同じ値を設定することで、Max Blendが正しく機能します
     return float4(normalized, normalized, normalized, 1.0);

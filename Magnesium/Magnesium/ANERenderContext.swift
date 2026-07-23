@@ -29,6 +29,7 @@ class ANERenderContext {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
+
         
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
@@ -38,6 +39,8 @@ class ANERenderContext {
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
             pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .add
+           
+ 
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }
