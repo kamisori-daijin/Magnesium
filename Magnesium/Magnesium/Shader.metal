@@ -37,10 +37,15 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     
     half maxVal = 0.0;
     
-    // 64チャンネルの中から最大値を探す
+    // ストライド [4194304, 65536, 256, 1] に合わせたインデックス計算
+    // 65536 は 256*256 なので、チャンネルごとのオフセットです
     for (uint c = 0; c < 64; ++c) {
-        // ANEのメモリ配置 (CHW) に合わせたインデックス計算
-        uint pixelIndex = (c * width * height) + (coord.y * width) + coord.x;
+        uint channelOffset = c * 65536;
+        uint yOffset = coord.y * 256;
+        uint xOffset = coord.x;
+        
+        uint pixelIndex = channelOffset + yOffset + xOffset;
+        
         half val = aneBuffer[pixelIndex];
         if (val > maxVal) {
             maxVal = val;

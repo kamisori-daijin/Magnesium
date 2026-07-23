@@ -134,6 +134,7 @@ class ANERenderer {
             
             guard let outputValue = rastOutputs.remove("mul_24"),
                   var outputArray = outputValue.ndArray else { continue }
+            //print("🔥 ANE Output Strides: \(outputArray.strides)")
             
             let view = outputArray.view(as: Float16.self)
             

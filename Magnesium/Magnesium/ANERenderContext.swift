@@ -125,7 +125,7 @@ class ANERenderContext {
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
-        
+        print("🎨 Rendering Frame - Event: \(self.currentEventValue), Buffer: \(displayBuffer.length) bytes")
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
             
