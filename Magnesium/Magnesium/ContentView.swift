@@ -31,7 +31,8 @@ struct ContentView: View {
                             Button("Select MVP & Rasterizer Models") {
                                 renderContext.openModelPicker()
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.glass)
+                          
                         }
                     }
                     .frame(width: 512, height: 512)
