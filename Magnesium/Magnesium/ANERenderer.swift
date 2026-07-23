@@ -139,14 +139,19 @@ class ANERenderer {
             let view = outputArray.view(as: Float16.self)
             
             // ゼロコピー実装：ANEのメモリを直接MTLBufferとしてラップする
+            let byteCount = 256 * 256 * 64 * 2
+            if self.displayBuffer == nil {
+                self.displayBuffer = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
+            }
+
+            // 2. ANEのデータをMetalのバッファにコピーする
             try view.withUnsafePointer { ptr, _, _ in
-                let byteCount = 256 * 256 * 64 * 2 // 64チャンネル分のサイズ
-                self.displayBuffer = self.metalDevice.makeBuffer(
-                    bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr),
-                    length: byteCount,
-                    options: .storageModeShared,
-                    deallocator: nil
-                )
+                if let displayBuffer = self.displayBuffer {
+                    // メモリの内容を安全にコピー
+                    displayBuffer.contents().copyMemory(from: ptr, byteCount: byteCount)
+                    
+
+                }
             }
         }
     }

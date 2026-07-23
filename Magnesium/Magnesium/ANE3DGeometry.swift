@@ -36,7 +36,8 @@ struct ANE3DGeometry {
         var packed = [Float16](repeating: 0, count: 16)
         for i in 0..<4 {
             for j in 0..<4 {
-                packed[i * 4 + j] = Float16(viewMatrix[i][j])
+                // 👇 [i * 4 + j] から [j * 4 + i] に変更して、NumPyの並びに合わせる
+                packed[j * 4 + i] = Float16(viewMatrix[i][j])
             }
         }
         return packed

@@ -35,6 +35,9 @@ class ANERenderContext {
             pipelineDescriptor.vertexFunction = defaultLibrary.makeFunction(name: "textureVertex")
             pipelineDescriptor.fragmentFunction = defaultLibrary.makeFunction(name: "textureFragment")
             pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+            pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+            pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
+            pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .add
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }

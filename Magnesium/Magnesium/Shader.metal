@@ -35,23 +35,12 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
     
-    half maxVal = 0.0;
+    // ループを削除し、現在のピクセルの値だけをシンプルに取得
+    uint pixelIndex = coord.y * width + coord.x;
     
-    // ストライド [4194304, 65536, 256, 1] に合わせたインデックス計算
-    // 65536 は 256*256 なので、チャンネルごとのオフセットです
-    for (uint c = 0; c < 64; ++c) {
-        uint channelOffset = c * 65536;
-        uint yOffset = coord.y * 256;
-        uint xOffset = coord.x;
-        
-        uint pixelIndex = channelOffset + yOffset + xOffset;
-        
-        half val = aneBuffer[pixelIndex];
-        if (val > maxVal) {
-            maxVal = val;
-        }
-    }
+    half val = aneBuffer[pixelIndex];
+    float normalized = float(val);
     
-    float normalized = float(maxVal);
+    // アルファ値にも同じ値を設定することで、Max Blendが正しく機能します
     return float4(normalized, normalized, normalized, 1.0);
 }
