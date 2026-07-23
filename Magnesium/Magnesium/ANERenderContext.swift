@@ -37,8 +37,8 @@ class ANERenderContext {
             pipelineDescriptor.fragmentFunction = defaultLibrary.makeFunction(name: "textureFragment")
             pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-            pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
-            pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .add
+            pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .max
+            pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
            
  
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
@@ -119,7 +119,7 @@ class ANERenderContext {
         
         // displayBuffer が nil の場合は描画をスキップしてエラーを防ぐ
         guard let renderer = self.renderer,
-              let displayBuffer = renderer.displayBuffer,
+              //let displayBuffer = renderer.displayBuffers,
               let queue = self.commandQueue,
               let pipeline = self.renderPipelineState,
               let sharedEvent = self.sharedEvent,
@@ -131,14 +131,17 @@ class ANERenderContext {
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
-        print("🎨 Rendering Frame - Event: \(self.currentEventValue), Buffer: \(displayBuffer.length) bytes")
+        //print("🎨 Rendering Frame - Event: \(self.currentEventValue), Buffer: \(displayBuffer.length) bytes")
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
             
             // バッファをセット
-            renderEncoder.setFragmentBuffer(displayBuffer, offset: 0, index: 0)
-            
-            renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            for i in 0..<4 {
+                if let buffer = renderer.displayBuffers[i] {
+                    renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
+                    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+                }
+            }
             renderEncoder.endEncoding()
         }
         

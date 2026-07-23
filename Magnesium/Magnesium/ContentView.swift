@@ -11,7 +11,7 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Text("Pure ANE 3D Renderer")
+            Text("ANE 3D Renderer")
                 .font(.title)
                 .bold()
             

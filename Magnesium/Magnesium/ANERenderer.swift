@@ -19,7 +19,7 @@ class ANERenderer {
     internal var cameraMatrixArray: NDArray
     
     // 事前確保のバッファではなく、ANEの出力を直接参照するバッファ
-    private(set) var displayBuffer: MTLBuffer?
+    private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
     
     private let geometry = ANE3DGeometry()
     private let maxVertices = 65536
@@ -140,19 +140,16 @@ class ANERenderer {
             
             // ゼロコピー実装：ANEのメモリを直接MTLBufferとしてラップする
             let byteCount = 256 * 256 * 64 * 2
-            if self.displayBuffer == nil {
-                self.displayBuffer = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
+            if self.displayBuffers[i] == nil {
+                self.displayBuffers[i] = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
             }
 
-            // 2. ANEのデータをMetalのバッファにコピーする
             try view.withUnsafePointer { ptr, _, _ in
-                if let displayBuffer = self.displayBuffer {
-                    // メモリの内容を安全にコピー
-                    displayBuffer.contents().copyMemory(from: ptr, byteCount: byteCount)
-                    
-
+                if let buffer = self.displayBuffers[i] {
+                    buffer.contents().copyMemory(from: ptr, byteCount: byteCount)
                 }
             }
+        
         }
     }
 }
