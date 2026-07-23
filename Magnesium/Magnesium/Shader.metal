@@ -34,15 +34,19 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint height = 256;
     
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
-    uint pixelIndex = coord.y * width + coord.x;
     
-    // 1チャンネルのデータを取得
-    half gray = aneBuffer[pixelIndex];
+    half maxVal = 0.0;
     
-    // Python側の正規化の簡易版（値が小さすぎるため、適当な係数をかけて可視化する）
-    // ※ 本来はCPU側でmin/maxをとって正規化するのがベストですが、まずは表示確認用です
-    float normalized = float(gray) * 100.0;
+    // 64チャンネルの中から最大値を探す
+    for (uint c = 0; c < 64; ++c) {
+        // ANEのメモリ配置 (CHW) に合わせたインデックス計算
+        uint pixelIndex = (c * width * height) + (coord.y * width) + coord.x;
+        half val = aneBuffer[pixelIndex];
+        if (val > maxVal) {
+            maxVal = val;
+        }
+    }
     
-    // RGBすべてに同じ値を入れてグレースケールとして出力（アルファは1.0）
+    float normalized = float(maxVal);
     return float4(normalized, normalized, normalized, 1.0);
 }

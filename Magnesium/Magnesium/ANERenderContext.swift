@@ -2,8 +2,6 @@
 //  ANERenderContext.swift
 //  Magnesium
 //
-//  Created by kamisori-daijin on 2026/07/12.
-//
 
 import Foundation
 import Metal
@@ -18,7 +16,6 @@ class ANERenderContext {
     private(set) var commandQueue: MTLCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
     
-    // 同期用のShared Event
     private var sharedEvent: MTLSharedEvent?
     private var currentEventValue: UInt64 = 0
     
@@ -45,7 +42,7 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true // 2つのファイルを選択可能に
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.item, .content, .data]
@@ -61,7 +58,6 @@ class ANERenderContext {
     private func handlePanelResponse(response: NSApplication.ModalResponse, panel: NSOpenPanel, device: MTLDevice) {
         guard response == .OK, panel.urls.count == 2 else { return }
         
-        // ファイル名からMVPとRasterizerを判別
         let urls = panel.urls.map { $0.standardizedFileURL }
         guard let mvpURL = urls.first(where: { $0.lastPathComponent.contains("mvp") }),
               let rastURL = urls.first(where: { $0.lastPathComponent.contains("rasterizer") }) else {
@@ -102,13 +98,11 @@ class ANERenderContext {
             do {
                 try await renderer.drawFrame()
                 
-                // ANEの処理が完了したらイベント値をインクリメントして通知
                 self.currentEventValue += 1
                 self.sharedEvent?.signaledValue = self.currentEventValue
                 
             } catch {
                 print("Inference error: \(error)")
-            
             }
             self.isComputing = false
         }
@@ -117,7 +111,9 @@ class ANERenderContext {
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
+        // displayBuffer が nil の場合は描画をスキップしてエラーを防ぐ
         guard let renderer = self.renderer,
+              let displayBuffer = renderer.displayBuffer,
               let queue = self.commandQueue,
               let pipeline = self.renderPipelineState,
               let sharedEvent = self.sharedEvent,
@@ -126,7 +122,6 @@ class ANERenderContext {
         
         guard let commandBuffer = queue.makeCommandBuffer() else { return }
         
-        // GPUは、ANEが現在のフレームの計算を終える（currentEventValueになる）まで待機
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
@@ -134,9 +129,8 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
             
-            if let displayBuffer = renderer.displayBuffer {
-                renderEncoder.setFragmentBuffer(displayBuffer, offset: 0, index: 0)
-            }
+            // バッファをセット
+            renderEncoder.setFragmentBuffer(displayBuffer, offset: 0, index: 0)
             
             renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             renderEncoder.endEncoding()

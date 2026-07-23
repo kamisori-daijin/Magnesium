@@ -2,8 +2,6 @@
 //  ANERenderer.swift
 //  Magnesium
 //
-//  Created by kamisori-daijin on 2026/07/11.
-//
 
 import Foundation
 import CoreAI
@@ -20,12 +18,15 @@ class ANERenderer {
     internal var vertexBufferArray: NDArray
     internal var cameraMatrixArray: NDArray
     
+    // 事前確保のバッファではなく、ANEの出力を直接参照するバッファ
     private(set) var displayBuffer: MTLBuffer?
     
     private let geometry = ANE3DGeometry()
     private let maxVertices = 65536
+    private let metalDevice: MTLDevice
     
     init(mvpURL: URL, rastURL: URL, metalDevice: MTLDevice) async throws {
+        self.metalDevice = metalDevice
         let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
         
         self.mvpModel = try await AIModel(contentsOf: mvpURL, options: option)
@@ -36,9 +37,6 @@ class ANERenderer {
         
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
-        
-        let byteCount = 256 * 256 * 2 // 256x256 * 1 channel * 2 bytes (Float16)
-        self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
         
         setupInitialGeometry()
     }
@@ -84,9 +82,8 @@ class ANERenderer {
     }
 
     func drawFrame() async throws {
-        guard let mvp = mvpFunction, let rast = rastFunction, let buffer = displayBuffer else { return }
+        guard let mvp = mvpFunction, let rast = rastFunction else { return }
         
-        // 1. MVP変換
         let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
         var mvpOutputs = try await mvp.run(inputs: mvpInputs)
         
@@ -94,7 +91,6 @@ class ANERenderer {
         guard var transformedArray = outputValue.ndArray else { return }
         let vertView = transformedArray.view(as: Float16.self)
         
-        // 2. データの抽出（同期処理）
         var faces: [FaceData] = []
         try vertView.withUnsafePointer { vertPtr, _, _ in
             let xOffset = 0
@@ -114,10 +110,7 @@ class ANERenderer {
             }
         }
         
-        // 3. ラスタライズ処理（非同期処理）
         let colors: [(Float16, Float16, Float16)] = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
-        
-        memset(buffer.contents(), 0, buffer.length)
         
         for (i, face) in faces.enumerated() {
             let (A0, B0, C0) = getEdge(pA: face.p0, pB: face.p1)
@@ -137,17 +130,22 @@ class ANERenderer {
             
             rastInputs["z_weight"] = pack(face.invZ)
             
-            // ANEにメモリ管理を任せて実行
             var rastOutputs = try await rast.run(inputs: rastInputs)
             
             guard let outputValue = rastOutputs.remove("mul_24"),
                   var outputArray = outputValue.ndArray else { continue }
             
-            // 必要なデータだけを displayBuffer にコピー
             let view = outputArray.view(as: Float16.self)
+            
+            // ゼロコピー実装：ANEのメモリを直接MTLBufferとしてラップする
             try view.withUnsafePointer { ptr, _, _ in
-                let dest = buffer.contents()
-                memcpy(dest, ptr, 256 * 256 * 2)
+                let byteCount = 256 * 256 * 64 * 2 // 64チャンネル分のサイズ
+                self.displayBuffer = self.metalDevice.makeBuffer(
+                    bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr),
+                    length: byteCount,
+                    options: .storageModeShared,
+                    deallocator: nil
+                )
             }
         }
     }
