@@ -38,24 +38,25 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
-    // 4つのバッファのポインタを配列にまとめる
+   
+    // Group the pointers of the four buffers into an array
     constant half* buffers[4] = {buffer0, buffer1, buffer2, buffer3};
     
     half3 finalColor = half3(0.0);
     
     for (int i = 0; i < 4; i++) {
-        // 各バッファの0番目のチャンネルに色情報が入っていると仮定
-        // （実際の色チャンネルに合わせてインデックスを調整してください）
+        // Assume that color information is stored in the 0th channel of each buffer
+    
         half val = buffers[i][pixelIndex];
         
         if (val > 0.0) {
-            // 面ごとに異なる色を割り当てる（テスト用）
+            // Assign a different color to each face (for testing)
             half3 faceColor = half3(0.0);
-            if (i == 0) faceColor.r = val; // 赤
-            if (i == 1) faceColor.g = val; // 緑
-            if (i == 2) faceColor.b = val; // 青
-            if (i == 3) faceColor = half3(val, val, 0.0); // 黄
-            
+            if (i == 0) faceColor.r = val; // Red
+            if (i == 1) faceColor.g = val; // Green
+            if (i == 2) faceColor.b = val; // Blue
+            if (i == 3) faceColor = half3(val, val, 0.0); // Yellow
+            // Blend Color
             finalColor = max(finalColor, faceColor);
         }
     }

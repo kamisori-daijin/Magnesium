@@ -39,7 +39,7 @@ async def main():
         mvp_function: InferenceFunction = mvp_model.load_function("main")
         rast_function: InferenceFunction = rast_model.load_function("main")
 
-        # 1. カメラと頂点データの準備 (4面 × 3頂点 = 12頂点)
+        # 1. Preparation of Camera and Vertex Data (4 faces × 3 vertices = 12 vertices)
         camera_matrix_np = create_camera_matrix([2.0, 2.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
         MAX_VERTICES = 65536
@@ -54,12 +54,12 @@ async def main():
         for i, v in enumerate(vertices_data):
             vertex_buffer_np[0, :, 0, i] = v
 
-        # 2. 第1段：MVP変換 (ANE)
+        # 2. MVP
         print("🚀 [1/2] Running MVP Transformation on ANE...")
         mvp_outputs = await mvp_function({"camera_matrix": NDArray(camera_matrix_np), "vertex_buffer": NDArray(vertex_buffer_np)})
         transformed_vertices = mvp_outputs[mvp_function.desc.output_names[0]].numpy()
 
-        # 3. 第2段：ラスタライズ (ANE)
+        # 3. Rasterization
         print("🚀 [2/2] Running 3D Rasterization on ANE...")
         final_image = np.zeros((1, 1, 256, 256), dtype=np.float16)
         
@@ -119,7 +119,7 @@ async def main():
             
             final_image = np.maximum(final_image, chunk_result)
 
-    # 4. 画像保存
+    # 4. Save Image
     img_data = final_image[0, 0] if final_image.ndim == 4 else final_image
     min_val, max_val = np.min(img_data), np.max(img_data)
     if max_val > min_val:

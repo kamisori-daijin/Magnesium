@@ -15,13 +15,13 @@ struct ANE3DGeometry {
         self.maxVertices = maxVertices
     }
     
-    /// カメラ行列（LookAt）の生成
+    /// Generate LookAt camera matrix
     func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16] {
         let zAxis = simd.normalize(eye - target)
         let xAxis = simd.normalize(simd.cross(up, zAxis))
         let yAxis = simd.cross(zAxis, xAxis)
         
-        // 行優先のデータを構築
+        // Build row-major matrix data
         var R = matrix_identity_float4x4
         R.columns.0 = SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0)
         R.columns.1 = SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0)
@@ -30,7 +30,7 @@ struct ANE3DGeometry {
         var T = matrix_identity_float4x4
         T.columns.3 = SIMD4<Float>(-eye.x, -eye.y, -eye.z, 1)
         
-        // Pythonの R @ T に合わせる
+        // Align with Python's R @ T multiplication
         let viewMatrix = R * T
         
         var packed = [Float16](repeating: 0, count: 16)
@@ -42,8 +42,7 @@ struct ANE3DGeometry {
         return packed
     }
     
-    /// ピラミッドの頂点データを生成
-
+    /// Generates pyramid vertex data
     func getPyramidVertices() -> [Float16] {
         var buffer = [Float16](repeating: 0, count: 1 * 4 * 1 * maxVertices)
         
@@ -55,7 +54,7 @@ struct ANE3DGeometry {
         ]
         
         for (i, v) in vertices.enumerated() {
-            // maxVertices 分だけ間隔をあけて配置する
+            // Space elements by maxVertices
             buffer[0 * maxVertices + i] = Float16(v[0]) // X
             buffer[1 * maxVertices + i] = Float16(v[1]) // Y
             buffer[2 * maxVertices + i] = Float16(v[2]) // Z

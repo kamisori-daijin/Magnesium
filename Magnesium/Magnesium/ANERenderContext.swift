@@ -94,9 +94,7 @@ class ANERenderContext {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
-        
-        // 👇 ここにあった cameraMatrix の生成と updateGeometry を削除しました
-        
+                
         Task { @MainActor in
             do {
                 try await renderer.drawFrame()
@@ -116,7 +114,7 @@ class ANERenderContext {
         timer?.invalidate()
         
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
-            // Task を使って MainActor のコンテキストで実行する
+            // Execute on the MainActor context using Task
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 
@@ -143,7 +141,7 @@ class ANERenderContext {
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
-        // displayBuffer が nil の場合は描画をスキップしてエラーを防ぐ
+        // Skip rendering if displayBuffer is nil to prevent errors
         guard let renderer = self.renderer,
               //let displayBuffer = renderer.displayBuffers,
               let queue = self.commandQueue,
@@ -163,17 +161,17 @@ class ANERenderContext {
            
             var allBuffersReady = true
             
-            // 4つのバッファをチェックしながらセット
+            // Check and set the 4 buffers
             for i in 0..<4 {
                 if let buffer = renderer.displayBuffers[i] {
                     renderEncoder.setFragmentBuffer(buffer, offset: 0, index: i)
                 } else {
-                    // 1つでもnilがあればフラグを折る
+                    // Set flag to false if any buffer is nil
                     allBuffersReady = false
                 }
             }
             
-            // すべてのバッファが揃っている時だけ描画する
+            // Only draw if all buffers are ready
             if allBuffersReady {
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }

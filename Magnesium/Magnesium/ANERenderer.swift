@@ -18,7 +18,7 @@ class ANERenderer {
     internal var vertexBufferArray: NDArray
     internal var cameraMatrixArray: NDArray
     
-    // 事前確保のバッファではなく、ANEの出力を直接参照するバッファ
+    // Buffer that directly references the ANE output, rather than a pre-allocated buffer
     private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
     
     private let geometry = ANE3DGeometry()
@@ -94,7 +94,7 @@ class ANERenderer {
         var faces: [FaceData] = []
         try vertView.withUnsafePointer { vertPtr, _, _ in
             for i in 0..<4 {
-                let idx = i * 3 // 1面あたり3頂点
+                let idx = i * 3 // 3 vertices per face
                 
                 let p0 = (vertPtr[0 * maxVertices + idx],     vertPtr[1 * maxVertices + idx])
                 let p1 = (vertPtr[0 * maxVertices + idx + 1], vertPtr[1 * maxVertices + idx + 1])
@@ -136,7 +136,7 @@ class ANERenderer {
             
             let view = outputArray.view(as: Float16.self)
             
-            // ゼロコピー実装：ANEのメモリを直接MTLBufferとしてラップする
+            // Zero-copy implementation: Wrap ANE memory directly as an MTLBuffer
             let byteCount = 256 * 256 * 64 * 2
             if self.displayBuffers[i] == nil {
                 self.displayBuffers[i] = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)

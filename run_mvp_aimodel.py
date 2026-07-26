@@ -37,7 +37,7 @@ async def main():
     async with asset.executable() as model:
         function: InferenceFunction = model.load_function("main")
 
-        # 1. LookAt カメラ位置の計算
+        # 1. LookAt Camera Position Calculation
         distance = 3.5
         yaw = np.radians(45.0)
         pitch = np.radians(30.0)
@@ -50,7 +50,7 @@ async def main():
             eye=[cam_x, cam_y, cam_z], target=[0.0, 0.0, 0.0], up=[0.0, 1.0, 0.0]
         )
 
-        # 2. 動的頂点バッファの生成 (完全に4次元の画像レイアウトにする)
+        # 2. Generate Dynamic Vertex Buffer (4D Image Layout)
         MAX_VERTICES = 65536
         NUM_VERTICES = 10000 
         
@@ -61,9 +61,9 @@ async def main():
         active_vertices = np.vstack([raw_xyz, raw_w])
         padding = np.zeros((4, MAX_VERTICES - NUM_VERTICES), dtype=np.float16)
         
-        # 結合して形状を (1, 4, 1, MAX_VERTICES) にカチッとハメる！
+        # Shape: (1, 4, 1, MAX_VERTICES)
         combined = np.hstack([active_vertices, padding])
-        vertex_buffer_np = combined[np.newaxis, :, np.newaxis, :] # 4次元化！
+        vertex_buffer_np = combined[np.newaxis, :, np.newaxis, :] 
 
         inputs = {
             "camera_matrix": NDArray(camera_matrix_np),
@@ -80,7 +80,7 @@ async def main():
     # 3. 描画
     # -----------------------------------------------------------
     print("📸 Inference completed. Plotting ANE-rendered 2D points...")
-    # 形状 [1, 3, 1, 65536] から不要な1次元目を絞り出して [3, 65536] に
+    
     transformed_points = np.squeeze(result)
 
     screen_x = transformed_points[0, :NUM_VERTICES]
@@ -99,7 +99,7 @@ async def main():
     plt.savefig(output_png, dpi=150)
     plt.close()
     
-    print(f"100% ANE駆動のテスト画像 `{output_png}` が保存されました！")
+    print(f"Saved `{output_png}` ！")
 
 if __name__ == "__main__":
     asyncio.run(main())

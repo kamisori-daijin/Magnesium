@@ -60,10 +60,10 @@ struct ANEMetalView: NSViewRepresentable {
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
         
         func draw(in view: MTKView) {
-            // 1. まず現在のフレームを描画する
+            // 1. First, draw the current frame
             manager.renderFrame(in: view)
             
-            // 2. 描画が終わってから、次のANE計算をリクエストする
+            // 2. Request the next ANE computation after drawing is complete
             if !manager.isComputing && manager.renderer != nil {
                 manager.triggerSingleCompute()
             }

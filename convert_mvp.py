@@ -4,45 +4,36 @@ import torch
 from MVPProcessor import ANEMVPProcessor
 from pathlib import Path
 
-# 1. 最大65536頂点対応のMVPプロセッサを初期化
-# ANEの絶対ルールである float16（半精度）でモデルを構築します
+
 MAX_VERTICES = 65536
 model = ANEMVPProcessor(max_vertices=MAX_VERTICES).to(dtype=torch.float16)
 model.eval()
 
-# -------------------------------------------------------------------------
-# 2. 僕たちが実機（ランタイム）で毎フレーム動的に流し込む「2つの入力ポート」
-# -------------------------------------------------------------------------
-# 変更箇所のみ（引数の形状変更）
+
 sample_camera = torch.eye(4, dtype=torch.float16)
-# [1, 4, MAX_VERTICES] から [1, 4, 1, MAX_VERTICES] へ4次元化！
+
 sample_vertices = torch.zeros(1, 4, 1, MAX_VERTICES, dtype=torch.float16)
 
 
-# -------------------------------------------------------------------------
-# 3. CoreAI 用のエクスポート設定（動的インプットを2つ並べてトレース）
-# -------------------------------------------------------------------------
 converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
         m, 
-        args=(sample_camera, sample_vertices) # カメラと頂点の動的ポートを同時に開ける！
+        args=(sample_camera, sample_vertices) 
     ).run_decompositions(
         coreai_torch.get_decomp_table()
     ),
 )
 
-# -------------------------------------------------------------------------
-# 4. CoreAIプログラムのビルドとANE最適化
-# -------------------------------------------------------------------------
+
 coreai_program = converter.to_coreai()
 
-# ここで einsum と割り算がANEネイティブの超高速1x1畳み込み命令に焼き固められます
+
 coreai_program.optimize()
 
-# 資産（アセット）として保存
+# Save
 output_path = Path("ane_mvp_processor.aimodel")
 coreai_program.save_asset(output_path)
 
-print(f"🎉 汎用・超高速頂点プロセッサのビルドが完了しました: `{output_path}`")
-print("これであらゆる3Dモデルを一瞬で画面の正しい2D座標にプレスする無敵のコアアセットが完成です！")
+print(f"Conversion Success!: `{output_path}`")
+

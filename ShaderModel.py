@@ -17,23 +17,23 @@ class ANE3DRenderer64(nn.Module):
         ], dim=1))
 
     def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight):
-        # 入力はすべて [1, 1, 1, 64] を想定
+        # input: [1, 1, 1, 64]
         def compute_edges(A, B, C):
             weight = torch.cat([A, B, C], dim=1).permute(3, 1, 0, 2).contiguous()
             return F.conv2d(self.pixel_coords, weight, bias=None)
 
-        # 1. エッジ関数（ピクセルが三角形の内側にあるか）の計算
+        # 1. Edge Function
         edges0 = compute_edges(A0, B0, C0)
         edges1 = compute_edges(A1, B1, C1)
         edges2 = compute_edges(A2, B2, C2)
 
-        # 2. マスクの生成（内側なら1、外側なら0）
+        # 2. Create Mask
         valid_mask = torch.clamp(torch.relu((A0**2 + B0**2) * 100.0), min=0.0, max=1.0).permute(3, 1, 0, 2)
         inside_cw = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
         inside_ccw = torch.relu(-edges0 * 100.0) * torch.relu(-edges1 * 100.0) * torch.relu(-edges2 * 100.0)
         mask = torch.clamp(torch.maximum(inside_cw, inside_ccw) * valid_mask, min=0.0, max=1.0)
 
-        # 3. 重心座標系（Barycentric Coordinates）による色の補間
+        # 3. Barycentric Coordinates
         total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
         w0 = edges1 / total_area
         w1 = edges2 / total_area
@@ -49,8 +49,8 @@ class ANE3DRenderer64(nn.Module):
         G = interpolate_color(G0, G1, G2)
         B = interpolate_color(B0_col, B1_col, B2_col)
 
-        # 4. Zバッファ（奥行き）の適用
+        # 4. Z Buffer
         w = z_weight.permute(3, 1, 0, 2)
         
-        # 出力: [1, 64, H, W] のカラー画像とZ値
+        # Output: [1, 64, H, W] color image and Z values
         return R * w, G * w, B * w, mask * w
