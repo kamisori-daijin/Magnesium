@@ -6,86 +6,130 @@ from PIL import Image
 from coreai.authoring import AIModelAsset
 from coreai.runtime import InferenceFunction, NDArray
 
-async def main():
-    asset_path = Path("./shader_triangle.aimodel")
+def create_camera_matrix(eye, target, up):
+    eye = np.array(eye, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
+    up = np.array(up, dtype=np.float32)
     
-    if not asset_path.exists():
-        print(f"Error: {asset_path} not found.")
+    z_axis = (eye - target) / np.linalg.norm(eye - target)
+    x_axis = np.cross(up, z_axis) / np.linalg.norm(np.cross(up, z_axis))
+    y_axis = np.cross(z_axis, x_axis)
+    
+    R = np.eye(4, dtype=np.float32)
+    R[0, :3] = x_axis; R[1, :3] = y_axis; R[2, :3] = z_axis
+    
+    T = np.eye(4, dtype=np.float32)
+    T[:3, 3] = -eye
+    
+    return (R @ T).astype(np.float16)
+
+async def main():
+    mvp_path = Path("./ane_mvp_processor.aimodel")
+    rast_path = Path("./ane_3d_rasterizer_64.aimodel")
+    
+    if not mvp_path.exists() or not rast_path.exists():
+        print("Error: Assets not found.")
         return
 
-    print("Loading AIModel Asset...")
-    asset = AIModelAsset.load(asset_path)
+    print("Loading Assets onto ANE...")
+    mvp_asset = AIModelAsset.load(mvp_path)
+    rast_asset = AIModelAsset.load(rast_path)
     
-    async with asset.executable() as model:
-        function: InferenceFunction = model.load_function("main")
-        desc = function.desc
+    async with mvp_asset.executable() as mvp_model, rast_asset.executable() as rast_model:
+        mvp_function: InferenceFunction = mvp_model.load_function("main")
+        rast_function: InferenceFunction = rast_model.load_function("main")
 
-        # -----------------------------------------------------------
-        # 1. make input data (no padding, 2 channels only)
-        # -----------------------------------------------------------
-        H, W = 1024, 1024
+        # 1. Preparation of Camera and Vertex Data (4 faces × 3 vertices = 12 vertices)
+        camera_matrix_np = create_camera_matrix([2.0, 2.0, -5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
-        y_coords = np.linspace(1.0, -1.0, H, dtype=np.float16)
-        x_coords = np.linspace(-1.0, 1.0, W, dtype=np.float16)
-        grid_x, grid_y = np.meshgrid(x_coords, y_coords)
+        MAX_VERTICES = 65536
+        vertex_buffer_np = np.zeros((1, 4, 1, MAX_VERTICES), dtype=np.float16)
         
-        # X and Y only (2 channels)
-        uv_data = np.stack([grid_x, grid_y], axis=0)[np.newaxis, ...] # Shape: (1, 2, 1024, 1024)
+        vertices_data = [
+            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0],
+            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0],
+        ]
+        for i, v in enumerate(vertices_data):
+            vertex_buffer_np[0, :, 0, i] = v
 
-        # 2. calculate triangle vertices
-        p0, p1, p2 = (0.0, 0.6), (0.5, -0.4), (-0.5, -0.4)
+        # 2. MVP
+        print("🚀 [1/2] Running MVP Transformation on ANE...")
+        mvp_outputs = await mvp_function({"camera_matrix": NDArray(camera_matrix_np), "vertex_buffer": NDArray(vertex_buffer_np)})
+        transformed_vertices = mvp_outputs[mvp_function.desc.output_names[0]].numpy()
+
+        # 3. Rasterization
+        print("🚀 [2/2] Running 3D Rasterization on ANE...")
+        final_image = np.zeros((1, 1, 256, 256), dtype=np.float16)
         
-        def get_line_eq(pa, pb):
-            A = pa[1] - pb[1]
-            B = pb[0] - pa[0]
-            C = -(A * pa[0] + B * pa[1])
+        def get_edge(p_a, p_b):
+            A = p_a[1] - p_b[1]
+            B = p_b[0] - p_a[0]
+            C = -(A * p_a[0] + B * p_a[1])
+            return A, B, C
+
+        def pack(val):
+            t = np.full((1, 1, 1, 64), 0.0, dtype=np.float16)
+            t[0, 0, 0, 0] = val
+            return NDArray(t)
+
+        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
+        input_names = rast_function.desc.input_names
+
+        for i in range(4):
+            idx = i * 3
+            p0 = transformed_vertices[0, :2, 0, idx]
+            p1 = transformed_vertices[0, :2, 0, idx+1]
+            p2 = transformed_vertices[0, :2, 0, idx+2]
             
-            length = (A**2 + B**2)**0.5
-            if length > 0:
-                A, B, C = A / length, B / length, C / length
-                
-            edge_sharpness = 500.0
-            return A * edge_sharpness, B * edge_sharpness, C * edge_sharpness
+            A0, B0, C0 = get_edge(p0, p1)
+            A1, B1, C1 = get_edge(p1, p2)
+            A2, B2, C2 = get_edge(p2, p0)
+            
+            z_depth = transformed_vertices[0, 2, 0, idx]
+            inv_z = 1.0 / z_depth if z_depth != 0 else 1.0
+            
+            rast_inputs = {}
+            c = colors[i]
+            
+            for name in input_names:
+                if "_col" in name or name in ["r0", "r1", "r2", "g0", "g1", "g2"]:
+                    if "r" in name: rast_inputs[name] = pack(c[0])
+                    elif "g" in name: rast_inputs[name] = pack(c[1])
+                    elif "b" in name: rast_inputs[name] = pack(c[2])
+                    else: rast_inputs[name] = pack(1.0)
+                elif name == "a0": rast_inputs[name] = pack(A0)
+                elif name == "b0": rast_inputs[name] = pack(B0)
+                elif name == "c0": rast_inputs[name] = pack(C0)
+                elif name == "a1": rast_inputs[name] = pack(A1)
+                elif name == "b1": rast_inputs[name] = pack(B1)
+                elif name == "c1": rast_inputs[name] = pack(C1)
+                elif name == "a2": rast_inputs[name] = pack(A2)
+                elif name == "b2": rast_inputs[name] = pack(B2)
+                elif name == "c2": rast_inputs[name] = pack(C2)
+                elif "z" in name or "weight" in name: rast_inputs[name] = pack(inv_z)
+                else: rast_inputs[name] = pack(0.0)
+                    
+            rast_outputs = await rast_function(rast_inputs)
+            chunk_result = rast_outputs[rast_function.desc.output_names[0]].numpy()
+            
+            if chunk_result.ndim == 4:
+                chunk_result = np.max(chunk_result[0], axis=0, keepdims=True)
+            
+            final_image = np.maximum(final_image, chunk_result)
 
-        A0, B0, C0 = get_line_eq(p0, p1)
-        A1, B1, C1 = get_line_eq(p1, p2)
-        A2, B2, C2 = get_line_eq(p2, p0)
-
-        # No padding (3, 2, 1, 1) weights
-        weight_flat = [A0, B0, A1, B1, A2, B2]
-        weight_data = np.array(weight_flat, dtype=np.float16).reshape(3, 2, 1, 1)
-        bias_data = np.array([C0, C1, C2], dtype=np.float16)
-
-        inputs = {
-            "x": NDArray(uv_data),
-            "tri_weight": NDArray(weight_data),
-            "tri_bias": NDArray(bias_data)
-        }
-
-        print("🚀 Running Inference...")
-        outputs = await function(inputs)
+    # 4. Save Image
+    img_data = final_image[0, 0] if final_image.ndim == 4 else final_image
+    min_val, max_val = np.min(img_data), np.max(img_data)
+    if max_val > min_val:
+        img_data = (img_data - min_val) / (max_val - min_val)
         
-        output_key = desc.output_names[0]
-        result = outputs[output_key].numpy()
-
-    # -----------------------------------------------------------
-    # 2. Save as RGBA image
-    # -----------------------------------------------------------
-    print("📸 Inference completed. Saving as RGBA image...")
-    
-    # Change Shape (4, 1024, 1024) to (1024, 1024, 4)
-    img_data = np.squeeze(result)
-    if img_data.shape[0] == 4:
-        img_data = np.transpose(img_data, (1, 2, 0))
-
-    # 0.0〜1.0 value 0〜255 (uint8) clamp convert
     final_img_data = (np.clip(img_data, 0.0, 1.0) * 255).astype(np.uint8)
-
-    # Write as RGBA image
-    img = Image.fromarray(final_img_data, 'RGBA')
-    img.save("coreai_pure_test.png")
+    final_img_data = np.repeat(final_img_data[:, :, np.newaxis], 3, axis=2)
     
-    print("'coreai_pure_test.png' saved！")
+    Image.fromarray(final_img_data, 'RGB').save("ane_final_output.png")
+    print("✨ 'ane_final_output.png' saved successfully!")
 
 if __name__ == "__main__":
     asyncio.run(main())

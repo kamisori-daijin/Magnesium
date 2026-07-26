@@ -30,11 +30,7 @@ struct ANEMetalView: NSViewRepresentable {
         mtkView.device = device
         mtkView.delegate = context.coordinator
         mtkView.framebufferOnly = false
-        
-        // Synchronize completely with the context-side pipeline configuration (.bgra8Unorm)
         mtkView.colorPixelFormat = .bgra8Unorm
-        
-        // Ensure full support for transparent backgrounds.
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         
         mtkView.isPaused = false
@@ -42,7 +38,6 @@ struct ANEMetalView: NSViewRepresentable {
         mtkView.wantsLayer = true
         
         if let layer = mtkView.layer {
-          
             layer.isOpaque = false
         }
         
@@ -65,7 +60,13 @@ struct ANEMetalView: NSViewRepresentable {
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
         
         func draw(in view: MTKView) {
+            // 1. First, draw the current frame
             manager.renderFrame(in: view)
+            
+            // 2. Request the next ANE computation after drawing is complete
+            if !manager.isComputing && manager.renderer != nil {
+                manager.triggerSingleCompute()
+            }
         }
     }
 }

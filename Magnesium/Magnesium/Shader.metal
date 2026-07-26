@@ -4,6 +4,7 @@
 //
 //  Created by kamisori-daijin on 2026/07/14.
 //
+
 #include <metal_stdlib>
 using namespace metal;
 
@@ -12,33 +13,53 @@ struct VertexOut {
     float2 uv;
 };
 
-vertex VertexOut textureVertex(uint vid [[vertex_id]]) {
-    float2 positions[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
-    float2 uvs[4]       = { float2(0, 1),   float2(1, 1),   float2(0, 0),   float2(1, 0) };
+vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
+    float4 positions[4] = {
+        float4(-1.0, -1.0, 0.0, 1.0),
+        float4( 1.0, -1.0, 0.0, 1.0),
+        float4(-1.0,  1.0, 0.0, 1.0),
+        float4( 1.0,  1.0, 0.0, 1.0)
+    };
+    float2 uvs[4] = { float2(0.0, 1.0), float2(1.0, 1.0), float2(0.0, 0.0), float2(1.0, 0.0) };
     
     VertexOut out;
-    out.position = float4(positions[vid], 0, 1);
-    out.uv = uvs[vid];
+    out.position = positions[vertexID];
+    out.uv = uvs[vertexID];
     return out;
 }
 
-
-fragment half4 textureFragment(VertexOut in [[stage_in]],
-                               device const half* aneBuffer [[buffer(0)]])
-{
-    uint x = uint(in.uv.x * 1023.0f);
-    uint y = uint(in.uv.y * 1023.0f);
+fragment float4 textureFragment(VertexOut in [[stage_in]],
+                                 constant half* buffer0 [[buffer(0)]],
+                                 constant half* buffer1 [[buffer(1)]],
+                                 constant half* buffer2 [[buffer(2)]],
+                                 constant half* buffer3 [[buffer(3)]]) {
+    uint width = 256;
+    uint height = 256;
+    uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
+    uint pixelIndex = coord.y * width + coord.x;
     
-    unsigned int planeSize = 1024 * 1024;
-    unsigned int pixelIndex = y * 1024 + x;
+   
+    // Group the pointers of the four buffers into an array
+    constant half* buffers[4] = {buffer0, buffer1, buffer2, buffer3};
     
-    // Extract individual channels from CoreAI's planar output (4 channels, 4 MB total)
-    half r = clamp(aneBuffer[pixelIndex + 0 * planeSize], 0.0h, 1.0h);
-    half g = clamp(aneBuffer[pixelIndex + 1 * planeSize], 0.0h, 1.0h);
-    half b = clamp(aneBuffer[pixelIndex + 2 * planeSize], 0.0h, 1.0h);
-    half a = clamp(aneBuffer[pixelIndex + 3 * planeSize], 0.0h, 1.0h);
+    half3 finalColor = half3(0.0);
     
-    // Directly output the RGBA data produced by the ANE as Metal pixels!
-    // If the destination MTKView supports alpha transparency, the background will be automatically removed.
-    return half4(r, g, b, a);
+    for (int i = 0; i < 4; i++) {
+        // Assume that color information is stored in the 0th channel of each buffer
+    
+        half val = buffers[i][pixelIndex];
+        
+        if (val > 0.0) {
+            // Assign a different color to each face (for testing)
+            half3 faceColor = half3(0.0);
+            if (i == 0) faceColor.r = val; // Red
+            if (i == 1) faceColor.g = val; // Green
+            if (i == 2) faceColor.b = val; // Blue
+            if (i == 3) faceColor = half3(val, val, 0.0); // Yellow
+            // Blend Color
+            finalColor = max(finalColor, faceColor);
+        }
+    }
+    
+    return float4(float3(finalColor), 1.0);
 }

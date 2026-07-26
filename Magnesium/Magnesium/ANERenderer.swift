@@ -2,88 +2,153 @@
 //  ANERenderer.swift
 //  Magnesium
 //
-//  Created by kamisori-daijin on 2026/07/11.
-//
 
 import Foundation
 import CoreAI
 import Metal
+import simd
 
 class ANERenderer {
-    private var aiModel: AIModel?
-    private var renderFunction: InferenceFunction?
+    private var mvpModel: AIModel?
+    private var rastModel: AIModel?
     
-    internal var uvInputArray: NDArray
-    private var triWeightArray: NDArray
-    private var triBiasArray: NDArray
+    private var mvpFunction: InferenceFunction?
+    private var rastFunction: InferenceFunction?
     
-
-    private var outputArray: NDArray
-    private(set) var displayBuffer: MTLBuffer?
+    internal var vertexBufferArray: NDArray
+    internal var cameraMatrixArray: NDArray
     
-    init(modelURL: URL, metalDevice: MTLDevice) async throws {
+    // Buffer that directly references the ANE output, rather than a pre-allocated buffer
+    private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
+    
+    private let geometry = ANE3DGeometry()
+    private let maxVertices = 65536
+    private let metalDevice: MTLDevice
+    
+    init(mvpURL: URL, rastURL: URL, metalDevice: MTLDevice) async throws {
+        self.metalDevice = metalDevice
         let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
-        self.aiModel = try await AIModel(contentsOf: modelURL)
         
-        guard let function = try aiModel?.loadFunction(named: "main") else {
-            throw NSError(domain: "CoreAI", code: 404, userInfo: [NSLocalizedDescriptionKey: "The main function was not found."])
-        }
-        self.renderFunction = function
+        self.mvpModel = try await AIModel(contentsOf: mvpURL, options: option)
+        self.rastModel = try await AIModel(contentsOf: rastURL, options: option)
         
-        // 1. Initialize UV ​​coordinates (generated from a contiguous array)
-        let H = 1024, W = 1024
-        let planeSize = H * W
-        var uvData = [Float16](repeating: 0, count: 1 * 2 * H * W)
+        self.mvpFunction = try mvpModel?.loadFunction(named: "main")
+        self.rastFunction = try rastModel?.loadFunction(named: "main")
         
-        for y in 0..<H {
-            let v = Float16(1.0 - (Double(y) / 1023.0) * 2.0)
-            for x in 0..<W {
-                let u = Float16((Double(x) / 1023.0) * 2.0 - 1.0)
-                uvData[y * W + x] = u
-                uvData[planeSize + (y * W + x)] = v
-            }
-        }
+        self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
+        self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
-        self.uvInputArray = NDArray(scalars: uvData, shape:[1,2,1024,1024])
-        self.triWeightArray = NDArray(shape:[3,2,1,1], scalarType: .float16)
-        self.triBiasArray = NDArray(shape:[3], scalarType: .float16)
-        
-       
-        self.outputArray = NDArray(shape:[1,4,1024,1024], scalarType: .float16)
-        let byteCount = 1024 * 1024 * 4 * 2
-        self.displayBuffer = metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
-       
-    
+        setupInitialGeometry()
     }
 
-    func updateGeometryParameters(weights: [Float16], biases: [Float16]) {
-        var weightMutableView = self.triWeightArray.mutableView(as: Float16.self)
-        weightMutableView.copyElements(fromContentsOf: weights)
+    private func setupInitialGeometry() {
+        let vertices = geometry.getPyramidVertices()
+        let cameraMatrix = geometry.createCameraMatrix(
+            eye: SIMD3<Float>(2.0, 2.0, -5.0),
+            target: SIMD3<Float>(0.0, 0.0, 0.0),
+            up: SIMD3<Float>(0.0, 1.0, 0.0)
+        )
+        updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix)
+    }
+
+    func updateGeometry(vertices: [Float16], cameraMatrix: [Float16]) {
+        var vertexView = self.vertexBufferArray.mutableView(as: Float16.self)
+        vertexView.copyElements(fromContentsOf: vertices)
         
-        var biasMutableView = self.triBiasArray.mutableView(as: Float16.self)
-        biasMutableView.copyElements(fromContentsOf: biases)
+        var cameraView = self.cameraMatrixArray.mutableView(as: Float16.self)
+        cameraView.copyElements(fromContentsOf: cameraMatrix)
+    }
+
+    private func getEdge(pA: (Float16, Float16), pB: (Float16, Float16)) -> (Float16, Float16, Float16) {
+        let A = pA.1 - pB.1
+        let B = pB.0 - pA.0
+        let C = -(A * pA.0 + B * pA.1)
+        return (A, B, C)
+    }
+
+    private func pack(_ val: Float16) -> NDArray {
+        var array = NDArray(shape: [1, 1, 1, 64], scalarType: .float16)
+        var view = array.mutableView(as: Float16.self)
+        view.withUnsafeMutablePointer { pointer, _, _ in
+            pointer.initialize(repeating: 0, count: 64)
+            pointer[0] = val
+        }
+        return array
+    }
+
+    private struct FaceData {
+        let p0, p1, p2: (Float16, Float16)
+        let invZ: Float16
     }
 
     func drawFrame() async throws {
-        guard let renderFunction = self.renderFunction else { return }
+        guard let mvp = mvpFunction, let rast = rastFunction else { return }
         
-        var outputViews = InferenceFunction.MutableViews()
-        outputViews.insert(self.outputArray.mutableView(as: Float16.self), for: "relu_1")
+        let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
+        var mvpOutputs = try await mvp.run(inputs: mvpInputs)
         
-     
-        _ = try await renderFunction.run(inputs: ["x": uvInputArray, "tri_weight": triWeightArray, "tri_bias": triBiasArray], outputViews: outputViews)
-    }
-    
-
-    func updateDisplayBuffer(_ metalBuffer: MTLBuffer) {
-            var mutableView = self.outputArray.mutableView(as: Float16.self)
-         
-            mutableView.withUnsafeMutablePointer { pointer, _, _ in
-                let dest = metalBuffer.contents()
-                let byteCount = 1024 * 1024 * 4 * 2
+        guard let outputValue = mvpOutputs.remove("cat") else { return }
+        guard var transformedArray = outputValue.ndArray else { return }
+        let vertView = transformedArray.view(as: Float16.self)
+        
+        var faces: [FaceData] = []
+        try vertView.withUnsafePointer { vertPtr, _, _ in
+            for i in 0..<4 {
+                let idx = i * 3 // 3 vertices per face
                 
-                // Convert UnsafeMutablePointer to UnsafeRawPointer and pass it to memcpy
-                memcpy(dest, UnsafeRawPointer(pointer), byteCount)
+                let p0 = (vertPtr[0 * maxVertices + idx],     vertPtr[1 * maxVertices + idx])
+                let p1 = (vertPtr[0 * maxVertices + idx + 1], vertPtr[1 * maxVertices + idx + 1])
+                let p2 = (vertPtr[0 * maxVertices + idx + 2], vertPtr[1 * maxVertices + idx + 2])
+                
+                let zDepth = Float(vertPtr[2 * maxVertices + idx])
+                let invZ = zDepth != 0 ? Float16(1.0 / zDepth) : Float16(1.0)
+                
+                faces.append(FaceData(p0: p0, p1: p1, p2: p2, invZ: invZ))
             }
         }
+        
+        let colors: [(Float16, Float16, Float16)] = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
+        
+        for (i, face) in faces.enumerated() {
+            let (A0, B0, C0) = getEdge(pA: face.p0, pB: face.p1)
+            let (A1, B1, C1) = getEdge(pA: face.p1, pB: face.p2)
+            let (A2, B2, C2) = getEdge(pA: face.p2, pB: face.p0)
+            
+            var rastInputs: [String: NDArray] = [:]
+            let c = colors[i]
+            
+            rastInputs["a0"] = pack(A0); rastInputs["b0"] = pack(B0); rastInputs["c0"] = pack(C0)
+            rastInputs["a1"] = pack(A1); rastInputs["b1"] = pack(B1); rastInputs["c1"] = pack(C1)
+            rastInputs["a2"] = pack(A2); rastInputs["b2"] = pack(B2); rastInputs["c2"] = pack(C2)
+            
+            rastInputs["r0"] = pack(c.0); rastInputs["g0"] = pack(c.1); rastInputs["b0_col"] = pack(c.2)
+            rastInputs["r1"] = pack(c.0); rastInputs["g1"] = pack(c.1); rastInputs["b1_col"] = pack(c.2)
+            rastInputs["r2"] = pack(c.0); rastInputs["g2"] = pack(c.1); rastInputs["b2_col"] = pack(c.2)
+            
+            rastInputs["z_weight"] = pack(face.invZ)
+            
+            var rastOutputs = try await rast.run(inputs: rastInputs)
+            
+            guard let outputValue = rastOutputs.remove("mul_24"),
+                  var outputArray = outputValue.ndArray else { continue }
+            //print("🔥 ANE Output Strides: \(outputArray.strides)")
+            //print("Face \(i) computed. Output array shape: \(outputArray.shape)")
+            
+            let view = outputArray.view(as: Float16.self)
+            
+            // Zero-copy implementation: Wrap ANE memory directly as an MTLBuffer
+            let byteCount = 256 * 256 * 64 * 2
+            if self.displayBuffers[i] == nil {
+                self.displayBuffers[i] = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
+            }
+
+
+            try view.withUnsafePointer { ptr, _, _ in
+                if let buffer = self.displayBuffers[i] {
+                    buffer.contents().copyMemory(from: ptr, byteCount: byteCount)
+                }
+            }
+        
+        }
+    }
 }
