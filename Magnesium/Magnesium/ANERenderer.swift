@@ -93,17 +93,14 @@ class ANERenderer {
         
         var faces: [FaceData] = []
         try vertView.withUnsafePointer { vertPtr, _, _ in
-            let xOffset = 0
-            let yOffset = maxVertices
-            let zOffset = maxVertices * 2
-            
             for i in 0..<4 {
-                let idx = i * 3
-                let p0 = (vertPtr[xOffset + idx], vertPtr[yOffset + idx])
-                let p1 = (vertPtr[xOffset + idx + 1], vertPtr[yOffset + idx + 1])
-                let p2 = (vertPtr[xOffset + idx + 2], vertPtr[yOffset + idx + 2])
+                let idx = i * 3 // 1面あたり3頂点
                 
-                let zDepth = Float(vertPtr[zOffset + idx])
+                let p0 = (vertPtr[0 * maxVertices + idx],     vertPtr[1 * maxVertices + idx])
+                let p1 = (vertPtr[0 * maxVertices + idx + 1], vertPtr[1 * maxVertices + idx + 1])
+                let p2 = (vertPtr[0 * maxVertices + idx + 2], vertPtr[1 * maxVertices + idx + 2])
+                
+                let zDepth = Float(vertPtr[2 * maxVertices + idx])
                 let invZ = zDepth != 0 ? Float16(1.0 / zDepth) : Float16(1.0)
                 
                 faces.append(FaceData(p0: p0, p1: p1, p2: p2, invZ: invZ))
@@ -135,6 +132,7 @@ class ANERenderer {
             guard let outputValue = rastOutputs.remove("mul_24"),
                   var outputArray = outputValue.ndArray else { continue }
             //print("🔥 ANE Output Strides: \(outputArray.strides)")
+            //print("Face \(i) computed. Output array shape: \(outputArray.shape)")
             
             let view = outputArray.view(as: Float16.self)
             
@@ -143,6 +141,7 @@ class ANERenderer {
             if self.displayBuffers[i] == nil {
                 self.displayBuffers[i] = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
             }
+
 
             try view.withUnsafePointer { ptr, _, _ in
                 if let buffer = self.displayBuffers[i] {

@@ -21,29 +21,29 @@ struct ANE3DGeometry {
         let xAxis = simd.normalize(simd.cross(up, zAxis))
         let yAxis = simd.cross(zAxis, xAxis)
         
-        // Pythonコードと同じ計算ロジックに修正
+        // 行優先のデータを構築
         var R = matrix_identity_float4x4
-        R.columns.0 = SIMD4<Float>(xAxis.x, xAxis.y, xAxis.z, 0)
-        R.columns.1 = SIMD4<Float>(yAxis.x, yAxis.y, yAxis.z, 0)
-        R.columns.2 = SIMD4<Float>(zAxis.x, zAxis.y, zAxis.z, 0)
+        R.columns.0 = SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0)
+        R.columns.1 = SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0)
+        R.columns.2 = SIMD4<Float>(xAxis.z, yAxis.z, zAxis.z, 0)
         
         var T = matrix_identity_float4x4
         T.columns.3 = SIMD4<Float>(-eye.x, -eye.y, -eye.z, 1)
         
-        // 行列の掛け算の順序を修正
-        let viewMatrix = R.transpose * T
+        // Pythonの R @ T に合わせる
+        let viewMatrix = R * T
         
         var packed = [Float16](repeating: 0, count: 16)
         for i in 0..<4 {
             for j in 0..<4 {
-                // 👇 [i * 4 + j] から [j * 4 + i] に変更して、NumPyの並びに合わせる
-                packed[j * 4 + i] = Float16(viewMatrix[i][j])
+                packed[i * 4 + j] = Float16(viewMatrix[j][i])
             }
         }
         return packed
     }
     
     /// ピラミッドの頂点データを生成
+
     func getPyramidVertices() -> [Float16] {
         var buffer = [Float16](repeating: 0, count: 1 * 4 * 1 * maxVertices)
         
@@ -55,10 +55,11 @@ struct ANE3DGeometry {
         ]
         
         for (i, v) in vertices.enumerated() {
-            for channel in 0..<4 {
-                let index = (channel * maxVertices) + i
-                buffer[index] = Float16(v[channel])
-            }
+            // maxVertices 分だけ間隔をあけて配置する
+            buffer[0 * maxVertices + i] = Float16(v[0]) // X
+            buffer[1 * maxVertices + i] = Float16(v[1]) // Y
+            buffer[2 * maxVertices + i] = Float16(v[2]) // Z
+            buffer[3 * maxVertices + i] = Float16(v[3]) // W
         }
         
         return buffer
