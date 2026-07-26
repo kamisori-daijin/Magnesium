@@ -77,7 +77,7 @@ async def main():
         result = outputs[output_key].numpy()
 
     # -----------------------------------------------------------
-    # 3. 描画
+    # 3. Plotting
     # -----------------------------------------------------------
     print("📸 Inference completed. Plotting ANE-rendered 2D points...")
     
@@ -99,7 +99,7 @@ async def main():
     plt.savefig(output_png, dpi=150)
     plt.close()
     
-    print(f"Saved `{output_png}` ！")
+    print(f"Saved `{output_png}`!")
 
 if __name__ == "__main__":
     asyncio.run(main())
