@@ -95,14 +95,7 @@ class ANERenderContext {
         
         self.isComputing = true
         
-        let cameraMatrix = geometry.createCameraMatrix(
-            eye: SIMD3<Float>(2.0, 2.0, -5.0),
-            target: SIMD3<Float>(0.0, 0.0, 0.0),
-            up: SIMD3<Float>(0.0, 1.0, 0.0)
-        )
-        let vertices = geometry.getPyramidVertices()
-        
-        renderer.updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix)
+        // 👇 ここにあった cameraMatrix の生成と updateGeometry を削除しました
         
         Task { @MainActor in
             do {
