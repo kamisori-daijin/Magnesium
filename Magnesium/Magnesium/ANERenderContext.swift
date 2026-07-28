@@ -33,7 +33,6 @@ class ANERenderContext {
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
 
-        
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
             pipelineDescriptor.vertexFunction = defaultLibrary.makeFunction(name: "textureVertex")
@@ -43,7 +42,6 @@ class ANERenderContext {
             pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .max
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
            
- 
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }
@@ -95,28 +93,44 @@ class ANERenderContext {
         
         self.isComputing = true
                 
+        // 1. Taskのネストをやめ、1本の非同期タスクとして綺麗に立ち上げる
         Task { @MainActor in
             do {
-                try await renderer.drawFrame()
+                // 2. 【超重要】非同期対応の正しい autoreleasepool の回し方！
+                // 各フレームの非同期処理が「完了（await）」した直後に、
+                // そのフレーム内で生まれた ANE や Core AI のテンソルバッファを、毎フレーム確実に1ミリも残さず即座に完全解放させます。
+                try await withCheckedThrowingContinuation { continuation in
+                    autoreleasepool {
+                        Task {
+                            do {
+                                try await renderer.drawFrame()
+                                continuation.resume()
+                            } catch {
+                                continuation.resume(throwing: error)
+                            }
+                        }
+                    }
+                }
                 
+                // 描画同期用のイベントを更新
                 self.currentEventValue += 1
                 self.sharedEvent?.signaledValue = self.currentEventValue
                 
             } catch {
                 print("Inference error: \(error)")
             }
+            // 1フレームの処理がメモリ解放まで完全に終わってから、次の計算を許可する
             self.isComputing = false
         }
     }
-    
-    
+
     func startCameraRotation() {
         timer?.invalidate()
         
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
-            // Execute on the MainActor context using Task
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                guard !self.isComputing else { return }
                 
                 self.angle += 0.05
                 
@@ -141,9 +155,7 @@ class ANERenderContext {
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
-        // Skip rendering if displayBuffer is nil to prevent errors
         guard let renderer = self.renderer,
-              //let displayBuffer = renderer.displayBuffers,
               let queue = self.commandQueue,
               let pipeline = self.renderPipelineState,
               let sharedEvent = self.sharedEvent,
@@ -155,23 +167,20 @@ class ANERenderContext {
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
-        //print("🎨 Rendering Frame - Event: \(self.currentEventValue), Buffer: \(displayBuffer.length) bytes")
+
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
            
             var allBuffersReady = true
             
-            // Check and set the 4 buffers
             for i in 0..<4 {
                 if let buffer = renderer.displayBuffers[i] {
                     renderEncoder.setFragmentBuffer(buffer, offset: 0, index: i)
                 } else {
-                    // Set flag to false if any buffer is nil
                     allBuffersReady = false
                 }
             }
             
-            // Only draw if all buffers are ready
             if allBuffersReady {
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }

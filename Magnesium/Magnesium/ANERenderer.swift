@@ -3,6 +3,11 @@
 //  Magnesium
 //
 
+//
+//  ANERenderer.swift
+//  Magnesium
+//
+
 import Foundation
 import CoreAI
 import Metal
@@ -18,8 +23,9 @@ class ANERenderer {
     internal var vertexBufferArray: NDArray
     internal var cameraMatrixArray: NDArray
     
-    // Buffer that directly references the ANE output, rather than a pre-allocated buffer
+    private var metalHeap: MTLHeap?
     private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
+    // ------------------------------------------
     
     private let geometry = ANE3DGeometry()
     private let maxVertices = 65536
@@ -38,7 +44,34 @@ class ANERenderer {
         self.vertexBufferArray = NDArray(shape: [1, 4, 1, maxVertices], scalarType: .float16)
         self.cameraMatrixArray = NDArray(shape: [4, 4], scalarType: .float16)
         
+ 
+        setupMetalHeap()
         setupInitialGeometry()
+    }
+
+    /// ANEの出力バッファを格納するための専用Heapを構築
+    private func setupMetalHeap() {
+        let byteCount = 64 * 64 * 256 * 256 * 2
+        let totalRequiredMemory = byteCount * 4 
+        
+        let heapDescriptor = MTLHeapDescriptor()
+        heapDescriptor.size = totalRequiredMemory
+        // ANEとMetal間でメモリを最速で共有するため、Sharedモードかつ配置型(Placement)に設定
+        heapDescriptor.storageMode = .shared
+        heapDescriptor.type = .placement
+        
+        self.metalHeap = metalDevice.makeHeap(descriptor: heapDescriptor)
+        
+        // 2. Heapから固定バッファを切り出して事前に確保（エイリアシングによる再利用の下準備）
+        guard let heap = self.metalHeap else { return }
+        for i in 0..<4 {
+            // makeBuffer(length:options:offset:) を使用してHeapのメモリ空間を直接バインド
+            self.displayBuffers[i] = heap.makeBuffer(
+                length: byteCount,
+                options: .storageModeShared,
+                offset: i * byteCount
+            )
+        }
     }
 
     private func setupInitialGeometry() {
@@ -94,7 +127,7 @@ class ANERenderer {
         var faces: [FaceData] = []
         try vertView.withUnsafePointer { vertPtr, _, _ in
             for i in 0..<4 {
-                let idx = i * 3 // 3 vertices per face
+                let idx = i * 3
                 
                 let p0 = (vertPtr[0 * maxVertices + idx],     vertPtr[1 * maxVertices + idx])
                 let p1 = (vertPtr[0 * maxVertices + idx + 1], vertPtr[1 * maxVertices + idx + 1])
@@ -120,35 +153,31 @@ class ANERenderer {
             rastInputs["a0"] = pack(A0); rastInputs["b0"] = pack(B0); rastInputs["c0"] = pack(C0)
             rastInputs["a1"] = pack(A1); rastInputs["b1"] = pack(B1); rastInputs["c1"] = pack(C1)
             rastInputs["a2"] = pack(A2); rastInputs["b2"] = pack(B2); rastInputs["c2"] = pack(C2)
-            
             rastInputs["r0"] = pack(c.0); rastInputs["g0"] = pack(c.1); rastInputs["b0_col"] = pack(c.2)
             rastInputs["r1"] = pack(c.0); rastInputs["g1"] = pack(c.1); rastInputs["b1_col"] = pack(c.2)
             rastInputs["r2"] = pack(c.0); rastInputs["g2"] = pack(c.1); rastInputs["b2_col"] = pack(c.2)
-            
             rastInputs["z_weight"] = pack(face.invZ)
             
-            var rastOutputs = try await rast.run(inputs: rastInputs)
-            
-            guard let outputValue = rastOutputs.remove("mul_24"),
-                  var outputArray = outputValue.ndArray else { continue }
-            //print("🔥 ANE Output Strides: \(outputArray.strides)")
-            //print("Face \(i) computed. Output array shape: \(outputArray.shape)")
-            
-            let view = outputArray.view(as: Float16.self)
-            
-            // Zero-copy implementation: Wrap ANE memory directly as an MTLBuffer
-            let byteCount = 256 * 256 * 64 * 2
-            if self.displayBuffers[i] == nil {
-                self.displayBuffers[i] = self.metalDevice.makeBuffer(length: byteCount, options: .storageModeShared)
-            }
+            guard let metalBuf = self.displayBuffers[i] else { continue }
 
-
-            try view.withUnsafePointer { ptr, _, _ in
-                if let buffer = self.displayBuffers[i] {
-                    buffer.contents().copyMemory(from: ptr, byteCount: byteCount)
-                }
-            }
         
+            var outputBufferView = NDArray.MutableRawView(
+                metalBuffer: metalBuf,
+                byteOffset: 0,
+                scalarType: .float16,
+                shape: [64,64,256,256]
+            )
+
+            var typedMutableView = outputBufferView.view(as: Float16.self)
+           
+
+        
+            var outputViews = InferenceFunction.MutableViews()
+
+            outputViews.insert(typedMutableView, for: "mul_24")
+
+  
+            let _ = try await rast.run(inputs: rastInputs, outputViews: consume outputViews)
         }
     }
 }

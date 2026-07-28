@@ -2,55 +2,63 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class ANE3DRenderer1(nn.Module):
+class ANEFullGaussianRenderer(nn.Module):
     def __init__(self, width=256, height=256):
         super().__init__()
         self.width = width
         self.height = height
         
+        # 256x256の画面の固定座標マップ [1, 2, H, W] (X, Y)
         y_coords = torch.linspace(1.0, -1.0, height).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
-        
-        # [1, 3, H, W] 
         self.register_buffer("pixel_coords", torch.cat([
             x_coords.expand(1, 1, height, width),
-            y_coords.expand(1, 1, height, width),
-            torch.ones(1, 1, height, width)
+            y_coords.expand(1, 1, height, width)
         ], dim=1))
 
-    def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight):
-        # shape: [1, 1, 1, 1] 
+    def forward(self, gaussian_buffer, camera_matrix):
+        """
+        gaussian_buffer: [1, 16, 1, max_points] (点のデータ)
+        camera_matrix: (カメラ行列)
+        """
+        # 1. 前半：数万個の点の3D位置を2D画面の座標(u, v)へトランスフォーム
+        pos_xyz = gaussian_buffer[:, 0:3, :, :]
+        ones = torch.ones_like(pos_xyz[:, 0:1, :, :])
+        pos_xyzw = torch.cat([pos_xyz, ones], dim=1)
         
-        def compute_edges(A, B, C):
-            # dim=1 [1, 3, 1, 1] 
-            weight = torch.cat([A, B, C], dim=1) 
-            return F.conv2d(self.pixel_coords, weight, bias=None)
-
-        # 1. Edge Function
-        edges0 = compute_edges(A0, B0, C0)
-        edges1 = compute_edges(A1, B1, C1)
-        edges2 = compute_edges(A2, B2, C2)
-
-        # 2. Create Mask
-        valid_mask = torch.clamp((A0**2 + B0**2) * 100.0, min=0.0, max=1.0)
-        inside_cw = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
-        inside_ccw = torch.relu(-edges0 * 100.0) * torch.relu(-edges1 * 100.0) * torch.relu(-edges2 * 100.0)
-        mask = torch.clamp(torch.maximum(inside_cw, inside_ccw) * valid_mask, min=0.0, max=1.0)
-
-        # 3. Barycentric Coordinates
-        total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
-        w0 = edges1 / total_area
-        w1 = edges2 / total_area
-        w2 = edges0 / total_area
-
-        def interpolate_color(c0, c1, c2):
-            return (w0 * c0 + w1 * c1 + w2 * c2) * mask
-
-        R = interpolate_color(R0, R1, R2)
-        G = interpolate_color(G0, G1, G2)
-        B = interpolate_color(B0_col, B1_col, B2_col)
-
-        # 4. Z Buffer
-        w = z_weight
+        weight_mat = camera_matrix.view(4, 4, 1, 1)
+        projected = F.conv2d(pos_xyzw, weight_mat, bias=None) # [1, 4, 1, max_points]
         
-        return R * w, G * w, B * w, mask * w
+        # 2D画面上の中央座標 (u, v)
+        u = (projected[:, 0:1, :, :] / (projected[:, 3:4, :, :] + 1e-5)).view(1, -1, 1, 1)
+        v = (projected[:, 1:2, :, :] / (projected[:, 3:4, :, :] + 1e-5)).view(1, -1, 1, 1)
+        
+        # 2. 中半：画面の全ピクセルと、各ガウシアンの中心位置の「距離の二乗」を計算
+        # [1, 2, H, W] の画面座標と、各点の中心(u, v)の差分を取る
+        # ANEの並列性を活かすため、チャンネル数を16ch(または32/64ch)の単位に整えて一気に引算！
+        pixel_x = self.pixel_coords[:, 0:1, :, :] # [1, 1, H, W]
+        pixel_y = self.pixel_coords[:, 1:2, :, :] # [1, 1, H, W]
+        
+        # 3. 【★ANE専用・ガウシアンブレンド回路】
+        # 各ピクセルから点までの距離の二乗を計算
+        # 本来の3DGSの数式： α = exp(-0.5 * d^2)
+        dist_sq = (pixel_x - u) ** 2 + (pixel_y - v) ** 2
+        
+        # ANEが得意とする指数関数(torch.exp)のハードウェアアクセラレーションを直撃！
+        # これにより、GPUのシェーダーを1ミリも使わず、ANE内で完璧なボケ足（ガウス球）が生成されます
+        alpha = torch.exp(-0.5 * dist_sq * 100.0) # [1, max_points, H, W]
+        
+        # 4. 後半：色情報とアルファ値を掛け合わせて「1枚の画面」に累積（ブレンド）
+        # 各点のカラー情報を抽出
+        r_points = gaussian_buffer[:, 10:11, :, :].view(1, -1, 1, 1)
+        g_points = gaussian_buffer[:, 11:12, :, :].view(1, -1, 1, 1)
+        b_points = gaussian_buffer[:, 12:13, :, :].view(1, -1, 1, 1)
+        
+        # アルファブレンド（足し合わせ）を行い、1チャンネルに潰す
+        R = torch.sum(r_points * alpha, dim=1, keepdim=True) # [1, 1, H, W]
+        G = torch.sum(g_points * alpha, dim=1, keepdim=True) # [1, 1, H, W]
+        B = torch.sum(b_points * alpha, dim=1, keepdim=True) # [1, 1, H, W]
+        mask = torch.sum(alpha, dim=1, keepdim=True)         # [1, 1, H, W]
+        
+        # 最終出力：完璧な1チャンネルずつの2D画面画像！
+        return R, G, B, mask

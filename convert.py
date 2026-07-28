@@ -1,14 +1,14 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from ShaderModel import ANE3DRenderer1  
+from ShaderModel import ANE3DRenderer64  
 from pathlib import Path
 
 WIDTH = 256
 HEIGHT = 256
 
 
-model = ANE3DRenderer1(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
+model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
@@ -16,7 +16,7 @@ model.eval()
 # -------------------------------------------------------------------------
 # Create dummy data for coefficients like A0, B0, C0,
 def make_dummy():
-    return torch.zeros(1, 1, 1,1,dtype=torch.float16)
+    return torch.zeros(1, 1, 1, 64, dtype=torch.float16)
 
 
 # Prepare dummy data matching the arguments of the forward method
@@ -40,7 +40,7 @@ coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
 # save
-output_path = Path("ane_3d_rasterizer_1.aimodel")
+output_path = Path("ane_3d_rasterizer_64.aimodel")
 coreai_program.save_asset(output_path)
 
 print(f"Conversion Success!: `{output_path}`")
