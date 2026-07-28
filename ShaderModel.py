@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class ANE3DRenderer64(nn.Module):
+class ANE3DRenderer1(nn.Module):
     def __init__(self, width=256, height=256):
         super().__init__()
         self.width = width
@@ -10,6 +10,8 @@ class ANE3DRenderer64(nn.Module):
         
         y_coords = torch.linspace(1.0, -1.0, height).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
+        
+        # [1, 3, H, W] 
         self.register_buffer("pixel_coords", torch.cat([
             x_coords.expand(1, 1, height, width),
             y_coords.expand(1, 1, height, width),
@@ -17,9 +19,11 @@ class ANE3DRenderer64(nn.Module):
         ], dim=1))
 
     def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight):
-        # input: [1, 1, 1, 64]
+        # shape: [1, 1, 1, 1] 
+        
         def compute_edges(A, B, C):
-            weight = torch.cat([A, B, C], dim=1).permute(3, 1, 0, 2).contiguous()
+            # dim=1 [1, 3, 1, 1] 
+            weight = torch.cat([A, B, C], dim=1) 
             return F.conv2d(self.pixel_coords, weight, bias=None)
 
         # 1. Edge Function
@@ -28,7 +32,7 @@ class ANE3DRenderer64(nn.Module):
         edges2 = compute_edges(A2, B2, C2)
 
         # 2. Create Mask
-        valid_mask = torch.clamp(torch.relu((A0**2 + B0**2) * 100.0), min=0.0, max=1.0).permute(3, 1, 0, 2)
+        valid_mask = torch.clamp((A0**2 + B0**2) * 100.0, min=0.0, max=1.0)
         inside_cw = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
         inside_ccw = torch.relu(-edges0 * 100.0) * torch.relu(-edges1 * 100.0) * torch.relu(-edges2 * 100.0)
         mask = torch.clamp(torch.maximum(inside_cw, inside_ccw) * valid_mask, min=0.0, max=1.0)
@@ -40,17 +44,13 @@ class ANE3DRenderer64(nn.Module):
         w2 = edges0 / total_area
 
         def interpolate_color(c0, c1, c2):
-            C0_w = c0.permute(3, 1, 0, 2)
-            C1_w = c1.permute(3, 1, 0, 2)
-            C2_w = c2.permute(3, 1, 0, 2)
-            return (w0 * C0_w + w1 * C1_w + w2 * C2_w) * mask
+            return (w0 * c0 + w1 * c1 + w2 * c2) * mask
 
         R = interpolate_color(R0, R1, R2)
         G = interpolate_color(G0, G1, G2)
         B = interpolate_color(B0_col, B1_col, B2_col)
 
         # 4. Z Buffer
-        w = z_weight.permute(3, 1, 0, 2)
+        w = z_weight
         
-        # Output: [1, 64, H, W] color image and Z values
         return R * w, G * w, B * w, mask * w
