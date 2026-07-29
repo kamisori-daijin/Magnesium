@@ -51,8 +51,8 @@ class ANERenderer {
 
     /// ANEの出力バッファを格納するための専用Heapを構築
     private func setupMetalHeap() {
-        let byteCount = 64 * 64 * 256 * 256 * 2
-        let totalRequiredMemory = byteCount * 4 
+        let byteCount = 64 * 4 * 256 * 256 * 2
+        let totalRequiredMemory = byteCount * 4
         
         let heapDescriptor = MTLHeapDescriptor()
         heapDescriptor.size = totalRequiredMemory
@@ -159,22 +159,39 @@ class ANERenderer {
             rastInputs["z_weight"] = pack(face.invZ)
             
             guard let metalBuf = self.displayBuffers[i] else { continue }
-
+            var outputViews = InferenceFunction.MutableViews()
         
-            var outputBufferView = NDArray.MutableRawView(
+            var viewForR = NDArray.MutableRawView(
                 metalBuffer: metalBuf,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape: [64,64,256,256]
-            )
-
-            var typedMutableView = outputBufferView.view(as: Float16.self)
-           
-
-        
-            var outputViews = InferenceFunction.MutableViews()
-
-            outputViews.insert(typedMutableView, for: "mul_24")
+                shape:[64,4,256,256]
+            ).view(as: Float16.self)
+            outputViews.insert(viewForR, for: "pixel_shuffle")
+            
+            var viewForG = NDArray.MutableRawView(
+                metalBuffer: metalBuf,
+                byteOffset: 0,
+                scalarType: .float16,
+                shape:[64,4,256,256]
+            ).view(as: Float16.self)
+            outputViews.insert(viewForG, for: "pixel_shuffle_1")
+            
+            var viewForB = NDArray.MutableRawView(
+                metalBuffer: metalBuf,
+                byteOffset: 0,
+                scalarType: .float16,
+                shape:[64,4,256,256]
+            ).view(as: Float16.self)
+            outputViews.insert(viewForB, for: "pixel_shuffle_2")
+            
+            var viewForMask = NDArray.MutableRawView(
+                metalBuffer: metalBuf,
+                byteOffset: 0,
+                scalarType: .float16,
+                shape:[64,4,256,256]
+            ).view(as: Float16.self)
+            outputViews.insert(viewForMask, for: "pixel_shuffle_3")
 
   
             let _ = try await rast.run(inputs: rastInputs, outputViews: consume outputViews)
