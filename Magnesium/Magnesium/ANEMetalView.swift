@@ -60,7 +60,7 @@ struct ANEMetalView: NSViewRepresentable {
             func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
             
             func draw(in view: MTKView) {
-                // 描画のみに専念し、ここで新しいANE計算をリクエストしない
+               
                 manager.renderFrame(in: view)
             }
         }

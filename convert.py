@@ -1,14 +1,14 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from ShaderModel import ANE3DRenderer64PixelShuffle  
+from ShaderModel import ANE3DRenderer64  
 from pathlib import Path
 
 WIDTH = 256
 HEIGHT = 256
 
 
-model = ANE3DRenderer64PixelShuffle(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
+model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
@@ -40,7 +40,7 @@ coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
 # save
-output_path = Path("ane_3d_rasterizer_64_pixel_shuffle.aimodel")
+output_path = Path("ane_3d_rasterizer_64.aimodel")
 coreai_program.save_asset(output_path)
 
 print(f"Conversion Success!: `{output_path}`")

@@ -25,7 +25,6 @@ class ANERenderer {
     
     private var metalHeap: MTLHeap?
     private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
-    // ------------------------------------------
     
     private let geometry = ANE3DGeometry()
     private let maxVertices = 65536
@@ -49,23 +48,23 @@ class ANERenderer {
         setupInitialGeometry()
     }
 
-    /// ANEの出力バッファを格納するための専用Heapを構築
+
     private func setupMetalHeap() {
-        let byteCount = 64 * 4 * 256 * 256 * 2
+        let byteCount = 64 * 1 * 256 * 256 * 2
         let totalRequiredMemory = byteCount * 4
         
         let heapDescriptor = MTLHeapDescriptor()
         heapDescriptor.size = totalRequiredMemory
-        // ANEとMetal間でメモリを最速で共有するため、Sharedモードかつ配置型(Placement)に設定
+    
         heapDescriptor.storageMode = .shared
         heapDescriptor.type = .placement
         
         self.metalHeap = metalDevice.makeHeap(descriptor: heapDescriptor)
         
-        // 2. Heapから固定バッファを切り出して事前に確保（エイリアシングによる再利用の下準備）
+       
         guard let heap = self.metalHeap else { return }
         for i in 0..<4 {
-            // makeBuffer(length:options:offset:) を使用してHeapのメモリ空間を直接バインド
+            // makeBuffer(length:options:offset:) 
             self.displayBuffers[i] = heap.makeBuffer(
                 length: byteCount,
                 options: .storageModeShared,
@@ -165,33 +164,33 @@ class ANERenderer {
                 metalBuffer: metalBuf,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape:[64,4,256,256]
+                shape:[64,1,256,256]
             ).view(as: Float16.self)
-            outputViews.insert(viewForR, for: "pixel_shuffle")
+            outputViews.insert(viewForR, for: "convolution_3")
             
             var viewForG = NDArray.MutableRawView(
                 metalBuffer: metalBuf,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape:[64,4,256,256]
+                shape:[64,1,256,256]
             ).view(as: Float16.self)
-            outputViews.insert(viewForG, for: "pixel_shuffle_1")
+            outputViews.insert(viewForG, for: "convolution_4")
             
             var viewForB = NDArray.MutableRawView(
                 metalBuffer: metalBuf,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape:[64,4,256,256]
+                shape:[64,1,256,256]
             ).view(as: Float16.self)
-            outputViews.insert(viewForB, for: "pixel_shuffle_2")
+            outputViews.insert(viewForB, for: "convolution_5")
             
             var viewForMask = NDArray.MutableRawView(
                 metalBuffer: metalBuf,
                 byteOffset: 0,
                 scalarType: .float16,
-                shape:[64,4,256,256]
+                shape:[64,1,256,256]
             ).view(as: Float16.self)
-            outputViews.insert(viewForMask, for: "pixel_shuffle_3")
+            outputViews.insert(viewForMask, for: "convolution_6")
 
   
             let _ = try await rast.run(inputs: rastInputs, outputViews: consume outputViews)
