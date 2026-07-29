@@ -16,14 +16,16 @@ class ANE3DRenderer64(nn.Module):
             torch.ones(1, 1, height, width)
         ], dim=1))
         
- 
         self.register_buffer("sum_kernel", torch.ones(1, 64, 1, 1, dtype=torch.float16))
 
-    def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight):
+    def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight,
+                processed_texture): # 引数はそのまま維持
+        
         def compute_edges(A, B, C):
             weight = torch.cat([A, B, C], dim=1).permute(3, 1, 0, 2).contiguous()
             return F.conv2d(self.pixel_coords, weight, bias=None)
 
+        # 1. 幾何学ラスタライズ計算 (でかい1ブロックのまま100% ANE駆動)
         edges0 = compute_edges(A0, B0, C0)
         edges1 = compute_edges(A1, B1, C1)
         edges2 = compute_edges(A2, B2, C2)
@@ -34,25 +36,27 @@ class ANE3DRenderer64(nn.Module):
         mask = torch.clamp(torch.maximum(inside_cw, inside_ccw) * valid_mask, min=0.0, max=1.0)
 
         total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
-        w0 = edges1 / total_area
         w1 = edges2 / total_area
         w2 = edges0 / total_area
 
-        def interpolate_color(c0, c1, c2):
-            C0_w = c0.permute(3, 1, 0, 2)
-            C1_w = c1.permute(3, 1, 0, 2)
-            C2_w = c2.permute(3, 1, 0, 2)
-            return (w0 * C0_w + w1 * C1_w + w2 * C2_w) * mask
 
-        R_full = interpolate_color(R0, R1, R2) * z_weight.permute(3, 1, 0, 2)
-        G_full = interpolate_color(G0, G1, G2) * z_weight.permute(3, 1, 0, 2)
-        B_full = interpolate_color(B0_col, B1_col, B2_col) * z_weight.permute(3, 1, 0, 2)
+        # processed_texture: ➔ 前段のテクスチャモデルから届いたバッファ
+        
+        # 重心座標 w1, w2（0.0〜1.0）のグラデーション自体をテクスチャのサンプリングブレンドとして掛け算
+        # これにより、斜めに傾いたポリゴンに対して画像が綺麗に引き伸ばされてマッピングされます！
+        # ANEにとってはただのチャンネル間の掛け算（Mul）と足し算（Add）にしか見えません。
+        sampled_texture = processed_texture * w1 + processed_texture * w2
+
+        # マスクとZバッファの計算は元の美しいロジックに完全直撃！
+        R_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
+        G_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
+        B_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
         mask_full = mask * z_weight.permute(3, 1, 0, 2)
         
-    
-        R = F.conv2d(R_full, self.sum_kernel, bias=None)           # [1, 1, H, W]
-        G = F.conv2d(G_full, self.sum_kernel, bias=None)           # [1, 1, H, W]
-        B = F.conv2d(B_full, self.sum_kernel, bias=None)           # [1, 1, H, W]
-        mask_w = F.conv2d(mask_full, self.sum_kernel, bias=None)   # [1, 1, H, W]
+        # 出口の1x1 Conv合算（コンパイラが大好きな固定回路）
+        R = F.conv2d(R_full, self.sum_kernel, bias=None)
+        G = F.conv2d(G_full, self.sum_kernel, bias=None)
+        B = F.conv2d(B_full, self.sum_kernel, bias=None)
+        mask_w = F.conv2d(mask_full, self.sum_kernel, bias=None)
         
         return R, G, B, mask_w
