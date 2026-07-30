@@ -184,16 +184,13 @@ class ANERenderContext {
             
             for i in 0..<4 {
                 if let buffer = renderer.displayBuffers[i] {
-                    renderEncoder.setFragmentBuffer(buffer, offset: 0, index: i)
-                } else {
-                    allBuffersReady = false
+                    
+                    renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
+                    
+                    
+                    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
                 }
             }
-            
-            if allBuffersReady {
-                renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-            }
-            
             renderEncoder.endEncoding()
         }
         

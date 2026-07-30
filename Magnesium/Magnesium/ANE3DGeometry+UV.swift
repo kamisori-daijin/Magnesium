@@ -8,26 +8,26 @@
 import Foundation
 
 extension ANE3DGeometry {
-    /// ピラミッドの各頂点に対応するUV座標データを生成
+    /// Make UV Data
     func getPyramidUVs() -> [Float16] {
-        // [1, 2, 1, maxVertices] 形状に合わせたバッファを確保
+        // [1, 2, 1, maxVertices]
         var buffer = [Float16](repeating: 0, count: 1 * 2 * 1 * maxVertices)
         
         let uvs: [[Float]] = [
-            // 面1 (正面)
+            // Front
             [0.5, 1.0], [0.0, 0.0], [1.0, 0.0],
-            // 面2 (右面)
+            // Right
             [0.5, 1.0], [0.0, 0.0], [1.0, 0.0],
-            // 面3 (背面)
+            // Back
             [0.5, 1.0], [0.0, 0.0], [1.0, 0.0],
-            // 面4 (左面)
+            // Left
             [0.5, 1.0], [0.0, 0.0], [1.0, 0.0]
         ]
         
         for (i, uv) in uvs.enumerated() {
-            // maxVerticesのストライドでUとVを配置
-            buffer[0 * maxVertices + i] = Float16(uv[0]) // U座標
-            buffer[1 * maxVertices + i] = Float16(uv[1]) // V座標
+            // maxVertices stride
+            buffer[0 * maxVertices + i] = Float16(uv[0]) // U
+            buffer[1 * maxVertices + i] = Float16(uv[1]) // V
         }
         
         return buffer

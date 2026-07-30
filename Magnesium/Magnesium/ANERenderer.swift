@@ -4,12 +4,6 @@
 //
 
 
-//
-//  ANERenderer.swift
-//  Magnesium
-//
-
-
 import Foundation
 import CoreAI
 import Metal
@@ -65,9 +59,9 @@ class ANERenderer {
     }
 
     private func setupMetalHeap() {
-        // 🌟 1つのポリゴンにつき4つの出力（R, G, B, Mask）がそれぞれ 1.68MB を消費
+        // R, G, B, Mask）
         let singleDisplayBufferSize = layerByteCount * 4
-        let totalRequiredMemory = singleDisplayBufferSize * 4 // 4ポリゴン分 (約26.8MB)
+        let totalRequiredMemory = singleDisplayBufferSize * 4 // 4 Porigon (26.8MB)
         
         let heapDescriptor = MTLHeapDescriptor()
         heapDescriptor.size = totalRequiredMemory
@@ -138,9 +132,8 @@ class ANERenderer {
     func drawFrame() async throws {
         guard let mvp = mvpFunction, let rst = rastFunction, let tex = texFunction else { return }
         
-        // -------------------------------------------------------------------------
-        // 🚀 ステップ 0: テクスチャアライメント化 [1, 3, 256, 256] ➔ [1, 64, 256, 256]
-        // -------------------------------------------------------------------------
+        // Texture alighment [1, 3, 256, 256] ➔ [1, 64, 256, 256]
+        
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         
         var texOutputViews = InferenceFunction.MutableViews()
@@ -149,9 +142,8 @@ class ANERenderer {
         
         let _ = try await tex.run(inputs: texInputs, outputViews: consume texOutputViews)
         
-        // -------------------------------------------------------------------------
-        // 🚀 ステップ 1: MVP変換
-        // -------------------------------------------------------------------------
+        // MVP
+        
         let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
         var mvpOutputs = try await mvp.run(inputs: mvpInputs)
         
@@ -174,10 +166,10 @@ class ANERenderer {
         }
         
         let colors: [(Float16, Float16, Float16)] = [
-            (1.0, 0.0, 0.0), // 面0: 赤
-            (0.0, 1.0, 0.0), // 面1: 緑
-            (0.0, 0.0, 1.0), // 面2: 青
-            (1.0, 1.0, 0.0)  // 面3: 黄
+            (1.0, 0.0, 0.0), // Face 0:Red
+            (0.0, 1.0, 0.0), // Face1: Green
+            (0.0, 0.0, 1.0), // Face2: Blue
+            (1.0, 1.0, 0.0)  // Face3: Yellow
         ]
         
         for (i, face) in faces.enumerated() {
@@ -188,7 +180,7 @@ class ANERenderer {
             var rstInputs: [String: NDArray] = [:]
             let c = colors[i]
             
-            // 幾何・エッジ係数
+           
             rstInputs["a0"] = pack(A0); rstInputs["b0"] = pack(B0); rstInputs["c0"] = pack(C0)
             rstInputs["a1"] = pack(A1); rstInputs["b1"] = pack(B1); rstInputs["c1"] = pack(C1)
             rstInputs["a2"] = pack(A2); rstInputs["b2"] = pack(B2); rstInputs["c2"] = pack(C2)
@@ -207,7 +199,7 @@ class ANERenderer {
             guard let metalBuf = self.displayBuffers[i] else { continue }
             var outputViews = InferenceFunction.MutableViews()
             
-            // 🌟 形状をすべて正確に [64, 1, 256, 256] にアジャスト
+            // [64, 1, 256, 256] 
             var viewForR = NDArray.MutableRawView(
                 metalBuffer: metalBuf,
                 byteOffset: layerByteCount * 0,
