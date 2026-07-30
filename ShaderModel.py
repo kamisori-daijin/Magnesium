@@ -39,8 +39,11 @@ class ANE3DRenderer64(nn.Module):
         w1 = edges2 / total_area
         w2 = edges0 / total_area
 
-        sampled_texture = processed_texture * w1 + processed_texture * (1.0 - w2)
-        sampled_texture = torch.clamp(sampled_texture, min=0.0, max=1.0)
+        u_sampler = processed_texture * w1 * 2.0
+        v_sampler = processed_texture * (1.0 - w2) * 2.0
+        
+        # 最終的に2つをブレンドして 0.0 〜 1.0 にクランプ
+        sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
 
         # 🌟 根本解決2: z_weight のマイナスをモデルの最上流で絶対値（または正の値）に固定
