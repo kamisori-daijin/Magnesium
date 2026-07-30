@@ -28,10 +28,16 @@ class ANERenderContext {
     private let geometry = ANE3DGeometry()
     var activeDevice: MTLDevice?
     
+
+    private var debugTextureData: [Float16] = []
+    
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
+        
+
+        self.debugTextureData = geometry.createDebugCheckerboardTexture()
 
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
@@ -49,11 +55,12 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
+        // 🌟 修正: MVP, Rasterizer, Texture の3つのファイルを同時に選択できるように変更
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.item, .content, .data]
-        panel.message = "Please select both MVP and Rasterizer .aimodel files."
+        panel.message = "Please select MVP, Rasterizer, and Texture Processor .aimodel files."
         
         if let mainWindow = NSApplication.shared.windows.first(where: { $0.canBecomeKey }) {
             panel.beginSheetModal(for: mainWindow) { response in
@@ -63,12 +70,14 @@ class ANERenderContext {
     }
     
     private func handlePanelResponse(response: NSApplication.ModalResponse, panel: NSOpenPanel, device: MTLDevice) {
-        guard response == .OK, panel.urls.count == 2 else { return }
+        // 🌟 修正: ファイル選択の期待値を「3個」に変更
+        guard response == .OK, panel.urls.count == 3 else { return }
         
         let urls = panel.urls.map { $0.standardizedFileURL }
-        guard let mvpURL = urls.first(where: { $0.lastPathComponent.contains("mvp") }),
-              let rastURL = urls.first(where: { $0.lastPathComponent.contains("rasterizer") }) else {
-            print("Error: Could not identify MVP and Rasterizer models.")
+        guard let mvpURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("mvp") }),
+              let rastURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
+              let texURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
+            print("Error: Could not accurately identify all 3 models from filenames.")
             return
         }
         
@@ -77,9 +86,10 @@ class ANERenderContext {
         Task {
             defer { self.isLoading = false }
             do {
-                let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, metalDevice: device)
+                // 🌟 修正: 拡張した3つのモデルを受け取るイニシャライザに差し替え
+                let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, texURL: texURL, metalDevice: device)
                 self.renderer = loadedRenderer
-                print("Models loaded successfully.")
+                print("All 3 models loaded successfully.")
                 self.triggerSingleCompute()
                 self.startCameraRotation()
             } catch {
@@ -92,11 +102,12 @@ class ANERenderContext {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
-                
         
+        // 🌟 追加: ANEラスタライザを回す直前に、生のRGBテクスチャバッファを確定コピー
+        renderer.updateTexture(pixelData: self.debugTextureData)
+                
         Task { @MainActor in
             do {
-            
                 try await withCheckedThrowingContinuation { continuation in
                     autoreleasepool {
                         Task {
@@ -110,7 +121,6 @@ class ANERenderContext {
                     }
                 }
                 
-             
                 self.currentEventValue += 1
                 self.sharedEvent?.signaledValue = self.currentEventValue
                 
@@ -143,7 +153,11 @@ class ANERenderContext {
                 )
                 
                 let vertices = self.geometry.getPyramidVertices()
-                self.renderer?.updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix)
+                // 🌟 追加: ANE3DGeometry+UV.swift からUV座標の配列をロード
+                let uvs = self.geometry.getPyramidUVs()
+                
+                // 🌟 修正: 拡張した引数「uvs」を渡すようにシグネチャを修正
+                self.renderer?.updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix, uvs: uvs)
                 
                 self.triggerSingleCompute()
             }
