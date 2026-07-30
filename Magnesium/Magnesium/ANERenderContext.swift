@@ -45,7 +45,7 @@ class ANERenderContext {
             pipelineDescriptor.fragmentFunction = defaultLibrary.makeFunction(name: "textureFragment")
             pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-            pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .max
+            pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
            
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
@@ -55,7 +55,7 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
-        // 🌟 修正: MVP, Rasterizer, Texture の3つのファイルを同時に選択できるように変更
+       
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -70,7 +70,7 @@ class ANERenderContext {
     }
     
     private func handlePanelResponse(response: NSApplication.ModalResponse, panel: NSOpenPanel, device: MTLDevice) {
-        // 🌟 修正: ファイル選択の期待値を「3個」に変更
+      
         guard response == .OK, panel.urls.count == 3 else { return }
         
         let urls = panel.urls.map { $0.standardizedFileURL }
@@ -86,7 +86,7 @@ class ANERenderContext {
         Task {
             defer { self.isLoading = false }
             do {
-                // 🌟 修正: 拡張した3つのモデルを受け取るイニシャライザに差し替え
+        
                 let loadedRenderer = try await ANERenderer(mvpURL: mvpURL, rastURL: rastURL, texURL: texURL, metalDevice: device)
                 self.renderer = loadedRenderer
                 print("All 3 models loaded successfully.")
@@ -102,8 +102,7 @@ class ANERenderContext {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
-        
-        // 🌟 追加: ANEラスタライザを回す直前に、生のRGBテクスチャバッファを確定コピー
+      
         renderer.updateTexture(pixelData: self.debugTextureData)
                 
         Task { @MainActor in
@@ -137,32 +136,30 @@ class ANERenderContext {
         
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                guard !self.isComputing else { return }
+                guard let self = self, !self.isComputing else { return }
                 
                 self.angle += 0.05
                 
-                let radius: Float = 5.0
+
+                let radius: Float = 2.5
                 let eyeX = radius * sin(self.angle)
                 let eyeZ = radius * cos(self.angle)
                 
                 let cameraMatrix = self.geometry.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 2.0, eyeZ),
+                    eye: SIMD3<Float>(eyeX, 1.2, eyeZ),
                     target: SIMD3<Float>(0.0, 0.0, 0.0),
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
-                
+
                 let vertices = self.geometry.getPyramidVertices()
-                // 🌟 追加: ANE3DGeometry+UV.swift からUV座標の配列をロード
                 let uvs = self.geometry.getPyramidUVs()
                 
-                // 🌟 修正: 拡張した引数「uvs」を渡すようにシグネチャを修正
                 self.renderer?.updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix, uvs: uvs)
-                
                 self.triggerSingleCompute()
             }
         }
     }
+
     
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm

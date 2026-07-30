@@ -4,6 +4,12 @@
 //
 
 
+//
+//  ANERenderer.swift
+//  Magnesium
+//
+
+
 import Foundation
 import CoreAI
 import Metal
