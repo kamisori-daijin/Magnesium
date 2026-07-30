@@ -9,10 +9,10 @@ A high-performance 3D software rasterizer pipeline executed on the **Apple Neura
 
 ## Features
 - **Pure ANE Vertex & Raster Pipeline**: MVP matrix transformations, edge functions, and line equations are entirely executed as hardware operations (e.g., `f.conv2d`) inside the ANE pipeline.
-- **CPU Fallback Elimination**: Reduced CPU usage from **38% down to ~9%** by strictly bypassing CPU intervention during the main execution chain.
+- **CPU Fallback Elimination**: Reduced CPU usage from **38% down to ~20%** by strictly bypassing CPU intervention during the main execution chain.
 - **Metal 4 Tensor Binding**: Leverages Core AI's `NDArray.View` with `withUnsafePointer` to stream continuous planar tensor data directly into Metal Fragment Shaders with minimal overhead.
 - **Swift 6 Concurrency & Non-Escapable (`~Escapable`) Safe**: Fully synchronized via explicit `@MainActor` task chains to prevent race conditions and uninitialized blank buffers.
-- **AI-Co-Authored Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and fast-prototyped using **Siri AI (Apple Intelligence)**.
+- **AI-Co-Authored Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and fast-prototyped using **Siri AI and Gemini**.
 
 ## Implementation Deep Dive
 
@@ -27,7 +27,7 @@ The rasterization grid is clamped into a static `[1, 2, 1024, 1024]` tensor layo
 The ANE output buffer holds raw planar data (with R, G, B, and A channels arranged sequentially as separate planes). The Metal fragment shader samples these planes directly using precise byte offsets, performing zero-copy texture synthesis on the GPU.
 
 ## Known Issues / WIP
-- **High Memory Footprint**: Current allocation strategy for intermediate tensor buffers and the raw planar matrix results in a massive **~5 GB memory consumption**. Optimization of the tensor lifecycle is actively under development.
+- **High Memory Footprint**: Current allocation strategy for intermediate tensor buffers and the raw planar matrix results in a massive **~1.2 GB memory consumption**. Optimization of the tensor lifecycle is actively under development.
 - Rendering quality is still early-stage and low-resolution.
 
 ## How to Use

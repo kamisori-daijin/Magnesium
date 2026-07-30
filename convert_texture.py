@@ -1,30 +1,25 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from ShaderModel import ANE3DRenderer64  
+from TextureModel import ANETextureProcessor
 from pathlib import Path
 
 WIDTH = 256
 HEIGHT = 256
 
-
-model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
+# 1. モデルをFloat16精度でインスタンス化
+model = ANETextureProcessor().to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
-# 2. Definition of Input Ports (64 Triangles Data)
+# 2. 入力ポートの定義 (生の256x256 RGB画像)
 # -------------------------------------------------------------------------
-# Create dummy data for coefficients like A0, B0, C0,
-def make_dummy():
-    return torch.zeros(1, 1, 1, 64, dtype=torch.float16)
-
-
-# Prepare dummy data matching the arguments of the forward method
-
-args = tuple([make_dummy() for _ in range(19)]) + (torch.zeros(1, 64, 256, 256, dtype=torch.float16),)
+# [Batch=1, Channel=3, H=256, W=256] の、コンパイラが最も解釈しやすい直球の形状
+raw_image_dummy = torch.zeros(1, 3, HEIGHT, WIDTH, dtype=torch.float16)
+args = (raw_image_dummy,)
 
 # -------------------------------------------------------------------------
-# 3. Export Settings for CoreAI
+# 3. CoreAI へのエクスポート設定
 # -------------------------------------------------------------------------
 converter = TorchConverter().add_pytorch_module(
     model,
@@ -39,8 +34,8 @@ converter = TorchConverter().add_pytorch_module(
 coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
-# save
-output_path = Path("ane_3d_rasterizer_64.aimodel")
+# 保存
+output_path = Path("ane_texture_processor.aimodel")
 coreai_program.save_asset(output_path)
 
 print(f"Conversion Success!: `{output_path}`")

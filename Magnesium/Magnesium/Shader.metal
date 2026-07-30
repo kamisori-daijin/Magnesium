@@ -13,6 +13,7 @@ struct VertexOut {
     float2 uv;
 };
 
+
 vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     float4 positions[4] = {
         float4(-1.0, -1.0, 0.0, 1.0),
@@ -20,7 +21,12 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
         float4(-1.0,  1.0, 0.0, 1.0),
         float4( 1.0,  1.0, 0.0, 1.0)
     };
-    float2 uvs[4] = { float2(0.0, 1.0), float2(1.0, 1.0), float2(0.0, 0.0), float2(1.0, 0.0) };
+    float2 uvs[4] = {
+        float2(0.0, 1.0),
+        float2(1.0, 1.0),
+        float2(0.0, 0.0),
+        float2(1.0, 0.0)
+    };
     
     VertexOut out;
     out.position = positions[vertexID];
@@ -28,38 +34,41 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     return out;
 }
 
+// Index 0 Only
 fragment float4 textureFragment(VertexOut in [[stage_in]],
-                                 constant half* buffer0 [[buffer(0)]],
-                                 constant half* buffer1 [[buffer(1)]],
-                                 constant half* buffer2 [[buffer(2)]],
-                                 constant half* buffer3 [[buffer(3)]]) {
+                                 constant half* currentBuffer [[buffer(0)]]) {
     uint width = 256;
     uint height = 256;
+    
+    // UV
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
-   
-    // Group the pointers of the four buffers into an array
-    constant half* buffers[4] = {buffer0, buffer1, buffer2, buffer3};
     
-    half3 finalColor = half3(0.0);
+    uint componentStride = 64 * width * height;
     
-    for (int i = 0; i < 4; i++) {
-        // Assume that color information is stored in the 0th channel of each buffer
+    uint rIndex = (componentStride * 0) + pixelIndex;
+    uint gIndex = (componentStride * 1) + pixelIndex;
+    uint bIndex = (componentStride * 2) + pixelIndex;
+    uint mIndex = (componentStride * 3) + pixelIndex;
     
-        half val = buffers[i][pixelIndex];
+    half r_val = currentBuffer[rIndex];
+    half g_val = currentBuffer[gIndex];
+    half b_val = currentBuffer[bIndex];
+    half mask_w = currentBuffer[mIndex];
+    
+    half4 finalColor = half4(0.0h);
+    
+    if (mask_w > 0.001h) {
         
-        if (val > 0.0) {
-            // Assign a different color to each face (for testing)
-            half3 faceColor = half3(0.0);
-            if (i == 0) faceColor.r = val; // Red
-            if (i == 1) faceColor.g = val; // Green
-            if (i == 2) faceColor.b = val; // Blue
-            if (i == 3) faceColor = half3(val, val, 0.0); // Yellow
-            // Blend Color
-            finalColor = max(finalColor, faceColor);
-        }
+        half3 sampledColor = half3(r_val, g_val, b_val) / (mask_w + 1e-4h);
+        sampledColor = clamp(sampledColor, 0.0h, 1.0h);
+        
+        finalColor = half4(sampledColor, 1.0h);
+    } else {
+        // Clear
+        discard_fragment();
     }
     
-    return float4(float3(finalColor), 1.0);
+    return float4(finalColor);
 }
