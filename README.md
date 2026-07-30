@@ -4,7 +4,7 @@
 A high-performance 3D software rasterizer pipeline executed on the **Apple Neural Engine (ANE)** using the latest **Core AI framework (WWDC26)**, **Metal 4**, and **Swift 6**.
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/8049f5b0-200d-442f-8b67-b206751a0456" width="512" height="512" autoplay loop muted playsinline></video>
+  <video src="https://github.com/user-attachments/assets/85c03965-8322-4a08-ae40-fe19501f84ec" width="512" height="512" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
