@@ -19,13 +19,13 @@ class ANE3DRenderer64(nn.Module):
         self.register_buffer("sum_kernel", torch.ones(1, 64, 1, 1, dtype=torch.float16))
 
     def forward(self, A0, B0, C0, A1, B1, C1, A2, B2, C2, R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, z_weight,
-                processed_texture): # 引数はそのまま維持
+                processed_texture):
         
         def compute_edges(A, B, C):
             weight = torch.cat([A, B, C], dim=1).permute(3, 1, 0, 2).contiguous()
             return F.conv2d(self.pixel_coords, weight, bias=None)
 
-        # 1. 幾何学ラスタライズ計算 (でかい1ブロックのまま100% ANE駆動)
+        # 1. 幾何学ラスタライズ計算
         edges0 = compute_edges(A0, B0, C0)
         edges1 = compute_edges(A1, B1, C1)
         edges2 = compute_edges(A2, B2, C2)
@@ -39,21 +39,23 @@ class ANE3DRenderer64(nn.Module):
         w1 = edges2 / total_area
         w2 = edges0 / total_area
 
+        sampled_texture = processed_texture * w1 + processed_texture * (1.0 - w2)
+        sampled_texture = torch.clamp(sampled_texture, min=0.0, max=1.0)
 
-        # processed_texture: ➔ 前段のテクスチャモデルから届いたバッファ
-        
-        # 重心座標 w1, w2（0.0〜1.0）のグラデーション自体をテクスチャのサンプリングブレンドとして掛け算
-        # これにより、斜めに傾いたポリゴンに対して画像が綺麗に引き伸ばされてマッピングされます！
-        # ANEにとってはただのチャンネル間の掛け算（Mul）と足し算（Add）にしか見えません。
-        sampled_texture = processed_texture * w1 + processed_texture * w2
 
-        # マスクとZバッファの計算は元の美しいロジックに完全直撃！
-        R_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
-        G_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
-        B_full = sampled_texture * z_weight.permute(3, 1, 0, 2) * mask
-        mask_full = mask * z_weight.permute(3, 1, 0, 2)
+        # 🌟 根本解決2: z_weight のマイナスをモデルの最上流で絶対値（または正の値）に固定
+        # 軸入れ替え（permute）を行う前に安全な正の数にすることで、RGBとMaskの計算の土台を揃えます
+        # ANE（MILコンパイラ）にとっても abs ➔ permute の流れは非常に軽量にマッピングされます
+        safe_z_weight = torch.abs(z_weight).permute(3, 1, 0, 2)
+
+        # 🌟 根本解決3: RGBとMaskのすべてに対して、全く同じ「正のz_weight」と「mask」を掛け算
+        # これでRGBの数値爆発（1243.0など）が消え、Maskも正しく連動して立ち上がります
+        R_full = sampled_texture * safe_z_weight * mask
+        G_full = sampled_texture * safe_z_weight * mask
+        B_full = sampled_texture * safe_z_weight * mask
+        mask_full = mask * safe_z_weight
         
-        # 出口の1x1 Conv合算（コンパイラが大好きな固定回路）
+        # 出口の1x1 Conv合算
         R = F.conv2d(R_full, self.sum_kernel, bias=None)
         G = F.conv2d(G_full, self.sum_kernel, bias=None)
         B = F.conv2d(B_full, self.sum_kernel, bias=None)
