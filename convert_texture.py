@@ -7,20 +7,16 @@ from pathlib import Path
 WIDTH = 256
 HEIGHT = 256
 
-# 1. モデルをFloat16精度でインスタンス化
+# 1. Float16
 model = ANETextureProcessor().to(dtype=torch.float16)
 model.eval()
 
-# -------------------------------------------------------------------------
-# 2. 入力ポートの定義 (生の256x256 RGB画像)
-# -------------------------------------------------------------------------
-# [Batch=1, Channel=3, H=256, W=256] の、コンパイラが最も解釈しやすい直球の形状
+
+
+# [Batch=1, Channel=3, H=256, W=256]
 raw_image_dummy = torch.zeros(1, 3, HEIGHT, WIDTH, dtype=torch.float16)
 args = (raw_image_dummy,)
 
-# -------------------------------------------------------------------------
-# 3. CoreAI へのエクスポート設定
-# -------------------------------------------------------------------------
 converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
@@ -34,7 +30,7 @@ converter = TorchConverter().add_pytorch_module(
 coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
-# 保存
+# Save
 output_path = Path("ane_texture_processor.aimodel")
 coreai_program.save_asset(output_path)
 
