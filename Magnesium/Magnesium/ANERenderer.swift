@@ -3,7 +3,6 @@
 //  Magnesium
 //
 
-
 import Foundation
 import CoreAI
 import Metal
@@ -32,8 +31,9 @@ class ANERenderer {
     private let maxVertices = 65536
     private let metalDevice: MTLDevice
     
-    
     private let layerByteCount = 64 * 1 * 256 * 256 * 2
+    
+    private var packedParamCache: [String: NDArray] = [:]
     
     init(mvpURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
@@ -54,14 +54,19 @@ class ANERenderer {
         self.alignedTextureArray = NDArray(shape:[1,64,256,256], scalarType: .float16)
         self.uvBufferArray = NDArray(shape: [1, 2, 1, maxVertices], scalarType: .float16)
         
+        let paramKeys = ["a0", "b0", "c0", "a1", "b1", "c1", "a2", "b2", "c2",
+                         "r0", "g0", "b0_col", "r1", "g1", "b1_col", "r2", "g2", "b2_col", "z_weight"]
+        for key in paramKeys {
+            self.packedParamCache[key] = NDArray(shape: [1,1,1,64], scalarType: .float16)
+        }
+        
         setupMetalHeap()
         setupInitialGeometry()
     }
 
     private func setupMetalHeap() {
-        // R, G, B, Mask）
         let singleDisplayBufferSize = layerByteCount * 4
-        let totalRequiredMemory = singleDisplayBufferSize * 4 // 4 Porigon (26.8MB)
+        let totalRequiredMemory = singleDisplayBufferSize * 4
         
         let heapDescriptor = MTLHeapDescriptor()
         heapDescriptor.size = totalRequiredMemory
@@ -88,7 +93,7 @@ class ANERenderer {
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
         let uvs = geometry.getPyramidUVs()
-        updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix,uvs:uvs)
+        updateGeometry(vertices: vertices, cameraMatrix: cameraMatrix, uvs: uvs)
     }
 
     func updateGeometry(vertices: [Float16], cameraMatrix: [Float16], uvs: [Float16]) {
@@ -114,8 +119,11 @@ class ANERenderer {
         return (A, B, C)
     }
 
-    private func pack(_ val: Float16) -> NDArray {
-        var array = NDArray(shape:[1,1,1,64], scalarType: .float16)
+    private func pack(_ val: Float16, into key: String) -> NDArray {
+        guard var array = packedParamCache[key] else {
+            return NDArray(shape:[1,1,1,64], scalarType: .float16)
+        }
+        
         var view = array.mutableView(as: Float16.self)
         view.withUnsafeMutablePointer { pointer, _, _ in
             pointer.initialize(repeating: 0, count: 64)
@@ -132,17 +140,13 @@ class ANERenderer {
     func drawFrame() async throws {
         guard let mvp = mvpFunction, let rst = rastFunction, let tex = texFunction else { return }
         
-        // Texture alighment [1, 3, 256, 256] ➔ [1, 64, 256, 256]
-        
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         
         var texOutputViews = InferenceFunction.MutableViews()
         let texDestView = alignedTextureArray.mutableView(as: Float16.self)
         texOutputViews.insert(texDestView, for: "convolution")
         
-        let _ = try await tex.run(inputs: texInputs, outputViews: consume texOutputViews)
-        
-        // MVP
+        let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
         
         let mvpInputs: [String: NDArray] = ["camera_matrix": cameraMatrixArray, "vertex_buffer": vertexBufferArray]
         var mvpOutputs = try await mvp.run(inputs: mvpInputs)
@@ -166,10 +170,7 @@ class ANERenderer {
         }
         
         let colors: [(Float16, Float16, Float16)] = [
-            (1.0, 0.0, 0.0), // Face 0:Red
-            (0.0, 1.0, 0.0), // Face1: Green
-            (0.0, 0.0, 1.0), // Face2: Blue
-            (1.0, 1.0, 0.0)  // Face3: Yellow
+            (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
         ]
         
         for (i, face) in faces.enumerated() {
@@ -180,59 +181,34 @@ class ANERenderer {
             var rstInputs: [String: NDArray] = [:]
             let c = colors[i]
             
-           
-            rstInputs["a0"] = pack(A0); rstInputs["b0"] = pack(B0); rstInputs["c0"] = pack(C0)
-            rstInputs["a1"] = pack(A1); rstInputs["b1"] = pack(B1); rstInputs["c1"] = pack(C1)
-            rstInputs["a2"] = pack(A2); rstInputs["b2"] = pack(B2); rstInputs["c2"] = pack(C2)
+            rstInputs["a0"] = pack(A0, into: "a0"); rstInputs["b0"] = pack(B0, into: "b0"); rstInputs["c0"] = pack(C0, into: "c0")
+            rstInputs["a1"] = pack(A1, into: "a1"); rstInputs["b1"] = pack(B1, into: "b1"); rstInputs["c1"] = pack(C1, into: "c1")
+            rstInputs["a2"] = pack(A2, into: "a2"); rstInputs["b2"] = pack(B2, into: "b2"); rstInputs["c2"] = pack(C2, into: "c2")
             
+            rstInputs["r0"] = pack(c.0, into: "r0"); rstInputs["g0"] = pack(c.1, into: "g0"); rstInputs["b0_col"] = pack(c.2, into: "b0_col")
+            rstInputs["r1"] = pack(c.0, into: "r1"); rstInputs["g1"] = pack(c.1, into: "g1"); rstInputs["b1_col"] = pack(c.2, into: "b1_col")
+            rstInputs["r2"] = pack(c.0, into: "r2"); rstInputs["g2"] = pack(c.1, into: "g2"); rstInputs["b2_col"] = pack(c.2, into: "b2_col")
             
-            rstInputs["r0"] = pack(c.0); rstInputs["g0"] = pack(c.1); rstInputs["b0_col"] = pack(c.2)
-            rstInputs["r1"] = pack(c.0); rstInputs["g1"] = pack(c.1); rstInputs["b1_col"] = pack(c.2)
-            rstInputs["r2"] = pack(c.0); rstInputs["g2"] = pack(c.1); rstInputs["b2_col"] = pack(c.2)
-            
-            
-            rstInputs["z_weight"] = pack(face.invZ)
-            
-           
+            rstInputs["z_weight"] = pack(face.invZ, into: "z_weight")
             rstInputs["processed_texture"] = self.alignedTextureArray
             
             guard let metalBuf = self.displayBuffers[i] else { continue }
+            
             var outputViews = InferenceFunction.MutableViews()
             
-            // [64, 1, 256, 256] 
-            var viewForR = NDArray.MutableRawView(
-                metalBuffer: metalBuf,
-                byteOffset: layerByteCount * 0,
-                scalarType: .float16,
-                shape: [64, 1, 256, 256]
-            ).view(as: Float16.self)
+            let viewForR = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 0, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
             outputViews.insert(viewForR, for: "convolution_3")
             
-            var viewForG = NDArray.MutableRawView(
-                metalBuffer: metalBuf,
-                byteOffset: layerByteCount * 1,
-                scalarType: .float16,
-                shape: [64, 1, 256, 256]
-            ).view(as: Float16.self)
+            let viewForG = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 1, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
             outputViews.insert(viewForG, for: "convolution_4")
             
-            var viewForB = NDArray.MutableRawView(
-                metalBuffer: metalBuf,
-                byteOffset: layerByteCount * 2,
-                scalarType: .float16,
-                shape: [64, 1, 256, 256]
-            ).view(as: Float16.self)
+            let viewForB = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 2, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
             outputViews.insert(viewForB, for: "convolution_5")
             
-            var viewForMask = NDArray.MutableRawView(
-                metalBuffer: metalBuf,
-                byteOffset: layerByteCount * 3,
-                scalarType: .float16,
-                shape: [64, 1, 256, 256]
-            ).view(as: Float16.self)
+            let viewForMask = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 3, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
             outputViews.insert(viewForMask, for: "convolution_6")
 
-            let _ = try await rst.run(inputs: rstInputs, outputViews: consume outputViews)
+            let _ = try await rst.run(inputs: rstInputs, outputViews: outputViews)
         }
     }
 }
