@@ -197,16 +197,16 @@ class ANERenderer {
             var outputViews = InferenceFunction.MutableViews()
             
             let viewForR = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 0, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
-            outputViews.insert(viewForR, for: "convolution_3")
+            outputViews.insert(viewForR, for: "convolution_4")
             
             let viewForG = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 1, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
-            outputViews.insert(viewForG, for: "convolution_4")
+            outputViews.insert(viewForG, for: "convolution_5")
             
             let viewForB = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 2, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
-            outputViews.insert(viewForB, for: "convolution_5")
+            outputViews.insert(viewForB, for: "convolution_6")
             
             let viewForMask = NDArray.MutableRawView(metalBuffer: metalBuf, byteOffset: layerByteCount * 3, scalarType: .float16, shape: [64, 1, 256, 256]).view(as: Float16.self)
-            outputViews.insert(viewForMask, for: "convolution_6")
+            outputViews.insert(viewForMask, for: "convolution_7")
 
             let _ = try await rst.run(inputs: rstInputs, outputViews: outputViews)
         }

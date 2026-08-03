@@ -51,22 +51,39 @@ class ANE3DRenderer64(nn.Module):
         # z_weight [1, 1, 1, 64] ➔ [1, 64, 1, 1] 
         safe_z_weight = torch.abs(z_weight).view(1, 64, 1, 1)
         
-    
-        
         dummy_ones = torch.ones(1, 64, 256, 256, dtype=torch.float16, device=z_weight.device)
         z_weight_space = safe_z_weight * dummy_ones
 
+        # Z Buffer
+        pixel_inv_z = z_weight_space * mask  # [1, 64, 256, 256]
+
+        # 1x1 Conv（Sum）
+        sum_inv_z = F.conv2d(pixel_inv_z, self.sum_kernel, bias=None)  # [1, 1, 256, 256]
+
+        
+        z_diff = torch.relu(sum_inv_z - pixel_inv_z)  # [1, 64, 256, 256]
+
+        # Clamp and Mul (Blur weight)
+        sharpness = 10.0 
+        z_blend_weights = torch.clamp(1.0 - (z_diff * sharpness), min=0.0, max=1.0)
+
+        # Z mask
+        z_mask = mask * z_blend_weights  # [1, 64, 256, 256]
+
         # [1, 64, 256, 256] 
         # Mul
-        R_full = sampled_texture * z_weight_space * mask
-        G_full = sampled_texture * z_weight_space * mask
-        B_full = sampled_texture * z_weight_space * mask
-        mask_full = mask * z_weight_space
+        R_full = sampled_texture * z_mask
+        G_full = sampled_texture * z_mask
+        B_full = sampled_texture * z_mask
+        mask_full = z_mask
         
-        #　Output 1x1 Conv Sum
+        #　Output 1x1 Conv Sum 
         R = F.conv2d(R_full, self.sum_kernel, bias=None)
         G = F.conv2d(G_full, self.sum_kernel, bias=None)
         B = F.conv2d(B_full, self.sum_kernel, bias=None)
         mask_w = F.conv2d(mask_full, self.sum_kernel, bias=None)
         
-        return R, G, B, mask_w
+     
+        max_inv_z = F.conv2d(pixel_inv_z * z_blend_weights, self.sum_kernel, bias=None)
+        
+        return R, G, B, mask_w, max_inv_z
