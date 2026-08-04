@@ -23,162 +23,153 @@ def create_camera_matrix(eye, target, up):
     
     return (R @ T).astype(np.float16)
 
-
 def create_debug_texture():
     tex = np.zeros((1, 3, 256, 256), dtype=np.float16)
     for y in range(256):
         for x in range(256):
             is_white = ((x // 32) + (y // 32)) % 2 == 0
             color = 1.0 if is_white else 0.0
-            tex[0, :, y, x] = color # R, G, B
+            tex[0, :, y, x] = color
     return tex
 
 async def main():
-    mvp_path = Path("./ane_mvp_processor.aimodel")
+    # Load the 3 AIModel assets
+    pre_path = Path("./ane_3d_pre_processor_64.aimodel")
     rast_path = Path("./ane_3d_rasterizer_64.aimodel")
     tex_path = Path("./ane_texture_processor.aimodel")
     
-    if not mvp_path.exists() or not rast_path.exists() or not tex_path.exists():
-        print("Error: 3 Assets (MVP, Rasterizer, Texture) not found.")
+    if not pre_path.exists() or not rast_path.exists() or not tex_path.exists():
+        print("Error: 3 Assets not found.")
         return
 
     print("Loading 3 Assets onto ANE...")
-    mvp_asset = AIModelAsset.load(mvp_path)
+    pre_asset = AIModelAsset.load(pre_path)
     rast_asset = AIModelAsset.load(rast_path)
     tex_asset = AIModelAsset.load(tex_path) 
     
-    async with mvp_asset.executable() as mvp_model, \
+    async with pre_asset.executable() as pre_model, \
                rast_asset.executable() as rast_model, \
                tex_asset.executable() as tex_model: 
                
-        mvp_function: InferenceFunction = mvp_model.load_function("main")
+        pre_function: InferenceFunction = pre_model.load_function("main")
         rast_function: InferenceFunction = rast_model.load_function("main")
         tex_function: InferenceFunction = tex_model.load_function("main") 
 
-  
+        # -----------------------------------------------------------------
+        # [0/3] Texture Processor
+        # -----------------------------------------------------------------
         print("🚀 [0/3] Running Texture Processor on ANE...")
         raw_tex_np = create_debug_texture()
-        
-        
         tex_inputs = {"raw_image": NDArray(raw_tex_np)}
         tex_outputs = await tex_function(tex_inputs)
-        
-        # 1x1 Conv [1, 64, 256, 256]
         processed_texture_np = tex_outputs[tex_function.desc.output_names[0]].numpy()
-        print(f"   ➔ Texture Aligned Shape: {processed_texture_np.shape}")
 
-   
-        print("🚀 [1/3] Running MVP Transformation on ANE...")
-        camera_matrix_np = create_camera_matrix([2.0, 2.0, 5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        # 1. Vertex buffer: [1, 4, 3, 64] -> (0,0,0,1) 
+        expanded_vertices_np = np.zeros((1, 4, 3, 64), dtype=np.float16)
+        expanded_vertices_np[0, 3, :, :] = 1.0  # 全ダミー頂点のWを1.0にする
+  
+        mvp_weights_np = np.zeros((4, 4, 1, 1), dtype=np.float16)
         
-        MAX_VERTICES = 65536
-        vertex_buffer_np = np.zeros((1, 4, 1, MAX_VERTICES), dtype=np.float16)
+        # 3. Color Buffer: [1, 1, 1, 64] 
+        colors_r_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
+        colors_g_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
+        colors_b_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
+
+    
+        base_mvp = create_camera_matrix([2.0, 2.0, 5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
-        vertices_data = [
-            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0],
-            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0],
-            [ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0],
-            [ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0],
+     
+        for i in range(4):
+            for j in range(4):
+                mvp_weights_np[i, j, 0, 0] = base_mvp[i, j]
+
+        pyramid_faces = [
+            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]], # Face0
+            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]], # Face1
+            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]], # Face2
+            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]], # Face3
         ]
-        for i, v in enumerate(vertices_data):
-            vertex_buffer_np[0, :, 0, i] = v
-
-        mvp_outputs = await mvp_function({"camera_matrix": NDArray(camera_matrix_np), "vertex_buffer": NDArray(vertex_buffer_np)})
-        transformed_vertices = mvp_outputs[mvp_function.desc.output_names[0]].numpy()
-
-        print("🚀 [2/3] Running 3D Rasterization with Texture on ANE...")
-        
-      
-        final_frame_rgb = np.zeros((256, 256, 3), dtype=np.float32)
-        
-        def get_edge(p_a, p_b):
-            A = p_a[1] - p_b[1]
-            B = p_b[0] - p_a[0]
-            C = -(A * p_a[0] + B * p_a[1])
-            return A, B, C
-
-        def pack(val):
-            t = np.full((1, 1, 1, 64), 0.0, dtype=np.float16)
-            t[0, 0, 0, 0] = val
-            return NDArray(t)
-
-        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)]
-        input_names = rast_function.desc.input_names
+        pyramid_colors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
 
         for i in range(4):
-            idx = i * 3
-            p0 = transformed_vertices[0, :2, 0, idx]
-            p1 = transformed_vertices[0, :2, 0, idx+1]
-            p2 = transformed_vertices[0, :2, 0, idx+2]
+          
+            colors_r_np[0, 0, 0, i] = pyramid_colors[i][0]
+            colors_g_np[0, 0, 0, i] = pyramid_colors[i][1]
+            colors_b_np[0, 0, 0, i] = pyramid_colors[i][2]
             
-            A0, B0, C0 = get_edge(p0, p1)
-            A1, B1, C1 = get_edge(p1, p2)
-            A2, B2, C2 = get_edge(p2, p0)
             
-            z_depth = transformed_vertices[0, 2, 0, idx]
-            inv_z = 1.0 / z_depth if z_depth != 0 else 1.0
-            
-            rast_inputs = {}
-            c = colors[i]
-           
-            for name in input_names:
-                if name == "processed_texture":
-                   
-                    rast_inputs[name] = NDArray(processed_texture_np)
-                elif "_col" in name or name in ["r0", "r1", "r2", "g0", "g1", "g2"]:
-                    if "r" in name: rast_inputs[name] = pack(c[0])
-                    elif "g" in name: rast_inputs[name] = pack(c[1])
-                    elif "b" in name: rast_inputs[name] = pack(c[2])
-                    else: rast_inputs[name] = pack(1.0)
-                elif name == "a0": rast_inputs[name] = pack(A0)
-                elif name == "b0": rast_inputs[name] = pack(B0)
-                elif name == "c0": rast_inputs[name] = pack(C0)
-                elif name == "a1": rast_inputs[name] = pack(A1)
-                elif name == "b1": rast_inputs[name] = pack(B1)
-                elif name == "c1": rast_inputs[name] = pack(C1)
-                elif name == "a2": rast_inputs[name] = pack(A2)
-                elif name == "b2": rast_inputs[name] = pack(B2)
-                elif name == "c2": rast_inputs[name] = pack(C2)
-                elif "z" in name or "weight" in name: rast_inputs[name] = pack(inv_z)
-                else: rast_inputs[name] = pack(0.0)
-                    
-            # Run Rasterizer
-            rast_outputs = await rast_function(rast_inputs)
+            face_data = np.array(pyramid_faces[i], dtype=np.float16).T
+            expanded_vertices_np[0, :, :, i] = face_data
 
+    
+        print("🚀 [1/3] Running 3D PreProcessor on ANE...")
+        pre_inputs = {
+            "expanded_vertices": NDArray(expanded_vertices_np),
+            "mvp_weights": NDArray(mvp_weights_np), 
+            "colors_r": NDArray(colors_r_np),
+            "colors_g": NDArray(colors_g_np),
+            "colors_b": NDArray(colors_b_np)
+        }
+        pre_outputs = await pre_function(pre_inputs)
 
-            
-            
-            out_names = rast_function.desc.output_names
-            
-           
-            r_out = rast_outputs[out_names[0]].numpy()[0, 0, :, :] # [256, 256]
-            g_out = rast_outputs[out_names[1]].numpy()[0, 0, :, :]
-            b_out = rast_outputs[out_names[2]].numpy()[0, 0, :, :]
-            mask_out = rast_outputs[out_names[3]].numpy()[0, 0, :, :]
+    
+        print("🚀 [2/3] Running 3D Rasterization with Texture on ANE...")
+        
+        rast_inputs = {}
+        
+        
+        rast_inputs['a0'] = pre_outputs['sub']
+        rast_inputs['b0'] = pre_outputs['sub_1']
+        rast_inputs['c0'] = pre_outputs['neg']
+        
+        rast_inputs['a1'] = pre_outputs['sub_2']
+        rast_inputs['b1'] = pre_outputs['sub_3']
+        rast_inputs['c1'] = pre_outputs['neg_1']
+        
+        rast_inputs['a2'] = pre_outputs['sub_4']
+        rast_inputs['b2'] = pre_outputs['sub_5']
+        rast_inputs['c2'] = pre_outputs['neg_2']
+   
+        rast_inputs['r0'] = pre_outputs['colors_r']
+        rast_inputs['r1'] = pre_outputs['colors_r']
+        rast_inputs['r2'] = pre_outputs['colors_r']
+        
+        rast_inputs['g0'] = pre_outputs['colors_g']
+        rast_inputs['g1'] = pre_outputs['colors_g']
+        rast_inputs['g2'] = pre_outputs['colors_g']
+        
+        rast_inputs['b0_col'] = pre_outputs['colors_b']
+        rast_inputs['b1_col'] = pre_outputs['colors_b']
+        rast_inputs['b2_col'] = pre_outputs['colors_b']
+        
+        # Z depth
+        rast_inputs['z_weight'] = pre_outputs['slice_10']
+        
+        # Processed texture
+        rast_inputs["processed_texture"] = NDArray(processed_texture_np)
 
+     
+        rast_outputs = await rast_function(rast_inputs)
 
-            r_raw_data = rast_outputs[out_names[0]].numpy()
-            g_raw_data = rast_outputs[out_names[1]].numpy()
-            mask_raw_data = rast_outputs[out_names[3]].numpy()
-            
-      
-            valid_pixels = mask_out > 0.001
-            
-            if np.any(valid_pixels):
-               
-                safe_mask = mask_out + 1e-6
-                poly_r = np.where(valid_pixels, r_out / safe_mask, 0.0)
-                poly_g = np.where(valid_pixels, g_out / safe_mask, 0.0)
-                poly_b = np.where(valid_pixels, b_out / safe_mask, 0.0)
-                
-                # Max blend
-                poly_rgb = np.stack([poly_r, poly_g, poly_b], axis=-1)
-                final_frame_rgb = np.maximum(final_frame_rgb, np.clip(poly_rgb, 0.0, 1.0))
+        # -----------------------------------------------------------------
+        # save
+        # -----------------------------------------------------------------
+        out_names = rast_function.desc.output_names
+        r_out = rast_outputs[out_names[0]].numpy()[0, 0, :, :]
+        g_out = rast_outputs[out_names[1]].numpy()[0, 0, :, :]
+        b_out = rast_outputs[out_names[2]].numpy()[0, 0, :, :]
+        mask_out = rast_outputs[out_names[3]].numpy()[0, 0, :, :]
 
-    # Save final output
-    final_img_data = (final_frame_rgb * 255).astype(np.uint8)
-    Image.fromarray(final_img_data, 'RGB').save("ane_final_output.png")
-    print("✨ 'ane_final_output.png' saved successfully!")
+        safe_mask = mask_out + 1e-6
+        final_r = np.where(mask_out > 0.001, r_out / safe_mask, 0.0)
+        final_g = np.where(mask_out > 0.001, g_out / safe_mask, 0.0)
+        final_b = np.where(mask_out > 0.001, b_out / safe_mask, 0.0)
+        
+        final_frame_rgb = np.stack([final_r, final_g, final_b], axis=-1)
+
+        final_img_data = (np.clip(final_frame_rgb, 0.0, 1.0) * 255).astype(np.uint8)
+        Image.fromarray(final_img_data, 'RGB').save("ane_final_output.png")
+        print("✨ 'ane_final_output.png' saved successfully!")
 
 if __name__ == "__main__":
     asyncio.run(main())
