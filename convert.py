@@ -21,7 +21,9 @@ def make_dummy():
 
 # Prepare dummy data matching the arguments of the forward method
 
-args = tuple([make_dummy() for _ in range(19)]) + (torch.zeros(1, 64, 256, 256, dtype=torch.float16),)
+
+args = tuple([make_dummy() for _ in range(27)]) + (torch.zeros(1, 64, 256, 256, dtype=torch.float16),)
+
 
 # -------------------------------------------------------------------------
 # 3. Export Settings for CoreAI
