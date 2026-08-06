@@ -40,8 +40,8 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint width = 256;
     uint height = 256;
     
-    // UV
-    uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
+  
+    uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
     

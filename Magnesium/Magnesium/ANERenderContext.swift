@@ -131,9 +131,8 @@ class ANERenderContext {
                 let eyeX = radius * sin(self.angle)
                 let eyeZ = radius * cos(self.angle)
                 
-                
                 let cameraMatrix = self.geometry.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 1.2, eyeZ),
+                    eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
                     target: SIMD3<Float>(0.0, 0.0, 0.0),
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
