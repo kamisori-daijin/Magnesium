@@ -141,6 +141,8 @@ class ANERenderer {
         ]
         // [String: InferenceFunction.Value]
         var preOutputs = try await pre.run(inputs: preInputs)
+    
+ 
         
         // -----------------------------------------------------------------
         // STAGE 2: 3D Rasterizer Inputs Mapping
@@ -171,9 +173,9 @@ class ANERenderer {
         
 
         let zWeight = preOutputs.remove("slice_10")?.ndArray
-        rstInputs["p0_iz"] = zWeight
-        rstInputs["p1_iz"] = zWeight
-        rstInputs["p2_iz"] = zWeight
+        rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
+        rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
+        rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
         
         rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
         rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
@@ -202,6 +204,7 @@ class ANERenderer {
 
       
         let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
+ 
     }
 
 }
