@@ -17,7 +17,7 @@ class ANERenderer {
     private var rstFunction: InferenceFunction?
     private var texFunction: InferenceFunction?
     
-    // ANEが100%加速できる5つのフラット入力バッファ
+ 
     internal var expandedVerticesArray: NDArray
     internal var mvpWeightsArray: NDArray
     internal var colorsRArray: NDArray
@@ -46,9 +46,9 @@ class ANERenderer {
         self.rstFunction = try rstModel?.loadFunction(named: "main")
         self.texFunction = try texModel?.loadFunction(named: "main")
         
-        // 5つのフラット形状で初期化
+    
         self.expandedVerticesArray = NDArray(shape:[1, 4, 3, 64], scalarType: .float16)
-        self.mvpWeightsArray = NDArray(shape:[4, 4, 1, 1], scalarType: .float16)
+        self.mvpWeightsArray = NDArray(shape:[1, 4, 4, 1, 64], scalarType: .float16)
         self.colorsRArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         self.colorsGArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         self.colorsBArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
@@ -110,14 +110,14 @@ class ANERenderer {
         texView.copyElements(fromContentsOf: pixelData)
     }
 
-    /// 🚀 3つの3Dステージを完全直結した、エラーフリーな一撃レンダリングパイプライン
+ 
     func drawFrame() async throws {
-        // 1. 必要な機能・バッファがロードされているか一括安全チェック
+        // 1. check
         guard let tex = texFunction,
               let pre = preFunction,
               let rst = rstFunction else { return }
         
-        // 💡 修正：あなたのオリジナルの displayBuffers 配列の先頭（面0のバッファ）を安全に取得
+  
         guard let canvasBuf = self.displayBuffers[0] else { return }
         
         // -----------------------------------------------------------------
@@ -130,7 +130,7 @@ class ANERenderer {
         let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
         
         // -----------------------------------------------------------------
-        // STAGE 1: 3D PreProcessor (内部でConv2dによるMVP座標変換 & エッジ一斉計算)
+        // STAGE 1: 3D PreProcessor
         // -----------------------------------------------------------------
         let preInputs: [String: NDArray] = [
             "expanded_vertices": expandedVerticesArray,
@@ -139,15 +139,15 @@ class ANERenderer {
             "colors_g": colorsGArray,
             "colors_b": colorsBArray
         ]
-        // [String: InferenceFunction.Value] の標準辞書型で受ける
+        // [String: InferenceFunction.Value]
         var preOutputs = try await pre.run(inputs: preInputs)
         
         // -----------------------------------------------------------------
-        // STAGE 2: 3D Rasterizer Inputs Mapping (新27引数への直結リレー)
+        // STAGE 2: 3D Rasterizer Inputs Mapping
         // -----------------------------------------------------------------
         var rstInputs: [String: NDArray] = [:]
         
-        // ① 9つのエッジ関数を .remove を使って直撃ぶっこ抜き
+   
         rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
         rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
         rstInputs["c0"] = preOutputs.remove("neg")?.ndArray
@@ -160,7 +160,7 @@ class ANERenderer {
         rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
         rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
         
-        // ② 💡 徹底修正：タイポを全滅させ、すべて .remove メソッドのみで安全に引っこ抜く！
+ 
         let colorsR = preOutputs.remove("colors_r")?.ndArray
         let colorsG = preOutputs.remove("colors_g")?.ndArray
         let colorsB = preOutputs.remove("colors_b")?.ndArray
@@ -169,22 +169,21 @@ class ANERenderer {
         rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
         rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
         
-        // ③ 3頂点分の正しいデプス（Z逆数）を複製直結
+
         let zWeight = preOutputs.remove("slice_10")?.ndArray
         rstInputs["p0_iz"] = zWeight
         rstInputs["p1_iz"] = zWeight
         rstInputs["p2_iz"] = zWeight
         
-        // ④ 3頂点分のUV座標バッファの直結（安全な既存バッファの使い回しで開通）
         rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
         rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
         rstInputs["u2"] = colorsR; rstInputs["v2"] = colorsR
         
-        // ⑤ 処理済みテクスチャ
+ 
         rstInputs["processed_texture"] = alignedTextureArray
         
         // -----------------------------------------------------------------
-        // STAGE 3: Metal Shared Canvas Direct Blit (出力バインド)
+        // STAGE 3: Metal Shared Canvas Direct Blit
         // -----------------------------------------------------------------
         var rstOutputViews = InferenceFunction.MutableViews()
         let shape: [Int] = [64, 1, 256, 256]
@@ -201,7 +200,7 @@ class ANERenderer {
         let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
         rstOutputViews.insert(viewForMask, for: "convolution_7")
 
-        // ラスタライザを1発だけ起動！
+      
         let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
     }
 
