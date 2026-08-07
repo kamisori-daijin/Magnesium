@@ -1,46 +1,70 @@
 # Magnesium
-3D Software Rasterizer with ANE
+ANE-powered 3D software rasterizer
 
-A high-performance 3D software rasterizer pipeline executed on the **Apple Neural Engine (ANE)** using the latest **Core AI framework (WWDC26)**, **Metal 4**, and **Swift 6**.
+A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing the latest **Core AI framework (WWDC26)**, **Metal 4**, and **Swift 6**.
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/85c03965-8322-4a08-ae40-fe19501f84ec" width="512" height="512" autoplay loop muted playsinline></video>
+
+<video src="https://github.com/user-attachments/assets/e4bf2751-faa7-46b2-95be-f1df72df3421" width="512" height="512" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
-- **Pure ANE Vertex & Raster Pipeline**: MVP matrix transformations, edge functions, and line equations are entirely executed as hardware operations (e.g., `f.conv2d`) inside the ANE pipeline.
-- **CPU Fallback Elimination**: Reduced CPU usage from **38% down to ~20%** by strictly bypassing CPU intervention during the main execution chain.
-- **Metal 4 Tensor Binding**: Leverages Core AI's `NDArray.View` with `withUnsafePointer` to stream continuous planar tensor data directly into Metal Fragment Shaders with minimal overhead.
-- **Swift 6 Concurrency & Non-Escapable (`~Escapable`) Safe**: Fully synchronized via explicit `@MainActor` task chains to prevent race conditions and uninitialized blank buffers.
-- **AI-Co-Authored Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and fast-prototyped using **Siri AI and Gemini**.
+- **Pure ANE-native graphics pipeline**: Geometry transformations, edge functions, line equations, and centroid texture mapping are all performed as hardware calculations within the ANE core.
 
-## Implementation Deep Dive
+- **Multi-instance parallel rendering**: Independent 3D objects with different MVP matrices can be rendered simultaneously on a single fixed ANE graph.
 
-### 1. The 64-Batch Vertex Pipeline & 2-Channel Static UV Input
-To achieve universal 3D mesh rendering without dynamic graph rebuild latency, geometry calculations support up to 65,536 vertices, processed via a **64-element batch streaming loop** on a fixed ANE graph. 
+- **True 3D Perspective Correction Mapping**: Implemented spatial coordinate warp and pixel-level Z-depth occlusion testing on NPU hardware.
 
-The rasterization grid is clamped into a static `[1, 2, 1024, 1024]` tensor layout:
-- **Channel 0**: X coordinates ($[-1.0 \dots 1.0]$ Grid)
-- **Channel 1**: Y coordinates ($[1.0 \dots -1.0]$ Grid)
+- **Metal 4 Zero Copy Britting**: Leveraged `NDArray.MutableRawView` to pipe multiplane tensor streams directly to Metal shared buffers, eliminating CPU and GPU synchronization bottlenecks.
 
-### 2. Processing Planar Data in Metal
-The ANE output buffer holds raw planar data (with R, G, B, and A channels arranged sequentially as separate planes). The Metal fragment shader samples these planes directly using precise byte offsets, performing zero-copy texture synthesis on the GPU.
+- **AI Co-Development Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and rapidly prototyped using **Gemini and Siri AI**.
 
-## Known Issues / WIP
-- **High Memory Footprint**: Current allocation strategy for intermediate tensor buffers and the raw planar matrix results in a massive **~1.2 GB memory consumption**. Optimization of the tensor lifecycle is actively under development.
-- Rendering quality is still early-stage and low-resolution.
+--
 
+## Implementation Details
+
+### 1. 64-Batch Broadcast Vertex Pipeline
+To render multiple independent objects without triggering the high-cost depth convolution (`groups=64`) routines that would confuse the Core AI compiler, the geometry engine leverages a **per-element tensor product broadcast hack**.
+
+The input transformations are packed into a `[1, 4, 4, 1, 64]` tensor representing 64 independent 4x4 MVP matrices. By performing a fused `torch.sum(*)` operation, the ANE multifires the 64 intrinsic spatial transformations in parallel. The mesh grid is clamped to a static `[1, 2, 256, 256]` raster space.
+- **Channel 0**: X coordinate ($[-1.0 \dots 1.0]$ grid)
+- **Channel 1**: Y coordinate ($[1.0 \dots -1.0]$ grid)
+
+### 2. Perspective Corrected Centroid Sampling
+Spatial depth inversion maps the coordinates by replacing the division denominator in the clipping space with the true spatial distance channel $W_c$. The 3D geometry engine outputs precise 3-vertex inverse depth gradients via hidden tensor blocks (`slice_11` to `slice_13`), and the rasterizer constructs smooth, pixel-level depth gradients to achieve overlap occlusion.
+
+### 3. Planar Zero-Copy Ingestion in Metal Shaders
+The ANE hardware dumps raw planar data (R, G, B, and mask arranged sequentially as separate sheets) directly into an `MTLBuffer` allocated on the heap. The Metal fragment shader avoids costly memory copies and achieves high-overhead texturing by calculating precise planar offsets using the layout format stride.
+
+```metal
+// Direct plane scan within the Metal fragment shader
+uint componentStride = 64 * width * height;
+
+uint rIndex = (componentStride * 0) + pixelIndex;
+
+uint gIndex = (componentStride * 1) + pixelIndex;
+
+uint bIndex = (componentStride * 2) + pixelIndex;
+
+```
+
+---
+
+## Known Issues
+Memory consumption is still high at 1.6GB, and CPU usage is around 15%.
+
+---
 ## How to Use
-1. Install dependencies
+1. Install Dependencies
 ```bash
 pip install coreai-torch
 ```
-2. Convert ShaderModel
+2. Convert Shader Models
 ```bash
 python convert.py
-python convert_mvp.py
+python convert_prepro.py
+python convert_texture.py
 ```
-3. Open `.xcodeproj`
-4. Build and run
-5. Both select the generated `.aimodel`(Click Command Key)
-6. Run the app and observe the 3D rasterized output
+3. Open `Magnesium.xcodeproj`
+4. Build and Run
+5. Use the Model Picker to select the three generated `.aimodel` files (to select multiple assets, hold down the Command key while selecting).
