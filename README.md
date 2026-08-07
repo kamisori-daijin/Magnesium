@@ -19,7 +19,6 @@ A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing t
 
 - **AI Co-Development Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and rapidly prototyped using **Gemini and Siri AI**.
 
---
 
 ## Implementation Details
 
