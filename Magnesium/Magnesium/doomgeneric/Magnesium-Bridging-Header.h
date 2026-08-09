@@ -7,3 +7,4 @@
 
 void mac_Doom_Init(void);
 void mac_Doom_Tick(void);
+void mac_Doom_Create(int argc, char** argv);
