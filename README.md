@@ -67,3 +67,6 @@ python convert_texture.py
 3. Open `Magnesium.xcodeproj`
 4. Build and Run
 5. Use the Model Picker to select the three generated `.aimodel` files (to select multiple assets, hold down the Command key while selecting).
+
+Anowredgements
+doomgeneric - DOOM
