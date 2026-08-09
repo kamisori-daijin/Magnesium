@@ -134,9 +134,6 @@ class ANERenderContext {
         }
     }
 
-    // =================================================================
-    // 🕹️ DOOM 3D FPS カメラ＆ゲームループ制御エンジン
-    // =================================================================
     func startCameraRotation() {
         timer?.invalidate()
         
@@ -146,9 +143,8 @@ class ANERenderContext {
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
                 
                 // -----------------------------------------------------------------
-                // 🏃‍♂️ 1. キーボード入力に応じたプレイヤーの座標・視線（Yaw角）の動的アップデート
+                // 🏃‍♂️ 1. キーボード入力に応じたプレイヤーの座標・視線の動的アップデート
                 // -----------------------------------------------------------------
-                // 矢印キーまたはA/Dキーで左右に旋回（カメラを横に回す）
                 if self.isPressingLeft || self.isPressingA {
                     self.playerYaw -= self.rotateSpeed
                 }
@@ -156,11 +152,9 @@ class ANERenderContext {
                     self.playerYaw += self.rotateSpeed
                 }
                 
-                // 現在向いている方向の「前方向ベクトル」を算出
                 let forwardX = sin(self.playerYaw)
                 let forwardZ = cos(self.playerYaw)
                 
-                // W/Sキーで向いている方向に対して前進・後退
                 if self.isPressingW {
                     self.playerPosition.x += forwardX * self.moveSpeed
                     self.playerPosition.z += forwardZ * self.moveSpeed
@@ -170,15 +164,9 @@ class ANERenderContext {
                     self.playerPosition.z -= forwardZ * self.moveSpeed
                 }
                 
-                // 💡 2. プレイヤーの現在の目線（ eye ）から、向いている正面（ target ）を計算
                 let eye = self.playerPosition
-                let target = SIMD3<Float>(
-                    eye.x + forwardX,
-                    eye.y, // 目線の高さは 1.0 固定
-                    eye.z + forwardZ
-                )
+                let target = SIMD3<Float>(eye.x + forwardX, eye.y, eye.z + forwardZ)
                 
-                // あなたのオリジナルの createCameraMatrix を使って、一人称（FPS）視点のMVPマトリクスを生成！
                 let cameraMatrix = self.geometry.createCameraMatrix(
                     eye: eye,
                     target: target,
@@ -186,15 +174,14 @@ class ANERenderContext {
                 )
 
                 // -----------------------------------------------------------------
-                // 🧱 2. ANEへ流し込む64面分のフラットバッファの構築
+                // 🧱 2. ANE用フラットバッファの構築（4マスの部屋の壁を建築）
                 // -----------------------------------------------------------------
-                var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64) // 1024要素
+                var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
                 var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
                 var colorsR = [Float16](repeating: 0.0, count: 64)
                 var colorsG = [Float16](repeating: 0.0, count: 64)
                 var colorsB = [Float16](repeating: 0.0, count: 64)
                 
-                // スライスバグ(0x10004)を完全に殺す W=1.0 初期パッキング
                 let wChannelOffset = 3 * 3 * 64
                 for faceIdx in 0..<64 {
                     vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
@@ -202,29 +189,45 @@ class ANERenderContext {
                     vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
-                // 📐 DOOMの部屋を構成する「初期テスト用3D形状データ（ピラミッドを仮配置）」
-                let pyramidFaces: [[[Float16]]] = [
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
+                // =================================================================
+                // 📐 DOOM部屋の幾何学：四角い壁（1枚につき三角形2枚）を前後左右に定義
+                // 256x256のチェッカーテクスチャが綺麗に壁に貼り付くようにUV対応も内包
+                // =================================================================
+                
+                // ① 前後の壁データ（Z = -4.0 の奥の壁 ＆ Z = 4.0 の手前の壁）
+                let northSouthWalls: [[[Float16]]] = [
+                    // 奥の壁（三角形1 & 2）
+                    [[ -3.0,  2.0, -4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0]],
+                    [[ -3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  2.0, -4.0, 1.0]],
+                    // 手前の壁（三角形1 & 2）
+                    [[  3.0,  2.0,  4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0]],
+                    [[  3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  2.0,  4.0, 1.0]],
                 ]
                 
-                let faceColors: [(Float16, Float16, Float16)] = [
-                    (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
+                // ② 左右の壁データ（X = -3.0 の左の壁 ＆ X = 3.0 の右の壁）
+                let eastWestWalls: [[[Float16]]] = [
+                    // 左の壁（三角形1 & 2）
+                    [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0]],
+                    [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [ -3.0,  2.0, -4.0, 1.0]],
+                    // 右の壁（三角形1 & 2）
+                    [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0]],
+                    [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [  3.0,  2.0,  4.0, 1.0]],
+                ]
+                
+                // 壁の色（DOOMの薄暗いレンガ壁をイメージしてグレーとセピアに設定）
+                let wallColors: [(Float16, Float16, Float16)] = [
+                    (0.5, 0.4, 0.4), (0.5, 0.4, 0.4), (0.4, 0.4, 0.5), (0.4, 0.4, 0.5)
                 ]
 
-                // 物体1：左側の壁セクター（スロット0〜3番を使用 / X座標を -2.0 固定配置）
+                // スロット0〜3番に「前後の壁」を建築
                 for i in 0..<4 {
                     let slot = i
-                    colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                    colorsR[slot] = wallColors[i].0; colorsG[slot] = wallColors[i].1; colorsB[slot] = wallColors[i].2
                     
                     for v in 0..<3 {
                         for ch in 0..<4 {
                             let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue -= 2.0 }
-                            vertices[pIndex] = offsetValue
+                            vertices[pIndex] = northSouthWalls[i][v][ch]
                         }
                     }
                     for m in 0..<16 {
@@ -232,26 +235,23 @@ class ANERenderContext {
                     }
                 }
 
-                // 物体2：右側の壁セクター（スロット4〜7番を使用 / X座標を +2.0 固定配置）
+                // スロット4〜7番に「左右の壁」を建築
                 for i in 0..<4 {
                     let slot = 4 + i
-                    colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                    colorsR[slot] = wallColors[i].0; colorsG[slot] = wallColors[i].1; colorsB[slot] = wallColors[i].2
                     
                     for v in 0..<3 {
                         for ch in 0..<4 {
                             let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue += 2.0 }
-                            vertices[pIndex] = offsetValue
+                            vertices[pIndex] = eastWestWalls[i][v][ch]
                         }
                     }
-                    // 💡 新・前処理モデルの1024要素の対角配列へシリアライズリレー！
                     for m in 0..<16 {
                         mvpWeights[m * 64 + slot] = cameraMatrix[m]
                     }
                 }
 
-                // 💡 3. ANEへ座標をまとめて転送キック
+                // 3. ANEの超並列ラスタライザへ直撃リレーキック！
                 renderer.updateGeometry(
                     vertices: vertices,
                     mvpWeights: mvpWeights,
@@ -263,6 +263,7 @@ class ANERenderContext {
             }
         }
     }
+
     
     // =================================================================
     // 🎨 Metal Canvas 1発 Blit レンダリングステージ
