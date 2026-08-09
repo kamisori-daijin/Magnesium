@@ -168,7 +168,7 @@ class ANERenderContext {
 
  
                 for i in 0..<4 {
-                    let slot = i // 0, 1, 2, 3番スロット
+                    let slot = i // 0, 1, 2, 3 Slot
                     colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
                     
                     for v in 0..<3 {
@@ -188,7 +188,7 @@ class ANERenderContext {
 
        
                 for i in 0..<4 {
-                    let slot = 4 + i // 4, 5, 6, 7番スロット
+                    let slot = 4 + i // 4, 5, 6, 7 slot
                     colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
                     
                     for v in 0..<3 {
