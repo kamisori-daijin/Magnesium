@@ -4,6 +4,7 @@
 //
 //  Created by kamisori-daijin on 2026/07/11.
 //
+
 import SwiftUI
 
 struct ContentView: View {
@@ -11,7 +12,7 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Text("ANE 3D Renderer")
+            Text("ANE 3D Renderer (DOOM Engine)")
                 .font(.title)
                 .bold()
             
@@ -33,7 +34,6 @@ struct ContentView: View {
                             }
                             // Liquid Glass Button
                             .buttonStyle(.glass)
-                          
                         }
                     }
                     .frame(width: 512, height: 512)
@@ -43,12 +43,42 @@ struct ContentView: View {
             }
             
             if renderContext.renderer != nil {
-                Text("3D Rasterization in progress (ANE)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // 💡 ゲーマーへの操作説明テキストを追加！
+                Text("🕹️ Move: [W][S] / Turn: [A][D] or [Arrow Keys]")
+                    .font(.headline)
+                    .foregroundColor(.accentColor)
             }
         }
         .padding()
         .frame(width: 600, height: 680)
+        
+        // =================================================================
+        // 💡 改造箇所：キーボードの入力をリアルタイムで ANE コンテキストへ直結リレー！
+        // =================================================================
+        // ビューがロードされたら自動的にキーボード入力を受け付ける状態にする
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(phases: [.down, .up]) { press in
+            let isDown = press.phase == .down
+            
+            // 押し下げ（.down）なら true、離されたら（.up）なら false をフラグに叩き込む
+            switch press.key {
+            case .init("w"), .init("W"):
+                renderContext.isPressingW = isDown
+            case .init("s"), .init("S"):
+                renderContext.isPressingS = isDown
+            case .init("a"), .init("A"):
+                renderContext.isPressingA = isDown
+            case .init("d"), .init("D"):
+                renderContext.isPressingD = isDown
+            case .leftArrow:
+                renderContext.isPressingLeft = isDown
+            case .rightArrow:
+                renderContext.isPressingRight = isDown
+            default:
+                return .ignored
+            }
+            return .handled
+        }
     }
 }

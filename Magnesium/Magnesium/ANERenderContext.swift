@@ -25,6 +25,22 @@ class ANERenderContext {
     
     var isLoading = false
     var isComputing = false
+
+    private var playerPosition = SIMD3<Float>(0.0, 1.0, 4.0)
+    
+    private var playerYaw: Float = Float.pi
+    
+   
+    private let moveSpeed: Float = 0.15
+    private let rotateSpeed: Float = 0.05
+    
+    var isPressingW = false
+    var isPressingS = false
+    var isPressingA = false
+    var isPressingD = false
+    var isPressingLeft = false
+    var isPressingRight = false
+
     
     private let geometry = ANE3DGeometry()
     var activeDevice: MTLDevice?
@@ -118,36 +134,67 @@ class ANERenderContext {
         }
     }
 
+    // =================================================================
+    // 🕹️ DOOM 3D FPS カメラ＆ゲームループ制御エンジン
+    // =================================================================
     func startCameraRotation() {
         timer?.invalidate()
         
+        // 💡 1フレーム約33ミリ秒（30fps）でキー入力を常時監視して空間を歩き回る
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
                 
-                self.angle += 0.05
+                // -----------------------------------------------------------------
+                // 🏃‍♂️ 1. キーボード入力に応じたプレイヤーの座標・視線（Yaw角）の動的アップデート
+                // -----------------------------------------------------------------
+                // 矢印キーまたはA/Dキーで左右に旋回（カメラを横に回す）
+                if self.isPressingLeft || self.isPressingA {
+                    self.playerYaw -= self.rotateSpeed
+                }
+                if self.isPressingRight || self.isPressingD {
+                    self.playerYaw += self.rotateSpeed
+                }
                 
-                let radius: Float = 5.5
-                let eyeX = radius * sin(self.angle)
-                let eyeZ = radius * cos(self.angle)
+                // 現在向いている方向の「前方向ベクトル」を算出
+                let forwardX = sin(self.playerYaw)
+                let forwardZ = cos(self.playerYaw)
                 
-                // 1. （View * Projection）Row
+                // W/Sキーで向いている方向に対して前進・後退
+                if self.isPressingW {
+                    self.playerPosition.x += forwardX * self.moveSpeed
+                    self.playerPosition.z += forwardZ * self.moveSpeed
+                }
+                if self.isPressingS {
+                    self.playerPosition.x -= forwardX * self.moveSpeed
+                    self.playerPosition.z -= forwardZ * self.moveSpeed
+                }
+                
+                // 💡 2. プレイヤーの現在の目線（ eye ）から、向いている正面（ target ）を計算
+                let eye = self.playerPosition
+                let target = SIMD3<Float>(
+                    eye.x + forwardX,
+                    eye.y, // 目線の高さは 1.0 固定
+                    eye.z + forwardZ
+                )
+                
+                // あなたのオリジナルの createCameraMatrix を使って、一人称（FPS）視点のMVPマトリクスを生成！
                 let cameraMatrix = self.geometry.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
-                    target: SIMD3<Float>(0.0, 0.0, 0.0),
+                    eye: eye,
+                    target: target,
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
 
-                // 2.（4 × 4 × 64 ＝ 1024）
-                var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
-                
- 
+                // -----------------------------------------------------------------
+                // 🧱 2. ANEへ流し込む64面分のフラットバッファの構築
+                // -----------------------------------------------------------------
+                var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64) // 1024要素
                 var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
                 var colorsR = [Float16](repeating: 0.0, count: 64)
                 var colorsG = [Float16](repeating: 0.0, count: 64)
                 var colorsB = [Float16](repeating: 0.0, count: 64)
                 
-           
+                // スライスバグ(0x10004)を完全に殺す W=1.0 初期パッキング
                 let wChannelOffset = 3 * 3 * 64
                 for faceIdx in 0..<64 {
                     vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
@@ -155,6 +202,7 @@ class ANERenderContext {
                     vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
+                // 📐 DOOMの部屋を構成する「初期テスト用3D形状データ（ピラミッドを仮配置）」
                 let pyramidFaces: [[[Float16]]] = [
                     [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
                     [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
@@ -166,9 +214,9 @@ class ANERenderContext {
                     (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
                 ]
 
- 
+                // 物体1：左側の壁セクター（スロット0〜3番を使用 / X座標を -2.0 固定配置）
                 for i in 0..<4 {
-                    let slot = i // 0, 1, 2, 3 Slot
+                    let slot = i
                     colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
                     
                     for v in 0..<3 {
@@ -179,16 +227,14 @@ class ANERenderContext {
                             vertices[pIndex] = offsetValue
                         }
                     }
-                    
-               
                     for m in 0..<16 {
                         mvpWeights[m * 64 + slot] = cameraMatrix[m]
                     }
                 }
 
-       
+                // 物体2：右側の壁セクター（スロット4〜7番を使用 / X座標を +2.0 固定配置）
                 for i in 0..<4 {
-                    let slot = 4 + i // 4, 5, 6, 7 slot
+                    let slot = 4 + i
                     colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
                     
                     for v in 0..<3 {
@@ -199,15 +245,14 @@ class ANERenderContext {
                             vertices[pIndex] = offsetValue
                         }
                     }
-                    
-              
+                    // 💡 新・前処理モデルの1024要素の対角配列へシリアライズリレー！
                     for m in 0..<16 {
                         mvpWeights[m * 64 + slot] = cameraMatrix[m]
                     }
                 }
-                
-       
-                self.renderer?.updateGeometry(
+
+                // 💡 3. ANEへ座標をまとめて転送キック
+                renderer.updateGeometry(
                     vertices: vertices,
                     mvpWeights: mvpWeights,
                     r: colorsR,
@@ -218,8 +263,10 @@ class ANERenderContext {
             }
         }
     }
-
     
+    // =================================================================
+    // 🎨 Metal Canvas 1発 Blit レンダリングステージ
+    // =================================================================
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
@@ -239,12 +286,11 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
            
-    
-            for i in 0..<4 {
-                if let buffer = renderer.displayBuffers[i] {
-                    renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
-                    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-                }
+            // 💡 修正：256x256仕様に完全に巻き戻して一撃Blit！
+            // 前処理が内部で自動タイリングし、マルチバッファの先頭[0]へ一挙に合成完了しています。
+            if let buffer = renderer.displayBuffers[0] {
+                renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
+                renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }
             renderEncoder.endEncoding()
         }
