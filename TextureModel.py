@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F 
 
 class ANETextureProcessor(nn.Module):
     def __init__(self):
         super().__init__()
-
         self.expand_conv = nn.Conv2d(3, 64, kernel_size=1, bias=None)
 
         with torch.no_grad():
@@ -15,7 +15,10 @@ class ANETextureProcessor(nn.Module):
 
     def forward(self, raw_image):
         """
-        raw_image: [Batch=1, Channel=3, H=256, W=256] 
+        raw_image: DOOM　Size [Batch=1, Channel=3, H=200, W=320]
         """
-        # [1, 64, 256, 256] 
-        return self.expand_conv(raw_image)
+        # 1. 1x1 Conv[1, 64, 200, 320]
+        x = self.expand_conv(raw_image)
+        
+        
+        return F.interpolate(x, size=(256, 256), mode='bilinear', align_corners=False)

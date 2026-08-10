@@ -47,21 +47,23 @@ class ANERenderContext {
     var isLoading = false
     var isComputing = false
     
-    // 🕹️ DOOM 3D FPS エンジン用追加ステート
+    //  DOOM 3D FPS State
     private var playerPosition = SIMD3<Float>(0.0, 1.0, 4.0)
-    private var playerYaw: Float = Float.pi // 最初は正面（奥）を向く
+    private var playerYaw: Float = Float.pi
     
     private let moveSpeed: Float = 0.15
     private let rotateSpeed: Float = 0.05
     private var doomLibHandle: UnsafeMutableRawPointer? = nil
     
-    // 🕹️ キーボードの押し下げ状態をリアルタイム管理するフラグ群
+    // Keyboard
     var isPressingW = false
     var isPressingS = false
     var isPressingA = false
     var isPressingD = false
     var isPressingLeft = false
     var isPressingRight = false
+    
+    private var doomArgs: [UnsafeMutablePointer<Int8>?] = []
     
     private let geometry = ANE3DGeometry()
     var activeDevice: MTLDevice?
@@ -125,15 +127,29 @@ class ANERenderContext {
                 self.renderer = loadedRenderer
                 print("All 3 models loaded successfully.")
                 
-             
-                var args: [UnsafeMutablePointer<Int8>?] = [
-                    strdup("doom"),
-                    nil
-                ]
-                
+              
+                let bundleWadPath = Bundle.main.path(forResource: "doom1", ofType: "wad")
+                                 ?? Bundle.main.path(forResource: "DOOM1", ofType: "WAD")
+                                 ?? Bundle.main.path(forResource: "DOOM1", ofType: "wad")
+
+                if let wadPath = bundleWadPath {
+                    self.doomArgs = [
+                        strdup("doom"),
+                        strdup("-iwad"),
+                        strdup(wadPath),
+                        nil
+                    ]
+                    
             
-                mac_Doom_Create(1, &args)
-                print("DOOM Core Initialized via Source Code Direct Link.")
+                    mac_Doom_Create(3, &self.doomArgs)
+                    
+                    print("WAD Path Linked Successfully: \(wadPath)")
+                    print("DOOM Core Initialized via Source Code Direct Link.")
+                } else {
+                    print("Error: Faild to Load WAD Path")
+                }
+
+                
                 
                 self.triggerSingleCompute()
                 self.startCameraRotation()
@@ -167,13 +183,10 @@ class ANERenderContext {
             self.isComputing = false
         }
     }
-    // =================================================================
-    // 🕹️ DOOM 3D FPS カメラ＆C言語ゲームループ同期エンジン
-    // =================================================================
+
     func startCameraRotation() {
         timer?.invalidate()
-        
-        // 💡 1フレーム約33ミリ秒（30fps）でDOOMの心臓（Tick）を回し、カメラ入力を監視
+     
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
@@ -185,13 +198,10 @@ class ANERenderContext {
                 g_Left = self.isPressingLeft ? 1 : 0
                 g_Right = self.isPressingRight ? 1 : 0
                 
-                // -----------------------------------------------------------------
-                // ⚔️ STEP 2: 伝説のコアエンジンをダイレクトに1コマ進める！
-                //    dlsymなどの余計な記述は全消去、この1行だけで裏の画面が書き換わります！
-                // -----------------------------------------------------------------
+   
                 mac_Doom_Tick()
                 
-                // 🏃‍♂️ STEP 3: キーボード入力に応じた「背景カメラ（部屋）」の動的アップデート
+      
                 if self.isPressingLeft {
                     self.playerYaw -= self.rotateSpeed
                 }
@@ -220,9 +230,6 @@ class ANERenderContext {
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
 
-                // -----------------------------------------------------------------
-                // 🧱 STEP 4: ANE用フラットバッファの構築（4マスの部屋の壁を建築）
-                // -----------------------------------------------------------------
                 var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
                 var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
                 var colorsR = [Float16](repeating: 0.0, count: 64)
@@ -300,9 +307,7 @@ class ANERenderContext {
             }
         }
     }
-    // =================================================================
-    // 🎨 Metal Canvas 1発 Blit レンダリングステージ
-    // =================================================================
+  
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
@@ -322,8 +327,7 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
            
-            // 💡 256x256仕様に完全に巻き戻した、最高効率の一撃Blit！
-            // 前処理が内部で自動タイリングし、マルチバッファの先頭[0]へ一挙に合成完了しています。
+    
             if let buffer = renderer.displayBuffers[0] {
                 renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
@@ -334,5 +338,5 @@ class ANERenderContext {
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
-} // 💡 これが ANERenderContext クラスを閉じる本物の「最後の1つのカッコ」です
+}
 

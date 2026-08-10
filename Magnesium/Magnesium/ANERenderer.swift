@@ -137,14 +137,14 @@ class ANERenderer {
         
         let totalPixels = 320 * 200
         
-        // 💡 ANEが待つ Planar形状（3チャンネル × 320x200 ＝ 192,000要素）のフラットなSwift配列を確保
+     
         var doomFP16Buffer = [Float16](repeating: 0.0, count: 3 * totalPixels)
         
         let rOffset = 0
         let gOffset = totalPixels
         let bOffset = totalPixels * 2
         
-        // 32bitのARGBポインタから、R, G, B成分（0.0〜1.0）を抽出して配列へ敷き詰める
+    
         for i in 0..<totalPixels {
             let argbPixel = doomPixels[i]
             
@@ -153,8 +153,7 @@ class ANERenderer {
             doomFP16Buffer[bOffset + i] = Float16(argbPixel & 0xFF) / 255.0
         }
         
-        // 🏆 あなたがずっと使ってきた無敵のコピールート！
-        // 320x200 の FP16 平面データを、新形状になった rawTextureArray へ一撃流し込み！
+
         var texView = self.rawTextureArray.mutableView(as: Float16.self)
         texView.copyElements(fromContentsOf: doomFP16Buffer)
     }
@@ -176,7 +175,7 @@ class ANERenderer {
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         var texOutputViews = InferenceFunction.MutableViews()
         let texDestView = alignedTextureArray.mutableView(as: Float16.self)
-        texOutputViews.insert(texDestView, for: "convolution")
+        texOutputViews.insert(texDestView, for: "upsample_bilinear2d")
         let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
         
         // -----------------------------------------------------------------

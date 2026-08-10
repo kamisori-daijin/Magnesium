@@ -69,3 +69,4 @@ env/
 *.sw?
 
 temp.py
+*.wad
