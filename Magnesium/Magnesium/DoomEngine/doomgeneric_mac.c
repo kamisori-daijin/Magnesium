@@ -74,12 +74,11 @@ void mac_Doom_Tick(void) {
     } doom_key_event_t;
 
     
-    static int lastEnterState = 0;
-    static int autoEnterCount = 0;
-    if (autoEnterCount < 1000) {
-        doom_key_event_t ev = {1, 13, 0, 0}; // KEY_ENTER 
+    static int lastEnter = 0;
+    if (g_IsPressingEnter != lastEnter) {
+        doom_key_event_t ev = { g_IsPressingEnter ? 1 : 2, 13, 0, 0 }; // 13 = KEY_ENTER
         D_PostEvent(&ev);
-        autoEnterCount++;
+        lastEnter = g_IsPressingEnter;
     }
 
     //  W / S

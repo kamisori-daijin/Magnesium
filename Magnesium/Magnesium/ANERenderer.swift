@@ -7,6 +7,7 @@ import Foundation
 import CoreAI
 import Metal
 import simd
+import Accelerate
 
 // Bind 
 @_silgen_name("gp_DoomScreenBuffer")
@@ -129,6 +130,7 @@ class ANERenderer {
         bView.copyElements(fromContentsOf: b)
     }
     
+    
     func updateTexture(pixelData: [Float16]) {
         
         guard let doomPixels = gp_DoomScreenBuffer else { return }
@@ -155,9 +157,7 @@ class ANERenderer {
         var texView = self.rawTextureArray.mutableView(as: Float16.self)
         texView.copyElements(fromContentsOf: doomFP16Buffer)
     }
-
-
- 
+    
     func drawFrame() async throws {
         // 1. check
         guard let tex = texFunction,
