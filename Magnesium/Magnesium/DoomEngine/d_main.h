@@ -1,4 +1,5 @@
 //
+// Copyright(C) 1993-1996 Id Software, Inc.
 // Copyright(C) 2005-2014 Simon Howard
 //
 // This program is free software; you can redistribute it and/or
@@ -12,15 +13,38 @@
 // GNU General Public License for more details.
 //
 // DESCRIPTION:
-//     Networking module which uses SDL_net
+//	System specific interface stuff.
 //
 
-#ifndef NET_SDL_H
-#define NET_SDL_H
 
-#include "net_defs.h"
+#ifndef __D_MAIN__
+#define __D_MAIN__
 
-extern net_module_t net_sdl_module;
+#include "doomdef.h"
 
-#endif /* #ifndef NET_SDL_H */
+
+
+
+// Read events from all input devices
+
+void D_ProcessEvents (void); 
+	
+
+//
+// BASE LEVEL
+//
+void D_PageTicker (void);
+void D_PageDrawer (void);
+void D_AdvanceDemo (void);
+void D_DoAdvanceDemo (void);
+void D_StartTitle (void);
+ 
+//
+// GLOBAL VARIABLES
+//
+
+extern  gameaction_t    gameaction;
+
+
+#endif
 

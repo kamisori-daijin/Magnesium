@@ -125,28 +125,15 @@ class ANERenderContext {
                 self.renderer = loadedRenderer
                 print("All 3 models loaded successfully.")
                 
-         
-                guard let dylibPath = Bundle.main.path(forResource: "libdoomcore", ofType: "dylib"),
-                      let libHandle = dlopen(dylibPath, RTLD_NOW) else {
-                    print("Error: Failed to Load libdoomcore.dylib")
-                    return
-                }
-                print("Loaded!")
-                
-                // 💡 C言語版DOOMエンジンをメモリに実展開（起動）！
+             
                 var args: [UnsafeMutablePointer<Int8>?] = [
                     strdup("doom"),
                     nil
                 ]
                 
-                // ポインタを介して dylib 内部の mac_Doom_Create 関数を引っこ抜く
-                if let createSymbol = dlsym(libHandle, "mac_Doom_Create") {
-                    typealias CreateFunc = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?) -> Void
-                    let doomCreate = unsafeBitCast(createSymbol, to: CreateFunc.self)
-                    doomCreate(1, &args)
-                }
-                
-                print("Chocolate DOOM Core Initialized via DoomGeneric.")
+            
+                mac_Doom_Create(1, &args)
+                print("DOOM Core Initialized via Source Code Direct Link.")
                 
                 self.triggerSingleCompute()
                 self.startCameraRotation()
@@ -156,14 +143,14 @@ class ANERenderContext {
         }
     }
 
+
     
     func triggerSingleCompute() {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
         
-        // 💡 改造した既存の updateTexture を叩く！
-        // 引数のダミーデータは無視され、関数内部で自動的にC言語の生DOOM画面（320x200）が引っこ抜かれます！
+    
         renderer.updateTexture(pixelData: self.debugTextureData)
         
         Task { @MainActor in
@@ -198,11 +185,11 @@ class ANERenderContext {
                 g_Left = self.isPressingLeft ? 1 : 0
                 g_Right = self.isPressingRight ? 1 : 0
                 
-                if let tickSymbol = dlsym(self.doomLibHandle ?? dlopen(Bundle.main.path(forResource: "libdoomcore", ofType: "dylib"), RTLD_NOW), "mac_Doom_Tick") {
-                    typealias TickFunc = @convention(c) () -> Void
-                    let doomTick = unsafeBitCast(tickSymbol, to: TickFunc.self)
-                    doomTick()
-                }
+                // -----------------------------------------------------------------
+                // ⚔️ STEP 2: 伝説のコアエンジンをダイレクトに1コマ進める！
+                //    dlsymなどの余計な記述は全消去、この1行だけで裏の画面が書き換わります！
+                // -----------------------------------------------------------------
+                mac_Doom_Tick()
                 
                 // 🏃‍♂️ STEP 3: キーボード入力に応じた「背景カメラ（部屋）」の動的アップデート
                 if self.isPressingLeft {
