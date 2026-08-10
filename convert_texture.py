@@ -4,8 +4,8 @@ import torch
 from TextureModel import ANETextureProcessor
 from pathlib import Path
 
-WIDTH = 320
-HEIGHT = 200
+WIDTH = 640
+HEIGHT = 400
 
 # 1. Float16
 model = ANETextureProcessor().to(dtype=torch.float16)

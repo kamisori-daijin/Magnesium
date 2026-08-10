@@ -77,7 +77,7 @@ class ANERenderer {
         self.colorsGArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         self.colorsBArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         
-        self.rawTextureArray = NDArray(shape:[1, 3, 200, 320], scalarType: .float16)
+        self.rawTextureArray = NDArray(shape:[1, 3, 400, 640], scalarType: .float16)
         self.alignedTextureArray = NDArray(shape:[1, 64, 256, 256], scalarType: .float16)
         
         setupMetalHeap()
@@ -129,31 +129,29 @@ class ANERenderer {
         bView.copyElements(fromContentsOf: b)
     }
     
- 
     func updateTexture(pixelData: [Float16]) {
-       
         
         guard let doomPixels = gp_DoomScreenBuffer else { return }
         
-        let totalPixels = 320 * 200
+        let actualWidth = 640
+        let actualHeight = 400
+        let totalPixels = actualWidth * actualHeight
         
-     
+       
         var doomFP16Buffer = [Float16](repeating: 0.0, count: 3 * totalPixels)
         
         let rOffset = 0
         let gOffset = totalPixels
         let bOffset = totalPixels * 2
         
-    
+      
         for i in 0..<totalPixels {
             let argbPixel = doomPixels[i]
-            
             doomFP16Buffer[rOffset + i] = Float16((argbPixel >> 16) & 0xFF) / 255.0
             doomFP16Buffer[gOffset + i] = Float16((argbPixel >> 8) & 0xFF) / 255.0
             doomFP16Buffer[bOffset + i] = Float16(argbPixel & 0xFF) / 255.0
         }
         
-
         var texView = self.rawTextureArray.mutableView(as: Float16.self)
         texView.copyElements(fromContentsOf: doomFP16Buffer)
     }
@@ -175,7 +173,7 @@ class ANERenderer {
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         var texOutputViews = InferenceFunction.MutableViews()
         let texDestView = alignedTextureArray.mutableView(as: Float16.self)
-        texOutputViews.insert(texDestView, for: "upsample_bilinear2d")
+        texOutputViews.insert(texDestView, for: "convolution")
         let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
         
         // -----------------------------------------------------------------
