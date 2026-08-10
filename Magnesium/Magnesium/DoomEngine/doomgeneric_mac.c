@@ -74,45 +74,57 @@ void mac_Doom_Tick(void) {
     } doom_key_event_t;
 
     
-    static int lastEnter = 0;
-    if (g_IsPressingEnter != lastEnter) {
-        doom_key_event_t ev = { g_IsPressingEnter ? 1 : 2, 13, 0, 0 }; // 13 = KEY_ENTER
-        D_PostEvent(&ev);
-        lastEnter = g_IsPressingEnter;
+    if (g_IsPressingEnter) {
+        doom_key_event_t downEv = { 1, 13, 0, 0 }; // 13 = KEY_ENTER
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, 13, 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingEnter = 0;
     }
 
-    //  W / S
-    static int lastW = 0;
-    if (g_IsPressingW != lastW) {
-        // 119 = 'w' (KEY_STRAFE_FORWARD)
-        doom_key_event_t ev = { g_IsPressingW ? 1 : 2, 119, 0, 0 };
-        D_PostEvent(&ev);
-        lastW = g_IsPressingW;
-    }
-    
-    static int lastS = 0;
-    if (g_IsPressingS != lastS) {
-        // 115 = 's' (KEY_STRAFE_BACKWARD)
-        doom_key_event_t ev = { g_IsPressingS ? 1 : 2, 115, 0, 0 };
-        D_PostEvent(&ev);
-        lastS = g_IsPressingS;
+    // --- 2. Space ---
+    if (g_IsPressingSpace) {
+        doom_key_event_t downEv = { 1, ' ', 0, 0 };
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, ' ', 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingSpace = 0;
     }
 
-
-    static int lastLeft = 0;
-    if (g_IsPressingLeft != lastLeft) {
-        // 0xac = KEY_LEFTARROW 
-        doom_key_event_t ev = { g_IsPressingLeft ? 1 : 2, 0xac, 0, 0 };
-        D_PostEvent(&ev);
-        lastLeft = g_IsPressingLeft;
+    // --- 3. W  ---
+    if (g_IsPressingW) {
+        doom_key_event_t downEv = { 1, 119, 0, 0 }; // 119 = 'w'
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, 119, 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingW = 0;
     }
 
-    static int lastRight = 0;
-    if (g_IsPressingRight != lastRight) {
-        // 0xae = KEY_RIGHTARROW
-        doom_key_event_t ev = { g_IsPressingRight ? 1 : 2, 0xae, 0, 0 };
-        D_PostEvent(&ev);
-        lastRight = g_IsPressingRight;
+    // --- 4. S  ---
+    if (g_IsPressingS) {
+        doom_key_event_t downEv = { 1, 115, 0, 0 }; // 115 = 's'
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, 115, 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingS = 0;
+    }
+
+    // --- 5. 左矢印 ---
+    if (g_IsPressingLeft) {
+        doom_key_event_t downEv = { 1, 0xac, 0, 0 }; // 0xac = KEY_LEFTARROW
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, 0xac, 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingLeft = 0;
+    }
+
+    // --- 6. 右矢印 ---
+    if (g_IsPressingRight) {
+        doom_key_event_t downEv = { 1, 0xae, 0, 0 }; // 0xae = KEY_RIGHTARROW
+        D_PostEvent(&downEv);
+        doom_key_event_t upEv = { 2, 0xae, 0, 0 };
+        D_PostEvent(&upEv);
+        g_IsPressingRight = 0;
     }
 
 
