@@ -8,7 +8,31 @@ import CoreAI
 import Metal
 import simd
 
+// Bind 
+@_silgen_name("gp_DoomScreenBuffer")
+var gp_DoomScreenBuffer: UnsafeMutablePointer<UInt32>?
+
+@_silgen_name("g_IsPressingW")
+var g_IsPressingW: Int32
+
+@_silgen_name("g_IsPressingS")
+var g_IsPressingS: Int32
+
+@_silgen_name("g_IsPressingA")
+var g_IsPressingA: Int32
+
+@_silgen_name("g_IsPressingD")
+var g_IsPressingD: Int32
+
+@_silgen_name("g_IsPressingLeft")
+var g_IsPressingLeft: Int32
+
+@_silgen_name("g_IsPressingRight")
+var g_IsPressingRight: Int32
+
+
 class ANERenderer {
+   
     private var preModel: AIModel?
     private var rstModel: AIModel?
     private var texModel: AIModel?
@@ -53,7 +77,7 @@ class ANERenderer {
         self.colorsGArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         self.colorsBArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
         
-        self.rawTextureArray = NDArray(shape:[1, 3, 256, 256], scalarType: .float16)
+        self.rawTextureArray = NDArray(shape:[1, 3, 200, 320], scalarType: .float16)
         self.alignedTextureArray = NDArray(shape:[1, 64, 256, 256], scalarType: .float16)
         
         setupMetalHeap()
@@ -105,10 +129,36 @@ class ANERenderer {
         bView.copyElements(fromContentsOf: b)
     }
     
+ 
     func updateTexture(pixelData: [Float16]) {
+       
+        
+        guard let doomPixels = gp_DoomScreenBuffer else { return }
+        
+        let totalPixels = 320 * 200
+        
+        // 💡 ANEが待つ Planar形状（3チャンネル × 320x200 ＝ 192,000要素）のフラットなSwift配列を確保
+        var doomFP16Buffer = [Float16](repeating: 0.0, count: 3 * totalPixels)
+        
+        let rOffset = 0
+        let gOffset = totalPixels
+        let bOffset = totalPixels * 2
+        
+        // 32bitのARGBポインタから、R, G, B成分（0.0〜1.0）を抽出して配列へ敷き詰める
+        for i in 0..<totalPixels {
+            let argbPixel = doomPixels[i]
+            
+            doomFP16Buffer[rOffset + i] = Float16((argbPixel >> 16) & 0xFF) / 255.0
+            doomFP16Buffer[gOffset + i] = Float16((argbPixel >> 8) & 0xFF) / 255.0
+            doomFP16Buffer[bOffset + i] = Float16(argbPixel & 0xFF) / 255.0
+        }
+        
+        // 🏆 あなたがずっと使ってきた無敵のコピールート！
+        // 320x200 の FP16 平面データを、新形状になった rawTextureArray へ一撃流し込み！
         var texView = self.rawTextureArray.mutableView(as: Float16.self)
-        texView.copyElements(fromContentsOf: pixelData)
+        texView.copyElements(fromContentsOf: doomFP16Buffer)
     }
+
 
  
     func drawFrame() async throws {

@@ -4,12 +4,33 @@
 //  Magnesium
 //
 
+
 import Foundation
 import Metal
 import MetalKit
 import CoreAI
 internal import UniformTypeIdentifiers
 import simd
+// Bind
+
+@_silgen_name("g_IsPressingW")
+var g_W: Int32
+
+@_silgen_name("g_IsPressingS")
+var g_S: Int32
+
+@_silgen_name("g_IsPressingA")
+var g_A: Int32
+
+@_silgen_name("g_IsPressingD")
+var g_D: Int32
+
+@_silgen_name("g_IsPressingLeft")
+var g_Left: Int32
+
+@_silgen_name("g_IsPressingRight")
+var g_Right: Int32
+
 
 @MainActor
 @Observable
@@ -25,22 +46,22 @@ class ANERenderContext {
     
     var isLoading = false
     var isComputing = false
-
+    
+    // 🕹️ DOOM 3D FPS エンジン用追加ステート
     private var playerPosition = SIMD3<Float>(0.0, 1.0, 4.0)
+    private var playerYaw: Float = Float.pi // 最初は正面（奥）を向く
     
-    private var playerYaw: Float = Float.pi
-    
-   
     private let moveSpeed: Float = 0.15
     private let rotateSpeed: Float = 0.05
+    private var doomLibHandle: UnsafeMutableRawPointer? = nil
     
+    // 🕹️ キーボードの押し下げ状態をリアルタイム管理するフラグ群
     var isPressingW = false
     var isPressingS = false
     var isPressingA = false
     var isPressingD = false
     var isPressingLeft = false
     var isPressingRight = false
-
     
     private let geometry = ANE3DGeometry()
     var activeDevice: MTLDevice?
@@ -52,9 +73,8 @@ class ANERenderContext {
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
         
-       
         self.debugTextureData = geometry.createDebugCheckerboardTexture()
-
+        
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
             pipelineDescriptor.vertexFunction = defaultLibrary.makeFunction(name: "textureVertex")
@@ -63,7 +83,7 @@ class ANERenderContext {
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
             pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
-           
+            
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }
@@ -71,7 +91,7 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
-       
+        
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -90,7 +110,7 @@ class ANERenderContext {
         
         let urls = panel.urls.map { $0.standardizedFileURL }
         guard let preProcessorURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("pre") }),
-              let rastURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
+              let rstURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
               let texURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
             print("Error: Could not accurately identify all 3 models from filenames.")
             return
@@ -101,10 +121,33 @@ class ANERenderContext {
         Task {
             defer { self.isLoading = false }
             do {
-           
-                let loadedRenderer = try await ANERenderer(preURL: preProcessorURL, rastURL: rastURL, texURL: texURL, metalDevice: device)
+                let loadedRenderer = try await ANERenderer(preURL: preProcessorURL, rastURL: rstURL, texURL: texURL, metalDevice: device)
                 self.renderer = loadedRenderer
                 print("All 3 models loaded successfully.")
+                
+         
+                guard let dylibPath = Bundle.main.path(forResource: "libdoomcore", ofType: "dylib"),
+                      let libHandle = dlopen(dylibPath, RTLD_NOW) else {
+                    print("Error: Failed to Load libdoomcore.dylib")
+                    return
+                }
+                print("Loaded!")
+                
+                // 💡 C言語版DOOMエンジンをメモリに実展開（起動）！
+                var args: [UnsafeMutablePointer<Int8>?] = [
+                    strdup("doom"),
+                    nil
+                ]
+                
+                // ポインタを介して dylib 内部の mac_Doom_Create 関数を引っこ抜く
+                if let createSymbol = dlsym(libHandle, "mac_Doom_Create") {
+                    typealias CreateFunc = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?) -> Void
+                    let doomCreate = unsafeBitCast(createSymbol, to: CreateFunc.self)
+                    doomCreate(1, &args)
+                }
+                
+                print("Chocolate DOOM Core Initialized via DoomGeneric.")
+                
                 self.triggerSingleCompute()
                 self.startCameraRotation()
             } catch {
@@ -113,12 +156,16 @@ class ANERenderContext {
         }
     }
 
+    
     func triggerSingleCompute() {
         guard let renderer = self.renderer, !isComputing else { return }
         
         self.isComputing = true
+        
+        // 💡 改造した既存の updateTexture を叩く！
+        // 引数のダミーデータは無視され、関数内部で自動的にC言語の生DOOM画面（320x200）が引っこ抜かれます！
         renderer.updateTexture(pixelData: self.debugTextureData)
-                
+        
         Task { @MainActor in
             do {
                 try await renderer.drawFrame()
@@ -129,26 +176,39 @@ class ANERenderContext {
             } catch {
                 print("Inference error: \(error)")
             }
-    
+            
             self.isComputing = false
         }
     }
-
+    // =================================================================
+    // 🕹️ DOOM 3D FPS カメラ＆C言語ゲームループ同期エンジン
+    // =================================================================
     func startCameraRotation() {
         timer?.invalidate()
         
-        // 💡 1フレーム約33ミリ秒（30fps）でキー入力を常時監視して空間を歩き回る
+        // 💡 1フレーム約33ミリ秒（30fps）でDOOMの心臓（Tick）を回し、カメラ入力を監視
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
                 
-                // -----------------------------------------------------------------
-                // 🏃‍♂️ 1. キーボード入力に応じたプレイヤーの座標・視線の動的アップデート
-                // -----------------------------------------------------------------
-                if self.isPressingLeft || self.isPressingA {
+                g_W = self.isPressingW ? 1 : 0
+                g_S = self.isPressingS ? 1 : 0
+                g_A = self.isPressingA ? 1 : 0
+                g_D = self.isPressingD ? 1 : 0
+                g_Left = self.isPressingLeft ? 1 : 0
+                g_Right = self.isPressingRight ? 1 : 0
+                
+                if let tickSymbol = dlsym(self.doomLibHandle ?? dlopen(Bundle.main.path(forResource: "libdoomcore", ofType: "dylib"), RTLD_NOW), "mac_Doom_Tick") {
+                    typealias TickFunc = @convention(c) () -> Void
+                    let doomTick = unsafeBitCast(tickSymbol, to: TickFunc.self)
+                    doomTick()
+                }
+                
+                // 🏃‍♂️ STEP 3: キーボード入力に応じた「背景カメラ（部屋）」の動的アップデート
+                if self.isPressingLeft {
                     self.playerYaw -= self.rotateSpeed
                 }
-                if self.isPressingRight || self.isPressingD {
+                if self.isPressingRight {
                     self.playerYaw += self.rotateSpeed
                 }
                 
@@ -174,7 +234,7 @@ class ANERenderContext {
                 )
 
                 // -----------------------------------------------------------------
-                // 🧱 2. ANE用フラットバッファの構築（4マスの部屋の壁を建築）
+                // 🧱 STEP 4: ANE用フラットバッファの構築（4マスの部屋の壁を建築）
                 // -----------------------------------------------------------------
                 var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
                 var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
@@ -189,32 +249,22 @@ class ANERenderContext {
                     vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
-                // =================================================================
-                // 📐 DOOM部屋の幾何学：四角い壁（1枚につき三角形2枚）を前後左右に定義
-                // 256x256のチェッカーテクスチャが綺麗に壁に貼り付くようにUV対応も内包
-                // =================================================================
-                
                 // ① 前後の壁データ（Z = -4.0 の奥の壁 ＆ Z = 4.0 の手前の壁）
                 let northSouthWalls: [[[Float16]]] = [
-                    // 奥の壁（三角形1 & 2）
                     [[ -3.0,  2.0, -4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0]],
                     [[ -3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  2.0, -4.0, 1.0]],
-                    // 手前の壁（三角形1 & 2）
                     [[  3.0,  2.0,  4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0]],
                     [[  3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  2.0,  4.0, 1.0]],
                 ]
                 
                 // ② 左右の壁データ（X = -3.0 の左の壁 ＆ X = 3.0 の右の壁）
                 let eastWestWalls: [[[Float16]]] = [
-                    // 左の壁（三角形1 & 2）
                     [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0]],
                     [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [ -3.0,  2.0, -4.0, 1.0]],
-                    // 右の壁（三角形1 & 2）
                     [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0]],
                     [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [  3.0,  2.0,  4.0, 1.0]],
                 ]
                 
-                // 壁の色（DOOMの薄暗いレンガ壁をイメージしてグレーとセピアに設定）
                 let wallColors: [(Float16, Float16, Float16)] = [
                     (0.5, 0.4, 0.4), (0.5, 0.4, 0.4), (0.4, 0.4, 0.5), (0.4, 0.4, 0.5)
                 ]
@@ -251,7 +301,7 @@ class ANERenderContext {
                     }
                 }
 
-                // 3. ANEの超並列ラスタライザへ直撃リレーキック！
+                // 💡 STEP 5: すべてが揃った状態で ANE へのパイプライン転送を点火！
                 renderer.updateGeometry(
                     vertices: vertices,
                     mvpWeights: mvpWeights,
@@ -263,8 +313,6 @@ class ANERenderContext {
             }
         }
     }
-
-    
     // =================================================================
     // 🎨 Metal Canvas 1発 Blit レンダリングステージ
     // =================================================================
@@ -287,7 +335,7 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
            
-            // 💡 修正：256x256仕様に完全に巻き戻して一撃Blit！
+            // 💡 256x256仕様に完全に巻き戻した、最高効率の一撃Blit！
             // 前処理が内部で自動タイリングし、マルチバッファの先頭[0]へ一挙に合成完了しています。
             if let buffer = renderer.displayBuffers[0] {
                 renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
@@ -299,4 +347,5 @@ class ANERenderContext {
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
-}
+} // 💡 これが ANERenderContext クラスを閉じる本物の「最後の1つのカッコ」です
+
