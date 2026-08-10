@@ -30,6 +30,11 @@ var g_Left: Int32
 
 @_silgen_name("g_IsPressingRight")
 var g_Right: Int32
+@_silgen_name("g_IsPressingEnter")
+var g_Enter: Int32
+
+@_silgen_name("g_IsPressingSpace")
+var g_Space: Int32
 
 
 @MainActor
@@ -62,6 +67,8 @@ class ANERenderContext {
     var isPressingD = false
     var isPressingLeft = false
     var isPressingRight = false
+    var isPressingEnter = false
+    var isPressingSpace = false
     
     private var doomArgs: [UnsafeMutablePointer<Int8>?] = []
     
@@ -184,52 +191,29 @@ class ANERenderContext {
         }
     }
 
+
+ 
     func startCameraRotation() {
         timer?.invalidate()
      
+      
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
                 
+           
                 g_W = self.isPressingW ? 1 : 0
                 g_S = self.isPressingS ? 1 : 0
                 g_A = self.isPressingA ? 1 : 0
                 g_D = self.isPressingD ? 1 : 0
                 g_Left = self.isPressingLeft ? 1 : 0
                 g_Right = self.isPressingRight ? 1 : 0
+                g_Enter = self.isPressingEnter ? 1 : 0
+                g_Space = self.isPressingSpace ? 1 : 0
                 
-   
+         
                 mac_Doom_Tick()
                 
-      
-                if self.isPressingLeft {
-                    self.playerYaw -= self.rotateSpeed
-                }
-                if self.isPressingRight {
-                    self.playerYaw += self.rotateSpeed
-                }
-                
-                let forwardX = sin(self.playerYaw)
-                let forwardZ = cos(self.playerYaw)
-                
-                if self.isPressingW {
-                    self.playerPosition.x += forwardX * self.moveSpeed
-                    self.playerPosition.z += forwardZ * self.moveSpeed
-                }
-                if self.isPressingS {
-                    self.playerPosition.x -= forwardX * self.moveSpeed
-                    self.playerPosition.z -= forwardZ * self.moveSpeed
-                }
-                
-                let eye = self.playerPosition
-                let target = SIMD3<Float>(eye.x + forwardX, eye.y, eye.z + forwardZ)
-                
-                let cameraMatrix = self.geometry.createCameraMatrix(
-                    eye: eye,
-                    target: target,
-                    up: SIMD3<Float>(0.0, 1.0, 0.0)
-                )
-
                 var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
                 var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
                 var colorsR = [Float16](repeating: 0.0, count: 64)
@@ -243,28 +227,19 @@ class ANERenderContext {
                     vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
-                // ① 前後の壁データ（Z = -4.0 の奥の壁 ＆ Z = 4.0 の手前の壁）
                 let northSouthWalls: [[[Float16]]] = [
-                    [[ -3.0,  2.0, -4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0]],
-                    [[ -3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  2.0, -4.0, 1.0]],
-                    [[  3.0,  2.0,  4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0]],
-                    [[  3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  2.0,  4.0, 1.0]],
-                ]
-                
-                // ② 左右の壁データ（X = -3.0 の左の壁 ＆ X = 3.0 の右の壁）
-                let eastWestWalls: [[[Float16]]] = [
-                    [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0]],
-                    [[ -3.0,  2.0,  4.0, 1.0], [ -3.0,  0.0, -4.0, 1.0], [ -3.0,  2.0, -4.0, 1.0]],
-                    [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0]],
-                    [[  3.0,  2.0, -4.0, 1.0], [  3.0,  0.0,  4.0, 1.0], [  3.0,  2.0,  4.0, 1.0]],
+                    // 三角形1（左下・右下・左上の結合）
+                    [[ -3.2, -2.0, -4.0, 1.0], [  3.2, -2.0, -4.0, 1.0], [ -3.2,  2.0, -4.0, 1.0]],
+                    // 三角形2（右下・右上・左上の結合）
+                    [[  3.2, -2.0, -4.0, 1.0], [  3.2,  2.0, -4.0, 1.0], [ -3.2,  2.0, -4.0, 1.0]],
                 ]
                 
                 let wallColors: [(Float16, Float16, Float16)] = [
-                    (0.5, 0.4, 0.4), (0.5, 0.4, 0.4), (0.4, 0.4, 0.5), (0.4, 0.4, 0.5)
+                    (1.0, 1.0, 1.0), (1.0, 1.0, 1.0)
                 ]
 
-                // スロット0〜3番に「前後の壁」を建築
-                for i in 0..<4 {
+                // 💡 元の無敵ロジック：スロット0番と1番にそれぞれ1枚ずつ、完全にバラして建築！
+                for i in 0..<2 {
                     let slot = i
                     colorsR[slot] = wallColors[i].0; colorsG[slot] = wallColors[i].1; colorsB[slot] = wallColors[i].2
                     
@@ -274,28 +249,18 @@ class ANERenderContext {
                             vertices[pIndex] = northSouthWalls[i][v][ch]
                         }
                     }
-                    for m in 0..<16 {
-                        mvpWeights[m * 64 + slot] = cameraMatrix[m]
-                    }
-                }
-
-                // スロット4〜7番に「左右の壁」を建築
-                for i in 0..<4 {
-                    let slot = 4 + i
-                    colorsR[slot] = wallColors[i].0; colorsG[slot] = wallColors[i].1; colorsB[slot] = wallColors[i].2
                     
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            vertices[pIndex] = eastWestWalls[i][v][ch]
-                        }
-                    }
-                    for m in 0..<16 {
-                        mvpWeights[m * 64 + slot] = cameraMatrix[m]
-                    }
+                    // 🔴 核心ハック：歩き回る cameraMatrix の掛け算を完全にブチ壊す！！！
+                    // 4x4の「単位行列（Identity Matrix）」を直接流し込んで、画面の正面に100%固定ロック！
+                    // これにより、キーを押しても変な壁が飛び出してきて視界がめちゃくちゃになるバグを息の根を止めます！
+                    mvpWeights[0 * 64 + slot] = 1.0  // M00
+                    mvpWeights[5 * 64 + slot] = 1.0  // M11
+                    mvpWeights[10 * 64 + slot] = 1.0 // M22
+                    mvpWeights[15 * 64 + slot] = 1.0 // M33
                 }
 
-                // 💡 STEP 5: すべてが揃った状態で ANE へのパイプライン転送を点火！
+                // 💡 STEP 4: すべてが揃った状態で ANE へのパイプライン転送を点火！
+                renderer.updateTexture(pixelData: self.debugTextureData)
                 renderer.updateGeometry(
                     vertices: vertices,
                     mvpWeights: mvpWeights,
@@ -307,6 +272,7 @@ class ANERenderContext {
             }
         }
     }
+
   
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm

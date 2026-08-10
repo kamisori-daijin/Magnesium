@@ -19,6 +19,8 @@ int g_IsPressingA = 0;
 int g_IsPressingD = 0;
 int g_IsPressingLeft = 0;
 int g_IsPressingRight = 0;
+int g_IsPressingEnter = 0;
+int g_IsPressingSpace = 0;
 
 // DOOMの画面（320x200）のピクセルデータを、Swift側（ANERenderer）から覗き見できるようにするグローバルポインタ
 uint32_t* gp_DoomScreenBuffer = NULL;
@@ -54,23 +56,66 @@ int DG_GetKey(int* pressed, uint8_t* doomKey) {
 void DG_SetWindowTitle(const char *title) {
 }
 
-// =================================================================
-// 🚀 Swift側から直接叩き込んで点火させる親玉エントリーポイント
-// =================================================================
+
+
 void mac_Doom_Create(int argc, char** argv) {
     doomgeneric_Create(argc, argv);
 }
 
+extern void D_PostEvent(void* ev);
+
 void mac_Doom_Tick(void) {
-    // 💡 チート技：Swift側のContentViewから毎フレーム届く最新のキー状態を、
-    //    そのままDOOM内部のキーボード入力配列へダイレクトに強制書き込み！！！
-    //    (これでオリジナルのDOOMの複雑なキー処理を完全にバイパスして100%正確に入力が通ります)
+   
+    typedef struct {
+        int type;     // 1 = ev_keydown, 2 = ev_keyup
+        int data1;    // KeyCode
+        int data2;
+        int data3;
+    } doom_key_event_t;
+
     
-    // W/Sキーによる前進・後退
-    if (g_IsPressingW) {
-        // DOOM特有のキーコードを流し込む（必要に応じて本物のWAD連携時にさらに最適化します）
+    static int lastEnterState = 0;
+    static int autoEnterCount = 0;
+    if (autoEnterCount < 1000) {
+        doom_key_event_t ev = {1, 13, 0, 0}; // KEY_ENTER 
+        D_PostEvent(&ev);
+        autoEnterCount++;
+    }
+
+    //  W / S
+    static int lastW = 0;
+    if (g_IsPressingW != lastW) {
+        // 119 = 'w' (KEY_STRAFE_FORWARD)
+        doom_key_event_t ev = { g_IsPressingW ? 1 : 2, 119, 0, 0 };
+        D_PostEvent(&ev);
+        lastW = g_IsPressingW;
     }
     
-    // 伝説のコアエンジンを1コマ進める！
+    static int lastS = 0;
+    if (g_IsPressingS != lastS) {
+        // 115 = 's' (KEY_STRAFE_BACKWARD)
+        doom_key_event_t ev = { g_IsPressingS ? 1 : 2, 115, 0, 0 };
+        D_PostEvent(&ev);
+        lastS = g_IsPressingS;
+    }
+
+
+    static int lastLeft = 0;
+    if (g_IsPressingLeft != lastLeft) {
+        // 0xac = KEY_LEFTARROW 
+        doom_key_event_t ev = { g_IsPressingLeft ? 1 : 2, 0xac, 0, 0 };
+        D_PostEvent(&ev);
+        lastLeft = g_IsPressingLeft;
+    }
+
+    static int lastRight = 0;
+    if (g_IsPressingRight != lastRight) {
+        // 0xae = KEY_RIGHTARROW
+        doom_key_event_t ev = { g_IsPressingRight ? 1 : 2, 0xae, 0, 0 };
+        D_PostEvent(&ev);
+        lastRight = g_IsPressingRight;
+    }
+
+
     doomgeneric_Tick();
 }

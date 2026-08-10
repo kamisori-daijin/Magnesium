@@ -43,8 +43,8 @@ struct ContentView: View {
             }
             
             if renderContext.renderer != nil {
-                // 💡 ゲーマーへの操作説明テキストを追加！
-                Text("🕹️ Move: [W][S] / Turn: [A][D] or [Arrow Keys]")
+               
+                Text(" Move: [W][S] / Turn: [A][D] or [Arrow Keys]")
                     .font(.headline)
                     .foregroundColor(.accentColor)
             }
@@ -52,10 +52,7 @@ struct ContentView: View {
         .padding()
         .frame(width: 600, height: 680)
         
-        // =================================================================
-        // 💡 改造箇所：キーボードの入力をリアルタイムで ANE コンテキストへ直結リレー！
-        // =================================================================
-        // ビューがロードされたら自動的にキーボード入力を受け付ける状態にする
+
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(phases: [.down, .up]) { press in
@@ -75,6 +72,12 @@ struct ContentView: View {
                 renderContext.isPressingLeft = isDown
             case .rightArrow:
                 renderContext.isPressingRight = isDown
+            case .return:
+                renderContext.isPressingEnter = isDown
+
+            case .space:
+                renderContext.isPressingSpace = isDown
+
             default:
                 return .ignored
             }
