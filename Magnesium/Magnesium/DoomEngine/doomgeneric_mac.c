@@ -12,121 +12,77 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-
-int g_IsPressingW = 0;
-int g_IsPressingS = 0;
-int g_IsPressingA = 0;
-int g_IsPressingD = 0;
+// Swift側から書き換えるキー入力フラグ
+int g_IsPressingUp = 0;
+int g_IsPressingDown = 0;
 int g_IsPressingLeft = 0;
 int g_IsPressingRight = 0;
-int g_IsPressingEnter = 0;
+int g_IsPressingCtrl = 0;
 int g_IsPressingSpace = 0;
+int g_IsPressingEnter = 0;
 
-// DOOMの画面（320x200）のピクセルデータを、Swift側（ANERenderer）から覗き見できるようにするグローバルポインタ
 uint32_t* gp_DoomScreenBuffer = NULL;
 
-// 1. DOOMエンジンが起動したときに1回だけ呼ばれる初期化関数
 void DG_Init(void) {
-    // DOOMが用意してくれた320x200の画面メモリの住所をガチッと掴む！
     gp_DoomScreenBuffer = DG_ScreenBuffer;
 }
 
-// 2. DOOMが1コマ描き終わるたびに自動で呼び出される関数（空で100%OK）
-void DG_DrawFrame(void) {
-}
+void DG_DrawFrame(void) {}
 
-// OSのスリープ（ミリ秒）
 void DG_SleepMs(uint32_t ms) {
     usleep(ms * 1000);
 }
 
-// DOOMがゲーム内の時間を正確に進めるためのタイムスタンプ関数
 uint32_t DG_GetTicksMs(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint32_t)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
 }
 
-// 3. キーボードのインプット窓口
+// DOOMがキーの状態を取得するために毎フレーム呼び出す関数
 int DG_GetKey(int* pressed, uint8_t* doomKey) {
-    return 0;
+    static int currentKeyIndex = 0;
+    
+    // チェックするキーのリスト（DOOM標準のキーコード）
+    const struct {
+        int* flag;
+        uint8_t code;
+    } keys[] = {
+        { &g_IsPressingUp, 0xad },          // 上矢印（前進）
+        { &g_IsPressingDown, 0xaf },        // 下矢印（後退）
+        { &g_IsPressingLeft, 0xac },        // 左矢印（左旋回）
+        { &g_IsPressingRight, 0xae },       // 右矢印（右旋回）
+        { &g_IsPressingCtrl, 0x80 + 0x1d },  // Ctrl（攻撃）
+        { &g_IsPressingSpace, 0x80 + 0x39 }, // Space（使用/ドア開閉）
+        { &g_IsPressingEnter, 13 }          // Enter（決定）
+    };
+    
+    const int numKeys = sizeof(keys) / sizeof(keys[0]);
+    static int lastState[7] = {0};
+    
+    for (int i = 0; i < numKeys; i++) {
+        int index = (currentKeyIndex + i) % numKeys;
+        int currentState = *(keys[index].flag);
+        
+        if (currentState != lastState[index]) {
+            *pressed = currentState;
+            *doomKey = keys[index].code;
+            lastState[index] = currentState;
+            
+            currentKeyIndex = (index + 1) % numKeys;
+            return 1; // イベントあり
+        }
+    }
+    
+    return 0; // イベントなし
 }
 
-// 4. ウィンドウタイトル設定（スタブとして空実装）
-void DG_SetWindowTitle(const char *title) {
-}
-
-
+void DG_SetWindowTitle(const char *title) {}
 
 void mac_Doom_Create(int argc, char** argv) {
     doomgeneric_Create(argc, argv);
 }
 
-extern void D_PostEvent(void* ev);
-
 void mac_Doom_Tick(void) {
-   
-    typedef struct {
-        int type;     // 1 = ev_keydown, 2 = ev_keyup
-        int data1;    // KeyCode
-        int data2;
-        int data3;
-    } doom_key_event_t;
-
-    
-    if (g_IsPressingEnter) {
-        doom_key_event_t downEv = { 1, 13, 0, 0 }; // 13 = KEY_ENTER
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, 13, 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingEnter = 0;
-    }
-
-    // --- 2. Space ---
-    if (g_IsPressingSpace) {
-        doom_key_event_t downEv = { 1, ' ', 0, 0 };
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, ' ', 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingSpace = 0;
-    }
-
-    // --- 3. W  ---
-    if (g_IsPressingW) {
-        doom_key_event_t downEv = { 1, 119, 0, 0 }; // 119 = 'w'
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, 119, 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingW = 0;
-    }
-
-    // --- 4. S  ---
-    if (g_IsPressingS) {
-        doom_key_event_t downEv = { 1, 115, 0, 0 }; // 115 = 's'
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, 115, 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingS = 0;
-    }
-
-    // --- 5. 左矢印 ---
-    if (g_IsPressingLeft) {
-        doom_key_event_t downEv = { 1, 0xac, 0, 0 }; // 0xac = KEY_LEFTARROW
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, 0xac, 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingLeft = 0;
-    }
-
-    // --- 6. 右矢印 ---
-    if (g_IsPressingRight) {
-        doom_key_event_t downEv = { 1, 0xae, 0, 0 }; // 0xae = KEY_RIGHTARROW
-        D_PostEvent(&downEv);
-        doom_key_event_t upEv = { 2, 0xae, 0, 0 };
-        D_PostEvent(&upEv);
-        g_IsPressingRight = 0;
-    }
-
-
     doomgeneric_Tick();
 }

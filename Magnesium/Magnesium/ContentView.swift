@@ -32,7 +32,6 @@ struct ContentView: View {
                             Button("Select MVP & Rasterizer Models") {
                                 renderContext.openModelPicker()
                             }
-                            // Liquid Glass Button
                             .buttonStyle(.glass)
                         }
                     }
@@ -43,45 +42,55 @@ struct ContentView: View {
             }
             
             if renderContext.renderer != nil {
-               
-                Text(" Move: [W][S] / Turn: [A][D] or [Arrow Keys]")
-                    .font(.headline)
-                    .foregroundColor(.accentColor)
+                VStack(spacing: 4) {
+                    Text("Move: [Arrow Keys] / Fire: [Ctrl]")
+                        .font(.headline)
+                        .foregroundColor(.accentColor)
+                    Text("Open Door: [Space] / Menu: [Enter]")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .padding()
         .frame(width: 600, height: 680)
-        
-
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(phases: [.down, .up]) { press in
             let isDown = press.phase == .down
             
-            // 押し下げ（.down）なら true、離されたら（.up）なら false をフラグに叩き込む
-            switch press.key {
-            case .init("w"), .init("W"):
-                renderContext.isPressingW = isDown
-            case .init("s"), .init("S"):
-                renderContext.isPressingS = isDown
-            case .init("a"), .init("A"):
-                renderContext.isPressingA = isDown
-            case .init("d"), .init("D"):
-                renderContext.isPressingD = isDown
-            case .leftArrow:
-                renderContext.isPressingLeft = isDown
-            case .rightArrow:
-                renderContext.isPressingRight = isDown
-            case .return:
-                renderContext.isPressingEnter = isDown
-
-            case .space:
-                renderContext.isPressingSpace = isDown
-
-            default:
-                return .ignored
+            // キーリピートによる重複イベントを無視する
+            func updateState(_ currentState: inout Bool) -> Bool {
+                guard currentState != isDown else { return false }
+                currentState = isDown
+                return true
             }
-            return .handled
+            
+            var handled = false
+            
+            switch press.key {
+            case .upArrow:
+                handled = updateState(&renderContext.isPressingUp)
+            case .downArrow:
+                handled = updateState(&renderContext.isPressingDown)
+            case .leftArrow:
+                handled = updateState(&renderContext.isPressingLeft)
+            case .rightArrow:
+                handled = updateState(&renderContext.isPressingRight)
+            case .init(" "): // スペースキー
+                handled = updateState(&renderContext.isPressingSpace)
+            case .return:
+                handled = updateState(&renderContext.isPressingEnter)
+            default:
+                // Controlキーの判定
+                if press.characters.contains(where: { $0.isASCII && $0.asciiValue == 0 }) || press.key == .init("\u{11}") {
+                    handled = updateState(&renderContext.isPressingCtrl)
+                } else {
+                    return .ignored
+                }
+            }
+            
+            return handled ? .handled : .ignored
         }
     }
 }

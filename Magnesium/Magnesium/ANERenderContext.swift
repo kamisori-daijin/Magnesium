@@ -1,9 +1,7 @@
-
 //
 //  ANERenderContext.swift
 //  Magnesium
 //
-
 
 import Foundation
 import Metal
@@ -11,31 +9,15 @@ import MetalKit
 import CoreAI
 internal import UniformTypeIdentifiers
 import simd
-// Bind
 
-@_silgen_name("g_IsPressingW")
-var g_W: Int32
-
-@_silgen_name("g_IsPressingS")
-var g_S: Int32
-
-@_silgen_name("g_IsPressingA")
-var g_A: Int32
-
-@_silgen_name("g_IsPressingD")
-var g_D: Int32
-
-@_silgen_name("g_IsPressingLeft")
-var g_Left: Int32
-
-@_silgen_name("g_IsPressingRight")
-var g_Right: Int32
-@_silgen_name("g_IsPressingEnter")
-var g_Enter: Int32
-
-@_silgen_name("g_IsPressingSpace")
-var g_Space: Int32
-
+// C言語側のグローバル変数にバインド
+@_silgen_name("g_IsPressingUp") var g_Up: Int32
+@_silgen_name("g_IsPressingDown") var g_Down: Int32
+@_silgen_name("g_IsPressingLeft") var g_Left: Int32
+@_silgen_name("g_IsPressingRight") var g_Right: Int32
+@_silgen_name("g_IsPressingCtrl") var g_Ctrl: Int32
+@_silgen_name("g_IsPressingSpace") var g_Space: Int32
+@_silgen_name("g_IsPressingEnter") var g_Enter: Int32
 
 @MainActor
 @Observable
@@ -52,36 +34,26 @@ class ANERenderContext {
     var isLoading = false
     var isComputing = false
     
-    //  DOOM 3D FPS State
-    private var playerPosition = SIMD3<Float>(0.0, 1.0, 4.0)
-    private var playerYaw: Float = Float.pi
-    
-    private let moveSpeed: Float = 0.15
-    private let rotateSpeed: Float = 0.05
     private var doomLibHandle: UnsafeMutableRawPointer? = nil
     
     // Keyboard
-    var isPressingW = false
-    var isPressingS = false
-    var isPressingA = false
-    var isPressingD = false
+    var isPressingUp = false
+    var isPressingDown = false
     var isPressingLeft = false
     var isPressingRight = false
-    var isPressingEnter = false
+    var isPressingCtrl = false
     var isPressingSpace = false
+    var isPressingEnter = false
     
     private var doomArgs: [UnsafeMutablePointer<Int8>?] = []
-    
     private let geometry = ANE3DGeometry()
     var activeDevice: MTLDevice?
-    
     private var debugTextureData: [Float16] = []
     
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
-        
         self.debugTextureData = geometry.createDebugCheckerboardTexture()
         
         if let defaultLibrary = device.makeDefaultLibrary() {
@@ -92,7 +64,6 @@ class ANERenderContext {
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
             pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
-            
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }
@@ -100,12 +71,9 @@ class ANERenderContext {
     func openModelPicker() {
         guard let device = self.activeDevice else { return }
         let panel = NSOpenPanel()
-        
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.item, .content, .data]
-        panel.message = "Please select PreProcessor, Rasterizer, and Texture Processor .aimodel files."
         
         if let mainWindow = NSApplication.shared.windows.first(where: { $0.canBecomeKey }) {
             panel.beginSheetModal(for: mainWindow) { response in
@@ -116,102 +84,55 @@ class ANERenderContext {
     
     private func handlePanelResponse(response: NSApplication.ModalResponse, panel: NSOpenPanel, device: MTLDevice) {
         guard response == .OK, panel.urls.count == 3 else { return }
-        
         let urls = panel.urls.map { $0.standardizedFileURL }
         guard let preProcessorURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("pre") }),
-              let rstURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
-              let texURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
-            print("Error: Could not accurately identify all 3 models from filenames.")
-            return
-        }
+              let rstURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") }),
+              let texURL = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else { return }
         
         self.isLoading = true
-        
         Task {
             defer { self.isLoading = false }
             do {
-                let loadedRenderer = try await ANERenderer(preURL: preProcessorURL, rastURL: rstURL, texURL: texURL, metalDevice: device)
-                self.renderer = loadedRenderer
-                print("All 3 models loaded successfully.")
-                
-              
-                let bundleWadPath = Bundle.main.path(forResource: "doom1", ofType: "wad")
-                                 ?? Bundle.main.path(forResource: "DOOM1", ofType: "WAD")
-                                 ?? Bundle.main.path(forResource: "DOOM1", ofType: "wad")
-
-                if let wadPath = bundleWadPath {
-                    self.doomArgs = [
-                        strdup("doom"),
-                        strdup("-iwad"),
-                        strdup(wadPath),
-                        nil
-                    ]
-                    
-            
+                self.renderer = try await ANERenderer(preURL: preProcessorURL, rastURL: rstURL, texURL: texURL, metalDevice: device)
+                if let wadPath = Bundle.main.path(forResource: "DOOM1", ofType: "WAD") {
+                    self.doomArgs = [ strdup("doom"), strdup("-iwad"), strdup(wadPath), nil ]
                     mac_Doom_Create(3, &self.doomArgs)
-                    
-                    print("WAD Path Linked Successfully: \(wadPath)")
-                    print("DOOM Core Initialized via Source Code Direct Link.")
-                } else {
-                    print("Error: Faild to Load WAD Path")
                 }
-
-                
-                
                 self.triggerSingleCompute()
                 self.startCameraRotation()
-            } catch {
-                print("Failed to load models: \(error)")
-            }
+            } catch {}
         }
     }
-
-
     
     func triggerSingleCompute() {
         guard let renderer = self.renderer, !isComputing else { return }
-        
         self.isComputing = true
-        
-    
         renderer.updateTexture(pixelData: self.debugTextureData)
         
         Task { @MainActor in
             do {
                 try await renderer.drawFrame()
-                
                 self.currentEventValue += 1
                 self.sharedEvent?.signaledValue = self.currentEventValue
-                
-            } catch {
-                print("Inference error: \(error)")
-            }
-            
+            } catch {}
             self.isComputing = false
         }
     }
 
-
- 
     func startCameraRotation() {
         timer?.invalidate()
-     
-      
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let renderer = self.renderer, !self.isComputing else { return }
                 
-           
-                g_W = self.isPressingW ? 1 : 0
-                g_S = self.isPressingS ? 1 : 0
-                g_A = self.isPressingA ? 1 : 0
-                g_D = self.isPressingD ? 1 : 0
+                g_Up = self.isPressingUp ? 1 : 0
+                g_Down = self.isPressingDown ? 1 : 0
                 g_Left = self.isPressingLeft ? 1 : 0
                 g_Right = self.isPressingRight ? 1 : 0
-                g_Enter = self.isPressingEnter ? 1 : 0
+                g_Ctrl = self.isPressingCtrl ? 1 : 0
                 g_Space = self.isPressingSpace ? 1 : 0
+                g_Enter = self.isPressingEnter ? 1 : 0
                 
-         
                 mac_Doom_Tick()
                 
                 var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
@@ -228,81 +149,45 @@ class ANERenderContext {
                 }
 
                 let northSouthWalls: [[[Float16]]] = [
-                    // 三角形1（左下・右下・左上の結合）
                     [[ -3.2, -2.0, -4.0, 1.0], [  3.2, -2.0, -4.0, 1.0], [ -3.2,  2.0, -4.0, 1.0]],
-                    // 三角形2（右下・右上・左上の結合）
                     [[  3.2, -2.0, -4.0, 1.0], [  3.2,  2.0, -4.0, 1.0], [ -3.2,  2.0, -4.0, 1.0]],
                 ]
-                
-                let wallColors: [(Float16, Float16, Float16)] = [
-                    (1.0, 1.0, 1.0), (1.0, 1.0, 1.0)
-                ]
 
-                // 💡 元の無敵ロジック：スロット0番と1番にそれぞれ1枚ずつ、完全にバラして建築！
                 for i in 0..<2 {
-                    let slot = i
-                    colorsR[slot] = wallColors[i].0; colorsG[slot] = wallColors[i].1; colorsB[slot] = wallColors[i].2
-                    
+                    colorsR[i] = 1.0; colorsG[i] = 1.0; colorsB[i] = 1.0
                     for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            vertices[pIndex] = northSouthWalls[i][v][ch]
-                        }
+                        for ch in 0..<4 { vertices[(ch * 3 * 64) + (v * 64) + i] = northSouthWalls[i][v][ch] }
                     }
-                    
-                    // 🔴 核心ハック：歩き回る cameraMatrix の掛け算を完全にブチ壊す！！！
-                    // 4x4の「単位行列（Identity Matrix）」を直接流し込んで、画面の正面に100%固定ロック！
-                    // これにより、キーを押しても変な壁が飛び出してきて視界がめちゃくちゃになるバグを息の根を止めます！
-                    mvpWeights[0 * 64 + slot] = 1.0  // M00
-                    mvpWeights[5 * 64 + slot] = 1.0  // M11
-                    mvpWeights[10 * 64 + slot] = 1.0 // M22
-                    mvpWeights[15 * 64 + slot] = 1.0 // M33
+                    mvpWeights[0 * 64 + i] = 1.0
+                    mvpWeights[5 * 64 + i] = 1.0
+                    mvpWeights[10 * 64 + i] = 1.0
+                    mvpWeights[15 * 64 + i] = 1.0
                 }
 
-                // 💡 STEP 4: すべてが揃った状態で ANE へのパイプライン転送を点火！
                 renderer.updateTexture(pixelData: self.debugTextureData)
-                renderer.updateGeometry(
-                    vertices: vertices,
-                    mvpWeights: mvpWeights,
-                    r: colorsR,
-                    g: colorsG,
-                    b: colorsB
-                )
+                renderer.updateGeometry(vertices: vertices, mvpWeights: mvpWeights, r: colorsR, g: colorsG, b: colorsB)
                 self.triggerSingleCompute()
             }
         }
     }
-
   
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
+        guard let renderer = self.renderer, let queue = self.commandQueue, let pipeline = self.renderPipelineState,
+              let sharedEvent = self.sharedEvent, let renderPassDescriptor = view.currentRenderPassDescriptor,
+              let drawable = view.currentDrawable, let commandBuffer = queue.makeCommandBuffer() else { return }
         
-        guard let renderer = self.renderer,
-              let queue = self.commandQueue,
-              let pipeline = self.renderPipelineState,
-              let sharedEvent = self.sharedEvent,
-              let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable else { return }
-        
-        guard let commandBuffer = queue.makeCommandBuffer() else { return }
-        
-        if self.currentEventValue > 0 {
-            commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
-        }
+        if self.currentEventValue > 0 { commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue) }
 
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
-           
-    
             if let buffer = renderer.displayBuffers[0] {
                 renderEncoder.setFragmentBuffer(buffer, offset: 0, index: 0)
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }
             renderEncoder.endEncoding()
         }
-        
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
 }
-
