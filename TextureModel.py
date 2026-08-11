@@ -16,7 +16,7 @@ class ANETextureProcessor(nn.Module):
 
     def forward(self, raw_image):
         """
-        raw_image: DOOM [Batch=1, Channel=3, H=400, W=640] ！
+        raw_image: DOOM [Batch=1, Channel=3, H=400, W=640] 
         """
 
         square_image = F.interpolate(raw_image, size=(256, 256), mode='bilinear', align_corners=False)
