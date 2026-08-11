@@ -59,7 +59,7 @@ struct ContentView: View {
         .onKeyPress(phases: [.down, .up]) { press in
             let isDown = press.phase == .down
             
-            // キーリピートによる重複イベントを無視する
+            // Ignore Double Key
             func updateState(_ currentState: inout Bool) -> Bool {
                 guard currentState != isDown else { return false }
                 currentState = isDown
@@ -77,12 +77,12 @@ struct ContentView: View {
                 handled = updateState(&renderContext.isPressingLeft)
             case .rightArrow:
                 handled = updateState(&renderContext.isPressingRight)
-            case .init(" "): // スペースキー
+            case .init(" "): // Space
                 handled = updateState(&renderContext.isPressingSpace)
             case .return:
                 handled = updateState(&renderContext.isPressingEnter)
             default:
-                // Controlキーの判定
+                // Control
                 if press.characters.contains(where: { $0.isASCII && $0.asciiValue == 0 }) || press.key == .init("\u{11}") {
                     handled = updateState(&renderContext.isPressingCtrl)
                 } else {

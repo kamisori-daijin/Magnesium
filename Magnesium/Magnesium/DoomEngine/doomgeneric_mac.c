@@ -12,7 +12,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-// Swift側から書き換えるキー入力フラグ
+// Key Flag
 int g_IsPressingUp = 0;
 int g_IsPressingDown = 0;
 int g_IsPressingLeft = 0;
@@ -39,22 +39,22 @@ uint32_t DG_GetTicksMs(void) {
     return (uint32_t)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
 }
 
-// DOOMがキーの状態を取得するために毎フレーム呼び出す関数
+// Get Key State
 int DG_GetKey(int* pressed, uint8_t* doomKey) {
     static int currentKeyIndex = 0;
     
-    // チェックするキーのリスト（DOOM標準のキーコード）
+    // Keycode
     const struct {
         int* flag;
         uint8_t code;
     } keys[] = {
-        { &g_IsPressingUp, 0xad },          // 上矢印（前進）
-        { &g_IsPressingDown, 0xaf },        // 下矢印（後退）
-        { &g_IsPressingLeft, 0xac },        // 左矢印（左旋回）
-        { &g_IsPressingRight, 0xae },       // 右矢印（右旋回）
-        { &g_IsPressingCtrl, 0x80 + 0x1d },  // Ctrl（攻撃）
-        { &g_IsPressingSpace, 0x80 + 0x39 }, // Space（使用/ドア開閉）
-        { &g_IsPressingEnter, 13 }          // Enter（決定）
+        { &g_IsPressingUp, 0xad },          // Up
+        { &g_IsPressingDown, 0xaf },        // Down
+        { &g_IsPressingLeft, 0xac },        // Left
+        { &g_IsPressingRight, 0xae },       // Right
+        { &g_IsPressingCtrl, 0x80 + 0x1d },  // Ctrl
+        { &g_IsPressingSpace, 0x80 + 0x39 }, // Space
+        { &g_IsPressingEnter, 13 }          // Enter
     };
     
     const int numKeys = sizeof(keys) / sizeof(keys[0]);
@@ -70,11 +70,11 @@ int DG_GetKey(int* pressed, uint8_t* doomKey) {
             lastState[index] = currentState;
             
             currentKeyIndex = (index + 1) % numKeys;
-            return 1; // イベントあり
+            return 1; // Ivent
         }
     }
     
-    return 0; // イベントなし
+    return 0; // No Ivent
 }
 
 void DG_SetWindowTitle(const char *title) {}

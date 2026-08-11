@@ -10,7 +10,7 @@ import CoreAI
 internal import UniformTypeIdentifiers
 import simd
 
-// C言語側のグローバル変数にバインド
+// Bind
 @_silgen_name("g_IsPressingUp") var g_Up: Int32
 @_silgen_name("g_IsPressingDown") var g_Down: Int32
 @_silgen_name("g_IsPressingLeft") var g_Left: Int32
