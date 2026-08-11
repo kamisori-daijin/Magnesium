@@ -238,16 +238,16 @@ class ANERenderer {
         let shape: [Int] = [64, 1, 256, 256]
         
         let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-        rstOutputViews.insert(viewForR, for: "convolution_4")
+        rstOutputViews.insert(viewForR, for: "slice_1")
         
         let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-        rstOutputViews.insert(viewForG, for: "convolution_5")
+        rstOutputViews.insert(viewForG, for: "slice_2")
         
         let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-        rstOutputViews.insert(viewForB, for: "convolution_6")
+        rstOutputViews.insert(viewForB, for: "slice_3")
         
         let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-        rstOutputViews.insert(viewForMask, for: "convolution_7")
+        rstOutputViews.insert(viewForMask, for: "convolution_4")
 
       
         let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)

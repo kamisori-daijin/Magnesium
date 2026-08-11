@@ -10,8 +10,11 @@ class ANETextureProcessor(nn.Module):
 
         with torch.no_grad():
             weight = torch.zeros(64, 3, 1, 1)
-            for i in range(64):
-                weight[i, i % 3, 0, 0] = 1.0
+            # 最初の3チャンネルにR, G, Bをそれぞれ割り当てる
+            weight[0, 0, 0, 0] = 1.0 # R
+            weight[1, 1, 0, 0] = 1.0 # G
+            weight[2, 2, 0, 0] = 1.0 # B
+            # 4チャンネル目以降は0のまま（または必要に応じてパディング）
             self.expand_conv.weight.copy_(weight)
 
     def forward(self, raw_image):
@@ -21,5 +24,4 @@ class ANETextureProcessor(nn.Module):
 
         square_image = F.interpolate(raw_image, size=(256, 256), mode='bilinear', align_corners=False)
         
-  
         return self.expand_conv(square_image)

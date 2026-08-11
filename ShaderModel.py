@@ -16,10 +16,7 @@ class ANE3DRenderer64(nn.Module):
             torch.ones(1, 1, height, width)
         ], dim=1))
         
-        # RGBそれぞれのグループを足し合わせるための1x1 Convカーネル
-        self.register_buffer("sum_kernel_R", torch.ones(1, 22, 1, 1, dtype=torch.float16))
-        self.register_buffer("sum_kernel_G", torch.ones(1, 22, 1, 1, dtype=torch.float16))
-        self.register_buffer("sum_kernel_B", torch.ones(1, 20, 1, 1, dtype=torch.float16))
+        # 全体マスク計算用のカーネル
         self.register_buffer("sum_kernel_All", torch.ones(1, 64, 1, 1, dtype=torch.float16))
 
     def forward(self, 
@@ -67,16 +64,12 @@ class ANE3DRenderer64(nn.Module):
         z_blend_weights = torch.clamp(1.0 - (z_diff * sharpness), min=0.0, max=1.0)
         z_mask = mask * z_blend_weights
 
-        # 💡 カラー合成: RGBそれぞれのグループごとに足し合わせる
+        # 💡 カラー合成: 0, 1, 2チャンネルからRGBを抽出
         full_color = sampled_texture * z_mask
         
-        R_group = full_color[:, 0:22, :, :]
-        G_group = full_color[:, 22:44, :, :]
-        B_group = full_color[:, 44:64, :, :]
-        
-        R = F.conv2d(R_group, self.sum_kernel_R, bias=None)
-        G = F.conv2d(G_group, self.sum_kernel_G, bias=None)
-        B = F.conv2d(B_group, self.sum_kernel_B, bias=None)
+        R = full_color[:, 0:1, :, :]
+        G = full_color[:, 1:2, :, :]
+        B = full_color[:, 2:3, :, :]
         
         mask_w = F.conv2d(z_mask, self.sum_kernel_All, bias=None)
         max_inv_z = F.conv2d(pixel_inv_z * z_blend_weights, self.sum_kernel_All, bias=None)
