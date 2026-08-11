@@ -241,7 +241,7 @@ class ANERenderer {
         rstOutputViews.insert(viewForR, for: "slice_1")
         
         let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-        rstOutputViews.insert(viewForG, for: "slice_2")
+        rstOutputViews.insert(viewForG, for: "slice_1")
         
         let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: layerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
         rstOutputViews.insert(viewForB, for: "slice_3")
