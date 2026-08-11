@@ -5,7 +5,7 @@ A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing t
 
 <p align="center">
 
-<video src="https://github.com/user-attachments/assets/e4bf2751-faa7-46b2-95be-f1df72df3421" width="512" height="512" autoplay loop muted playsinline></video>
+<video src="https://github.com/user-attachments/assets/c723ac8a-a609-4024-bffe-6372dfc46ef0" width="1024" height="883" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
@@ -68,5 +68,15 @@ python convert_texture.py
 4. Build and Run
 5. Use the Model Picker to select the three generated `.aimodel` files (to select multiple assets, hold down the Command key while selecting).
 
-Anowredgements
-doomgeneric - DOOM
+## Anowredgements
+- (doomgeneric)[https://github.com/ozkl/doomgeneric] - DOOM
+
+## License
+
+This project is multi-licensed under both the GNU General Public License v2.0 and the MIT License.
+
+Due to build requirements, it is mixed with the doomgeneric source code.
+
+### Distribution Note
+
+When you build and distribute the combined binary/executable of this project, the entire work must be distributed under the **GPL v2.0** terms.
