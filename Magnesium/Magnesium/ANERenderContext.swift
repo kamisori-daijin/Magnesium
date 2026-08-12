@@ -48,18 +48,40 @@ class ANERenderContext {
            
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
-        
-        // SPMからデバイスを非同期で初期化
-        Task {
-            self.isLoading = true
-            self.mgDevice = await MGCreateSystemDefaultDevice()
-            self.isLoading = false
-            if self.mgDevice != nil {
-                self.startCameraRotation()
-            }
-        }
     }
     
+    func handleSelectedURLs(_ urls: [URL]) {
+        guard urls.count == 3 else { return }
+        
+       
+        let allowedExtensions = ["aimodel"]
+        
+        for url in urls {
+        
+            guard allowedExtensions.contains(url.pathExtension.lowercased()) else {
+                print("Error: Invalid file extension for \(url.lastPathComponent)")
+                return
+            }
+            _ = url.startAccessingSecurityScopedResource()
+        }
+        
+        guard let pre = urls.first(where: { $0.lastPathComponent.lowercased().contains("pre") }),
+              let rast = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
+              let tex = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
+            print("Error: Could not identify all 3 models.")
+            return
+        }
+        
+        self.isLoading = true
+        Task {
+            self.mgDevice = await MGCreateSystemDefaultDevice(preURL: pre, rastURL: rast, texURL: tex)
+            self.isLoading = false
+            
+            for url in urls { url.stopAccessingSecurityScopedResource() }
+            
+            if self.mgDevice != nil { self.startCameraRotation() }
+        }
+    }
     // =================================================================
     // ⚔️ 3Dジオメトリパッキング ＆ カメラ回転ループ
     // =================================================================

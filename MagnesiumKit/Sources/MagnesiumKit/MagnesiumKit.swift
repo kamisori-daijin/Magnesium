@@ -29,28 +29,15 @@ internal final class MagnesiumDevice: MGDevice {
     internal let geometry = ANE3DGeometry()
     internal var renderer: ANERenderer?
     
-    public init() async {
-            do {
-                print("MagnesiumDevice init started")
-                
-        
-                let texURL = Bundle.main.url(forResource: "Resources/ane_texture_processor", withExtension: "aimodel")
-                let rstURL = Bundle.main.url(forResource: "Resources/ane_3d_rasterizer", withExtension: "aimodel")
-                let preURL = Bundle.main.url(forResource: "Resources/ane_pre_processor", withExtension: "aimodel")
-                
-                if let tex = texURL, let rst = rstURL, let pre = preURL {
-                    guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
-                    
-                    self.renderer = try await ANERenderer(preURL: pre, rastURL: rst, texURL: tex, metalDevice: systemMetalDevice)
-                    print("Success: Renderer initialized!")
-                } else {
-                   
-                    print("Error: Model URLs are nil. Check Package.swift resources!")
-                }
-            } catch {
-                print("Error: \(error)")
-            }
+    public init(preURL: URL, rastURL: URL, texURL: URL) async {
+        do {
+            guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
+            self.renderer = try await ANERenderer(preURL: preURL, rastURL: rastURL, texURL: texURL, metalDevice: systemMetalDevice)
+            print("Success: Renderer initialized!")
+        } catch {
+            print("Error: \(error)")
         }
+    }
     
     public func makeCommandQueue() -> MGCommandQueue? { MagnesiumCommandQueue(device: self) }
     public func getDisplayBuffer(index: Int) -> MTLBuffer? { renderer?.displayBuffers[index] }
@@ -106,6 +93,6 @@ internal final class MagnesiumDevice: MGDevice {
     func endEncoding() {}
 }
 
-@MainActor public func MGCreateSystemDefaultDevice() async -> MGDevice? {
-    await MagnesiumDevice()
+@MainActor public func MGCreateSystemDefaultDevice(preURL: URL, rastURL: URL, texURL: URL) async -> MGDevice? {
+    return await MagnesiumDevice(preURL: preURL, rastURL: rastURL, texURL: texURL)
 }
