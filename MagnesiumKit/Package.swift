@@ -12,10 +12,8 @@ let package = Package(
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "MagnesiumKit",
-            targets: ["MagnesiumKit"],
-
-        ),
-    
+            targets: ["MagnesiumKit"]
+        )
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -25,18 +23,13 @@ let package = Package(
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],
-            resources: [
-                .process("Resources/ane_texture_processor.aimodel"),
-                .process("Resources/ane_3d_rasterizer.aimodel"),
-                .process("Resources/ane_pre_processor.aimodel")
-            ],
         ),
         .testTarget(
             name: "MagnesiumKitTests",
             dependencies: ["MagnesiumKit"],
             swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
+                .enableUpcomingFeature("ApproachableConcurrency")
+            ]
         ),
     ]
 )
