@@ -20,10 +20,16 @@ let package = Package(
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "MagnesiumKit",
+            resources: [
+                .copy("Resources/ane_texture_processor.aimodel"),
+                .copy("Resources/ane_3d_rasterizer.aimodel"),
+                .copy("Resources/ane_pre_processor.aimodel")
+            ]
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
                 .swiftLanguageMode(.v5)
             ],
+   
         ),
         .testTarget(
             name: "MagnesiumKitTests",

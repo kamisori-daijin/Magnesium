@@ -6,6 +6,10 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BF9543AA302C6DFF0075401E /* MagnesiumKit in Frameworks */ = {isa = PBXBuildFile; productRef = BF9543A9302C6DFF0075401E /* MagnesiumKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		BFC50E2B3001D57C00D6790A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -51,6 +55,7 @@
 		BFC50E1A3001D57B00D6790A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				BF9543AA302C6DFF0075401E /* MagnesiumKit in Frameworks */,
 			);
 		};
 		BFC50E273001D57C00D6790A /* Frameworks */ = {
@@ -66,12 +71,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BF9543A8302C6DFF0075401E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		BFC50E143001D57B00D6790A = {
 			isa = PBXGroup;
 			children = (
 				BFC50E1F3001D57B00D6790A /* Magnesium */,
 				BFC50E2D3001D57C00D6790A /* MagnesiumTests */,
 				BFC50E373001D57C00D6790A /* MagnesiumUITests */,
+				BF9543A8302C6DFF0075401E /* Frameworks */,
 				BFC50E1E3001D57B00D6790A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -99,10 +112,16 @@
 			);
 			buildRules = (
 			);
+			dependencies = (
+				BF954397302C697F0075401E /* PBXTargetDependency */,
+			);
 			fileSystemSynchronizedGroups = (
 				BFC50E1F3001D57B00D6790A /* Magnesium */,
 			);
 			name = Magnesium;
+			packageProductDependencies = (
+				BF9543A9302C6DFF0075401E /* MagnesiumKit */,
+			);
 			productName = Magnesium;
 			productReference = BFC50E1D3001D57B00D6790A /* Magnesium.app */;
 			productType = "com.apple.product-type.application";
@@ -181,6 +200,9 @@
 			);
 			mainGroup = BFC50E143001D57B00D6790A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BF954395302C67A20075401E /* XCLocalSwiftPackageReference "../MagnesiumKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFC50E1E3001D57B00D6790A /* Products */;
 			projectDirPath = "";
@@ -230,6 +252,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		BF954397302C697F0075401E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = BF954396302C697F0075401E /* MagnesiumKit */;
+		};
 		BFC50E2C3001D57C00D6790A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = BFC50E1C3001D57B00D6790A /* Magnesium */;
@@ -563,6 +589,26 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		BF954395302C67A20075401E /* XCLocalSwiftPackageReference "../MagnesiumKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../MagnesiumKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BF954396302C697F0075401E /* MagnesiumKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF954395302C67A20075401E /* XCLocalSwiftPackageReference "../MagnesiumKit" */;
+			productName = MagnesiumKit;
+		};
+		BF9543A9302C6DFF0075401E /* MagnesiumKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF954395302C67A20075401E /* XCLocalSwiftPackageReference "../MagnesiumKit" */;
+			productName = MagnesiumKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BFC50E153001D57B00D6790A /* Project object */;
 	validationLevel = 1;
