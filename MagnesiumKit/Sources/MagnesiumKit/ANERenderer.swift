@@ -8,6 +8,7 @@ import CoreAI
 import Metal
 import simd
 
+@MainActor
 class ANERenderer {
     private var preModel: AIModel?
     private var rstModel: AIModel?
