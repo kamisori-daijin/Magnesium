@@ -169,6 +169,18 @@ class ANERenderContext {
                 mvpWeights.withUnsafeBytes { mvpPtr in
                     mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: mvpWeights.count * 2, index: 1)
                 }
+              
+
+                               
+                colorsR.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsR.count * 2, index: 2)
+                }
+                colorsG.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsG.count * 2, index: 3)
+                }
+                    colorsB.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsB.count * 2, index: 4)
+                }
                 
                 
                 

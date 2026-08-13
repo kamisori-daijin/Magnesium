@@ -83,10 +83,14 @@ internal final class MagnesiumDevice: MGDevice {
     init(device: MagnesiumDevice) { self.device = device }
     
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {
-        let count = length / MemoryLayout<Float16>.size
-        let ptr = bytes.bindMemory(to: Float16.self, capacity: count)
-        if index == 0 { self.boundVertices = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-        else if index == 1 { self.boundMVP = Array(UnsafeBufferPointer(start: ptr, count: count)) }
+            let count = length / MemoryLayout<Float16>.size
+            let ptr = bytes.bindMemory(to: Float16.self, capacity: count)
+            
+            if index == 0 { self.boundVertices = Array(UnsafeBufferPointer(start: ptr, count: count)) }
+            else if index == 1 { self.boundMVP = Array(UnsafeBufferPointer(start: ptr, count: count)) }
+            else if index == 2 { self.colorsR = Array(UnsafeBufferPointer(start: ptr, count: count)) }
+            else if index == 3 { self.colorsG = Array(UnsafeBufferPointer(start: ptr, count: count)) }
+            else if index == 4 { self.colorsB = Array(UnsafeBufferPointer(start: ptr, count: count)) }
     }
     func setFragmentTexture(_ texture: [Float16], index: Int) { self.boundTexture = texture }
     func drawPrimitives(vertexCount: Int) {}
