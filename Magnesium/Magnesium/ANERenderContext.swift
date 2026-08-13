@@ -25,6 +25,12 @@ class ANERenderContext {
     var isComputing = false
     
     var activeDevice: MTLDevice?
+    // Re Use buffer
+    private var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
+    private var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
+    private var colorsR = [Float16](repeating: 0.0, count: 64)
+    private var colorsG = [Float16](repeating: 0.0, count: 64)
+    private var colorsB = [Float16](repeating: 0.0, count: 64)
     
     private var debugTextureData: [Float16] = []
     init(){
@@ -104,17 +110,12 @@ class ANERenderContext {
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
 
-                var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
-                var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
-                var colorsR = [Float16](repeating: 0.0, count: 64)
-                var colorsG = [Float16](repeating: 0.0, count: 64)
-                var colorsB = [Float16](repeating: 0.0, count: 64)
-                
+                // Reuse
                 let wChannelOffset = 3 * 3 * 64
                 for faceIdx in 0..<64 {
-                    vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                    vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                    vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
+                    self.vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
+                    self.vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
+                    self.vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
                 let pyramidFaces: [[[Float16]]] = [
@@ -130,30 +131,30 @@ class ANERenderContext {
 
                 for i in 0..<4 {
                     let slot = i
-                    colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
                     for v in 0..<3 {
                         for ch in 0..<4 {
                             let pIndex = (ch * 3 * 64) + (v * 64) + slot
                             var offsetValue = pyramidFaces[i][v][ch]
                             if ch == 0 { offsetValue -= 2.0 }
-                            vertices[pIndex] = offsetValue
+                            self.vertices[pIndex] = offsetValue
                         }
                     }
-                    for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
                 }
 
                 for i in 0..<4 {
                     let slot = 4 + i
-                    colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
                     for v in 0..<3 {
                         for ch in 0..<4 {
                             let pIndex = (ch * 3 * 64) + (v * 64) + slot
                             var offsetValue = pyramidFaces[i][v][ch]
                             if ch == 0 { offsetValue += 2.0 }
-                            vertices[pIndex] = offsetValue
+                            self.vertices[pIndex] = offsetValue
                         }
                     }
-                    for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
                 }
                 
                 guard let mgCommandQueue = mgDevice.makeCommandQueue(),
@@ -163,27 +164,22 @@ class ANERenderContext {
                     return
                 }
                 
-                vertices.withUnsafeBytes { vertexPtr in
-                    mgEncoder.setVertexBytes(vertexPtr.baseAddress!, length: vertices.count * 2, index: 0)
+                self.vertices.withUnsafeBytes { vertexPtr in
+                    mgEncoder.setVertexBytes(vertexPtr.baseAddress!, length: self.vertices.count * 2, index: 0)
                 }
-                mvpWeights.withUnsafeBytes { mvpPtr in
-                    mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: mvpWeights.count * 2, index: 1)
+                self.mvpWeights.withUnsafeBytes { mvpPtr in
+                    mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: self.mvpWeights.count * 2, index: 1)
                 }
               
-
-                               
-                colorsR.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsR.count * 2, index: 2)
+                self.colorsR.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsR.count * 2, index: 2)
                 }
-                colorsG.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsG.count * 2, index: 3)
+                self.colorsG.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsG.count * 2, index: 3)
                 }
-                    colorsB.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: colorsB.count * 2, index: 4)
+                self.colorsB.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsB.count * 2, index: 4)
                 }
-                
-                
-                
                 
                 mgEncoder.setFragmentTexture(self.debugTextureData, index: 0)
                 

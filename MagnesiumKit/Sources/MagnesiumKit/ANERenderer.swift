@@ -194,7 +194,7 @@ class ANERenderer {
         let localLayerByteCount = self.layerByteCount
         
         
-        try await Task.detached { [rstInputs, canvasBuf] in
+       
             var rstOutputViews = InferenceFunction.MutableViews()
             let shape: [Int] = [64, 1, 256, 256]
             
@@ -211,6 +211,6 @@ class ANERenderer {
             rstOutputViews.insert(viewForMask, for: "convolution_7")
 
             let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
-        }.value
+        }
     }
-}
+
