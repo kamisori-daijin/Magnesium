@@ -81,11 +81,14 @@ class ANERenderer {
     }
 
     private func setupInitialGeometry() {
-        let vertices = geometry.getDummyVertices()
-        let mvp = geometry.getDummyMVPWeights()
-        let color = geometry.getDummyColor()
-        updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
-    }
+            let vertices = geometry.getDummyVertices()
+            let mvp = geometry.getDummyMVPWeights()
+            let color = geometry.getDummyColor()
+            updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
+            
+            let debugTexture = geometry.createDebugCheckerboardTexture()
+            updateTexture(pixelData: debugTexture)
+        }
 
     func updateGeometry(vertices: [Float16], mvpWeights: [Float16], r: [Float16], g: [Float16], b: [Float16]) {
         var vertexView = self.expandedVerticesArray.mutableView(as: Float16.self)
@@ -105,9 +108,21 @@ class ANERenderer {
     }
     
     func updateTexture(pixelData: [Float16]) {
-        var texView = self.rawTextureArray.mutableView(as: Float16.self)
-        texView.copyElements(fromContentsOf: pixelData)
-    }
+            var texView = self.rawTextureArray.mutableView(as: Float16.self)
+            
+            let expectedCount = 1 * 3 * 256 * 256
+            
+            if pixelData.count != expectedCount {
+                
+                print("Warning: Received \(pixelData.count) elements, but expected \(expectedCount). Overriding with Debug Texture.")
+                
+                let debugData = geometry.createDebugCheckerboardTexture()
+                texView.copyElements(fromContentsOf: debugData)
+            } else {
+               
+                texView.copyElements(fromContentsOf: pixelData)
+            }
+        }
 
    func drawFrame() async throws {
         guard let tex = texFunction,

@@ -14,6 +14,7 @@ class ANERenderContext {
     private var angle: Float = 0.0
     private var timer: Timer?
     private(set) var mgDevice: MGDevice?
+    private let geometry = ANE3DGeometry()
     private(set) var commandQueue: MTLCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
     
@@ -26,17 +27,17 @@ class ANERenderContext {
     var activeDevice: MTLDevice?
     
     private var debugTextureData: [Float16] = []
+    init(){
+        self.debugTextureData = geometry.createDebugCheckerboardTexture()
+    }
     
-    // =================================================================
-    // ⚙️ 初期セットアップ
-    // =================================================================
+    
+    // Setup
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
         
-        self.debugTextureData = [Float16](repeating: 1.0, count: 640 * 400 * 3)
-
         if let defaultLibrary = device.makeDefaultLibrary() {
             let pipelineDescriptor = MTLRenderPipelineDescriptor()
             pipelineDescriptor.vertexFunction = defaultLibrary.makeFunction(name: "textureVertex")
@@ -82,9 +83,7 @@ class ANERenderContext {
             if self.mgDevice != nil { self.startCameraRotation() }
         }
     }
-    // =================================================================
-    // ⚔️ 3Dジオメトリパッキング ＆ カメラ回転ループ
-    // =================================================================
+    // Camera Loop
     func startCameraRotation() {
         timer?.invalidate()
         
@@ -170,6 +169,10 @@ class ANERenderContext {
                 mvpWeights.withUnsafeBytes { mvpPtr in
                     mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: mvpWeights.count * 2, index: 1)
                 }
+                
+                
+                
+                
                 mgEncoder.setFragmentTexture(self.debugTextureData, index: 0)
                 
                 mgEncoder.drawPrimitives(vertexCount: 8)
@@ -188,9 +191,7 @@ class ANERenderContext {
         }
     }
 
-    // =================================================================
-    // 📺 最終画面出力（GPUレンダリング）
-    // =================================================================
+    // Output
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         

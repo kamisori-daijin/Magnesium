@@ -9,7 +9,7 @@ import Foundation
 
 extension ANE3DGeometry {
     
-    func createDebugCheckerboardTexture() -> [Float16] {
+    public func createDebugCheckerboardTexture() -> [Float16] {
         var pixelData = [Float16](repeating: 0, count: 1 * 3 * 256 * 256)
         
         for y in 0..<256 {
