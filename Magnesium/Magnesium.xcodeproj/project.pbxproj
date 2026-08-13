@@ -71,20 +71,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		BF9543A8302C6DFF0075401E /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		BFC50E143001D57B00D6790A = {
 			isa = PBXGroup;
 			children = (
 				BFC50E1F3001D57B00D6790A /* Magnesium */,
 				BFC50E2D3001D57C00D6790A /* MagnesiumTests */,
 				BFC50E373001D57C00D6790A /* MagnesiumUITests */,
-				BF9543A8302C6DFF0075401E /* Frameworks */,
 				BFC50E1E3001D57B00D6790A /* Products */,
 			);
 			sourceTree = "<group>";
