@@ -9,7 +9,7 @@ import Foundation
 
 extension ANE3DGeometry {
     /// Make UV Data
-    func getPyramidUVs() -> [Float16] {
+    public func getPyramidUVs() -> [Float16] {
         // [1, 2, 1, maxVertices]
         var buffer = [Float16](repeating: 0, count: 1 * 2 * 1 * maxVertices)
         

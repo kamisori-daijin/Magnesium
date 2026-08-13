@@ -9,17 +9,17 @@
 import Foundation
 import simd
 
-struct ANE3DGeometry {
+public struct ANE3DGeometry {
     let maxVertices: Int
     
-    init(maxVertices: Int = 65536) {
+    public init(maxVertices: Int = 65536) {
         self.maxVertices = maxVertices
     }
     
 
     
     /// Generate LookAt camera matrix
-    func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16] {
+    public func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16] {
         // 1. Caluculate LookAt
         let zAxis = simd.normalize(eye - target)
         let xAxis = simd.normalize(simd.cross(up, zAxis))
@@ -63,7 +63,7 @@ struct ANE3DGeometry {
 
     
     /// Generates pyramid vertex data
-    func getPyramidVertices() -> [Float16] {
+    public func getPyramidVertices() -> [Float16] {
         var buffer = [Float16](repeating: 0, count: 1 * 4 * 1 * maxVertices)
         
         let vertices: [[Float]] = [
@@ -87,7 +87,7 @@ struct ANE3DGeometry {
 
     
     // [1, 4, 3, 64]
-    func getDummyVertices() -> [Float16] {
+    public func getDummyVertices() -> [Float16] {
         var buffer = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64) // 768
         let maxFaces = 64
         
@@ -105,7 +105,7 @@ struct ANE3DGeometry {
     }
 
 
-    func getDummyMVPWeights() -> [Float16] {
+    public func getDummyMVPWeights() -> [Float16] {
         var buffer = [Float16](repeating: 0.0, count: 4 * 4 * 1 * 1)
         buffer[0]  = 1.0  // X -> X
         buffer[5]  = 1.0  // Y -> Y
@@ -115,7 +115,7 @@ struct ANE3DGeometry {
     }
     
 
-    func getDummyColor() -> [Float16] {
+    public func getDummyColor() -> [Float16] {
         return [Float16](repeating: 0.0, count: 1 * 1 * 1 * 64)
     }
 }
