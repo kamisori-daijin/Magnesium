@@ -23,15 +23,15 @@ class ANE3DRenderer64(nn.Module):
         # tile_offset  -1.0 〜 1.0 
         tile_offset_x = tile_offset_x.squeeze()
         tile_offset_y = tile_offset_y.squeeze()
-        y_coords = torch.linspace(1.0 - tile_offset_y, -1.0 - tile_offset_y, self.height).view(1, 1, self.height, 1)
-        x_coords = torch.linspace(-1.0 + tile_offset_x, 1.0 + tile_offset_x, self.width).view(1, 1, 1, self.width)
+        y_coords = torch.linspace(1.0 - tile_offset_y, -1.0 - tile_offset_y, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
+        x_coords = torch.linspace(-1.0 + tile_offset_x, 1.0 + tile_offset_x, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
+        
         
         pixel_coords = torch.cat([
             x_coords.expand(1, 1, self.height, self.width),
             y_coords.expand(1, 1, self.height, self.width),
-            torch.ones(1, 1, self.height, self.width)
+            torch.ones(1, 1, self.height, self.width, dtype=torch.float16)
         ], dim=1).to(A0.device)
-        # -------------------------------------------
 
         # 1.Caluculate Edges
         def compute_edges(A, B, C):

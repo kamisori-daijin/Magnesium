@@ -8,7 +8,7 @@
 import SwiftUI
 import MagnesiumKit
 import AppKit
-
+import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var renderContext = ANERenderContext()
    
@@ -54,9 +54,10 @@ struct ContentView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         
-  
-        panel.allowedFileTypes = ["aimodel"]
-        
+
+        let plainFileType = UTType(tag: "aimodel", tagClass: .filenameExtension, conformingTo: .item) ?? .data
+
+        panel.allowedContentTypes = [plainFileType]
         if panel.runModal() == .OK {
             renderContext.handleSelectedURLs(panel.urls)
         }
