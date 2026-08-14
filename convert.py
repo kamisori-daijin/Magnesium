@@ -4,9 +4,9 @@ import torch
 from ShaderModel import ANE3DRenderer64  
 from pathlib import Path
 
-WIDTH = 256
-HEIGHT = 256
-
+# 128x128 
+WIDTH = 128
+HEIGHT = 128
 
 model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
 model.eval()
@@ -14,16 +14,20 @@ model.eval()
 # -------------------------------------------------------------------------
 # 2. Definition of Input Ports (64 Triangles Data)
 # -------------------------------------------------------------------------
-# Create dummy data for coefficients like A0, B0, C0,
 def make_dummy():
     return torch.zeros(1, 1, 1, 64, dtype=torch.float16)
 
 
-# Prepare dummy data matching the arguments of the forward method
+args_list = [make_dummy() for _ in range(27)]
 
+# Texture
+args_list.append(torch.zeros(1, 64, HEIGHT, WIDTH, dtype=torch.float16))
 
-args = tuple([make_dummy() for _ in range(27)]) + (torch.zeros(1, 64, 256, 256, dtype=torch.float16),)
+# tile_offset_x, tile_offset_y
+args_list.append(torch.zeros(1, dtype=torch.float16)) # tile_offset_x
+args_list.append(torch.zeros(1, dtype=torch.float16)) # tile_offset_y
 
+args = tuple(args_list)
 
 # -------------------------------------------------------------------------
 # 3. Export Settings for CoreAI

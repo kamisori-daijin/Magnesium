@@ -31,8 +31,8 @@ converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
         m, 
-        args=args 
-    ).run_decompositions(
+        args=args,
+     ).run_decompositions(
         coreai_torch.get_decomp_table()
     ),
 )

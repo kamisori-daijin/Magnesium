@@ -24,13 +24,11 @@ class ANE3DPreProcessor64(nn.Module):
         Z_c = transformed[:, 2:3, :, :]
         W_c = transformed[:, 3:4, :, :] 
         
-
         safe_W = torch.clamp(torch.abs(W_c), min=1e-5)
         screen_x = X_c / safe_W 
         screen_y = Y_c / safe_W
         inv_Z = 1.0 / safe_W     # z_weights
         
-   
         p0_x, p1_x, p2_x = screen_x[:, :, 0:1, :], screen_x[:, :, 1:2, :], screen_x[:, :, 2:3, :]
         p0_y, p1_y, p2_y = screen_y[:, :, 0:1, :], screen_y[:, :, 1:2, :], screen_y[:, :, 2:3, :]
      
@@ -52,5 +50,16 @@ class ANE3DPreProcessor64(nn.Module):
         
         R, G, B = colors_r, colors_g, colors_b
 
+        # Bounding Box Calculation
+        x_coords = torch.cat([p0_x, p1_x, p2_x], dim=2) # [1, 1, 3, 64]
+        y_coords = torch.cat([p0_y, p1_y, p2_y], dim=2) # [1, 1, 3, 64]
+        
+        min_x = torch.min(x_coords, dim=2, keepdim=True)[0] # [1, 1, 1, 64]
+        max_x = torch.max(x_coords, dim=2, keepdim=True)[0]
+        min_y = torch.min(y_coords, dim=2, keepdim=True)[0]
+        max_y = torch.max(y_coords, dim=2, keepdim=True)[0]
+        # ---------------------------------------
+
         return (A0, B0, C0, A1, B1, C1, A2, B2, C2, 
-                R, G, B, R, G, B, R, G, B, p0_iz, p1_iz, p2_iz)
+                R, G, B, R, G, B, R, G, B, p0_iz, p1_iz, p2_iz,
+                min_x, max_x, min_y, max_y) 
