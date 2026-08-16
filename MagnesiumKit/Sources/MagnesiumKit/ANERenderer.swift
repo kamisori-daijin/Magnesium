@@ -114,85 +114,86 @@ import simd
     }
     
     func drawFrame() async throws {
-        guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
-        guard let canvasBuf = self.displayBuffers[0] else { return }
-        
-        let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
-        var texOutputViews = InferenceFunction.MutableViews()
-        texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
-        let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
-        
-        let preInputs: [String: NDArray] = [
-            "expanded_vertices": expandedVerticesArray, "mvp_weights": mvpWeightsArray,
-            "colors_r": colorsRArray, "colors_g": colorsGArray, "colors_b": colorsBArray
-        ]
-        var preOutputs = try await pre.run(inputs: preInputs)
-        
-        var baseRstInputs: [String: NDArray] = [:]
-        baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
-        baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        baseRstInputs["c0"] = preOutputs.remove("neg")?.ndArray
-        baseRstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-        baseRstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-        baseRstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
-        baseRstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-        baseRstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-        baseRstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
-        
-        let colorsR = preOutputs.remove("colors_r")?.ndArray
-        let colorsG = preOutputs.remove("colors_g")?.ndArray
-        let colorsB = preOutputs.remove("colors_b")?.ndArray
-        
-        baseRstInputs["r0"] = colorsR; baseRstInputs["r1"] = colorsR; baseRstInputs["r2"] = colorsR
-        baseRstInputs["g0"] = colorsG; baseRstInputs["g1"] = colorsG; baseRstInputs["g2"] = colorsG
-        baseRstInputs["b0_col"] = colorsB; baseRstInputs["b1_col"] = colorsB; baseRstInputs["b2_col"] = colorsB
-        
-        baseRstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
-        baseRstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
-        baseRstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
-        
-        baseRstInputs["u0"] = colorsR; baseRstInputs["v0"] = colorsR
-        baseRstInputs["u1"] = colorsR; baseRstInputs["v1"] = colorsR
-        baseRstInputs["u2"] = colorsR; baseRstInputs["v2"] = colorsR
-        
-        baseRstInputs["processed_texture"] = alignedTextureArray
-        
-        let localLayerByteCount = self.layerByteCount
-        let shape: [Int] = [64, 1, 128, 128]
-        // Loop
-        for y in 0..<9 {
-            for x in 0..<15 {
-                var rstInputs = baseRstInputs
+            guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
+            guard let canvasBuf = self.displayBuffers[0] else { return }
+            
+            let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
+            var texOutputViews = InferenceFunction.MutableViews()
+            texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
+            let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
+            
+            let preInputs: [String: NDArray] = [
+                "expanded_vertices": expandedVerticesArray, "mvp_weights": mvpWeightsArray,
+                "colors_r": colorsRArray, "colors_g": colorsGArray, "colors_b": colorsBArray
+            ]
+            var preOutputs = try await pre.run(inputs: preInputs)
+            
+            var baseRstInputs: [String: NDArray] = [:]
+            baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
+            baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
+            baseRstInputs["c0"] = preOutputs.remove("neg")?.ndArray
+            baseRstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
+            baseRstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
+            baseRstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
+            baseRstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
+            baseRstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
+            baseRstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
+            
+            let colorsR = preOutputs.remove("colors_r")?.ndArray
+            let colorsG = preOutputs.remove("colors_g")?.ndArray
+            let colorsB = preOutputs.remove("colors_b")?.ndArray
+            
+            baseRstInputs["r0"] = colorsR; baseRstInputs["r1"] = colorsR; baseRstInputs["r2"] = colorsR
+            baseRstInputs["g0"] = colorsG; baseRstInputs["g1"] = colorsG; baseRstInputs["g2"] = colorsG
+            baseRstInputs["b0_col"] = colorsB; baseRstInputs["b1_col"] = colorsB; baseRstInputs["b2_col"] = colorsB
+            
+            baseRstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
+            baseRstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
+            baseRstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
+            
+            baseRstInputs["u0"] = colorsR; baseRstInputs["v0"] = colorsR
+            baseRstInputs["u1"] = colorsR; baseRstInputs["v1"] = colorsR
+            baseRstInputs["u2"] = colorsR; baseRstInputs["v2"] = colorsR
+            
+            baseRstInputs["processed_texture"] = alignedTextureArray
+            
+                let localLayerByteCount = self.layerByteCount
+                let shape: [Int] = [64, 1, 128, 128] 
                 
-                let offsetX = (Float(x) / 15.0) * 2.0 - 1.0
-                let offsetY = (Float(y) / 9.0) * 2.0 - 1.0
-                
-                var offsetXArray = NDArray(shape: [1], scalarType: .float16)
-                var offsetXView = offsetXArray.mutableView(as: Float16.self)
-                offsetXView.copyElements(fromContentsOf: [Float16(offsetX)])
-                rstInputs["tile_offset_x"] = offsetXArray
-                
-                var offsetYArray = NDArray(shape: [1], scalarType: .float16)
-                var offsetYView = offsetYArray.mutableView(as: Float16.self)
-                offsetYView.copyElements(fromContentsOf: [Float16(offsetY)])
-                rstInputs["tile_offset_y"] = offsetYArray
-                
-                var rstOutputViews = InferenceFunction.MutableViews()
+               
+                let baseOffsetXArray = NDArray(shape: [1], scalarType: .float16)
+                let baseOffsetYArray = NDArray(shape: [1], scalarType: .float16)
                 
                 let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-                rstOutputViews.insert(viewForR, for: "convolution_4")
-                
                 let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-                rstOutputViews.insert(viewForG, for: "convolution_5")
-                
                 let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-                rstOutputViews.insert(viewForB, for: "convolution_6")
-                
                 let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-                rstOutputViews.insert(viewForMask, for: "convolution_7")
-                
-                let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
-            }
+
+                for y in 0..<9 {
+                    for x in 0..<15 {
+                        var rstInputs = baseRstInputs
+                        
+                        let offsetX = (Float(x) / 15.0) * 2.0 - 1.0
+                        let offsetY = (Float(y) / 9.0) * 2.0 - 1.0
+                        
+                        var offsetXArray = baseOffsetXArray
+                        var offsetXView = offsetXArray.mutableView(as: Float16.self)
+                        offsetXView.copyElements(fromContentsOf: [Float16(offsetX)])
+                        rstInputs["tile_offset_x"] = offsetXArray
+                        
+                        var offsetYArray = baseOffsetYArray
+                        var offsetYView = offsetYArray.mutableView(as: Float16.self)
+                        offsetYView.copyElements(fromContentsOf: [Float16(offsetY)])
+                        rstInputs["tile_offset_y"] = offsetYArray
+                        
+                        var rstOutputViews = InferenceFunction.MutableViews()
+                        rstOutputViews.insert(viewForR, for: "convolution_1")
+                        rstOutputViews.insert(viewForG, for: "convolution_2")
+                        rstOutputViews.insert(viewForB, for: "convolution_3")
+                        rstOutputViews.insert(viewForMask, for: "convolution_4")
+                        
+                        let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
+                    }
+                }
         }
-    }
 }

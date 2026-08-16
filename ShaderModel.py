@@ -3,12 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ANE3DRenderer64(nn.Module):
-    def __init__(self, width=128, height=128): # 128x128
+    def __init__(self, width=128, height=128):
         super().__init__()
         self.width = width
         self.height = height
         
+        # 1. Glid
+       
+        y_base = torch.linspace(1.0, -1.0, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
+        x_base = torch.linspace(-1.0, 1.0, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
         
+        self.register_buffer("x_base", x_base)
+        self.register_buffer("y_base", y_base)
         self.register_buffer("sum_kernel", torch.ones(1, 64, 1, 1, dtype=torch.float16))
 
     def forward(self, 
@@ -17,33 +23,36 @@ class ANE3DRenderer64(nn.Module):
                 p0_iz, p1_iz, p2_iz,
                 U0, V0, U1, V1, U2, V2,
                 processed_texture,
-                tile_offset_x, tile_offset_y): # <-- Tile
+                tile_offset_x, tile_offset_y):
         
-       
-        # tile_offset  -1.0 〜 1.0 
-        tile_offset_x = tile_offset_x.squeeze()
-        tile_offset_y = tile_offset_y.squeeze()
-        y_coords = torch.linspace(1.0 - tile_offset_y, -1.0 - tile_offset_y, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
-        x_coords = torch.linspace(-1.0 + tile_offset_x, 1.0 + tile_offset_x, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
+        # tile offset
+        tile_offset_x = tile_offset_x.squeeze().view(1, 1, 1, 1)
+        tile_offset_y = tile_offset_y.squeeze().view(1, 1, 1, 1)
         
+        pixel_x = self.x_base + tile_offset_x  # (1, 1, 128, 128)
+        pixel_y = self.y_base - tile_offset_y  # (1, 1, 128, 128)
         
-        pixel_coords = torch.cat([
-            x_coords.expand(1, 1, self.height, self.width),
-            y_coords.expand(1, 1, self.height, self.width),
-            torch.ones(1, 1, self.height, self.width, dtype=torch.float16)
-        ], dim=1).to(A0.device)
+        # 1, 64, 1, 1
+        a0 = A0.view(1, 64, 1, 1)
+        b0 = B0.view(1, 64, 1, 1)
+        c0 = C0.view(1, 64, 1, 1)
+        
+        a1 = A1.view(1, 64, 1, 1)
+        b1 = B1.view(1, 64, 1, 1)
+        c1 = C1.view(1, 64, 1, 1)
+        
+        a2 = A2.view(1, 64, 1, 1)
+        b2 = B2.view(1, 64, 1, 1)
+        c2 = C2.view(1, 64, 1, 1)
 
-        # 1.Caluculate Edges
-        def compute_edges(A, B, C):
-            weight = torch.cat([A, B, C], dim=1).permute(3, 1, 0, 2).contiguous()
-            return F.conv2d(pixel_coords, weight, bias=None) 
-
-        edges0 = compute_edges(A0, B0, C0)
-        edges1 = compute_edges(A1, B1, C1)
-        edges2 = compute_edges(A2, B2, C2)
+      
+        # (1,1,128,128) * (1,64,1,1)
+        edges0 = (pixel_x * a0) + (pixel_y * b0) + c0
+        edges1 = (pixel_x * a1) + (pixel_y * b1) + c1
+        edges2 = (pixel_x * a2) + (pixel_y * b2) + c2
 
         # 2. Mask
-        valid_mask = torch.clamp(torch.relu((A0**2 + B0**2) * 100.0), min=0.0, max=1.0).permute(3, 1, 0, 2)
+        valid_mask = torch.clamp(torch.relu((a0**2 + b0**2) * 100.0), min=0.0, max=1.0)
         inside_cw = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
         mask = torch.clamp(inside_cw * valid_mask, min=0.0, max=1.0)
 
