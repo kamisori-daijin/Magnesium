@@ -8,8 +8,7 @@ class ANE3DRenderer64(nn.Module):
         self.width = width
         self.height = height
         
-        # 1. Glid
-       
+     
         y_base = torch.linspace(1.0, -1.0, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
         x_base = torch.linspace(-1.0, 1.0, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
         
@@ -25,14 +24,14 @@ class ANE3DRenderer64(nn.Module):
                 processed_texture,
                 tile_offset_x, tile_offset_y):
         
-        # tile offset
+        # Tile Offset (1, 1, 1, 1)
         tile_offset_x = tile_offset_x.squeeze().view(1, 1, 1, 1)
         tile_offset_y = tile_offset_y.squeeze().view(1, 1, 1, 1)
         
         pixel_x = self.x_base + tile_offset_x  # (1, 1, 128, 128)
         pixel_y = self.y_base - tile_offset_y  # (1, 1, 128, 128)
         
-        # 1, 64, 1, 1
+  
         a0 = A0.view(1, 64, 1, 1)
         b0 = B0.view(1, 64, 1, 1)
         c0 = C0.view(1, 64, 1, 1)
@@ -45,8 +44,7 @@ class ANE3DRenderer64(nn.Module):
         b2 = B2.view(1, 64, 1, 1)
         c2 = C2.view(1, 64, 1, 1)
 
-      
-        # (1,1,128,128) * (1,64,1,1)
+        # 1, 64, 128, 128
         edges0 = (pixel_x * a0) + (pixel_y * b0) + c0
         edges1 = (pixel_x * a1) + (pixel_y * b1) + c1
         edges2 = (pixel_x * a2) + (pixel_y * b2) + c2
@@ -75,6 +73,8 @@ class ANE3DRenderer64(nn.Module):
         v_sampler = processed_texture * v_gradient
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
+ 
+        # weight [1, 64, 1, 1] 
         sum_inv_z = F.conv2d(pixel_inv_z, self.sum_kernel, bias=None)
         z_diff = torch.relu(sum_inv_z - pixel_inv_z)
 
@@ -87,6 +87,7 @@ class ANE3DRenderer64(nn.Module):
         B_full = sampled_texture * z_mask
         mask_full = z_mask
         
+        # 1, 1, 128, 128
         R = F.conv2d(R_full, self.sum_kernel, bias=None)
         G = F.conv2d(G_full, self.sum_kernel, bias=None)
         B = F.conv2d(B_full, self.sum_kernel, bias=None)
