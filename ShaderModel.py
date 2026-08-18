@@ -8,9 +8,16 @@ class ANE3DRenderer64(nn.Module):
         self.width = width
         self.height = height
         
-     
-        y_base = torch.linspace(1.0, -1.0, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
-        x_base = torch.linspace(-1.0, 1.0, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
+        tile_ndc_w = (128.0 / 1920.0) * 2.0  # 0.1333
+        tile_ndc_h = (128.0 / 1080.0) * 2.0  # 0.2370
+        
+        # -1.0 〜 1.0 
+        # midpoint: 0
+        half_w = tile_ndc_w / 2.0
+        half_h = tile_ndc_h / 2.0
+        
+        y_base = torch.linspace(half_h, -half_h, self.height, dtype=torch.float16).view(1, 1, self.height, 1)
+        x_base = torch.linspace(-half_w, half_w, self.width, dtype=torch.float16).view(1, 1, 1, self.width)
         
         self.register_buffer("x_base", x_base)
         self.register_buffer("y_base", y_base)
@@ -23,13 +30,13 @@ class ANE3DRenderer64(nn.Module):
                 U0, V0, U1, V1, U2, V2,
                 processed_texture,
                 tile_offset_x, tile_offset_y):
-        
-        # Tile Offset (1, 1, 1, 1)
+                    
+        # Tile Offset
         tile_offset_x = tile_offset_x.squeeze().view(1, 1, 1, 1)
         tile_offset_y = tile_offset_y.squeeze().view(1, 1, 1, 1)
         
-        pixel_x = self.x_base + tile_offset_x  # (1, 1, 128, 128)
-        pixel_y = self.y_base - tile_offset_y  # (1, 1, 128, 128)
+        pixel_x = tile_offset_x + self.x_base  # (1, 1, 128, 128)
+        pixel_y = tile_offset_y + self.y_base  # (1, 1, 128, 128)
         
   
         a0 = A0.view(1, 64, 1, 1)
