@@ -8,11 +8,10 @@ class ANE3DRenderer64(nn.Module):
         self.width = width
         self.height = height
         
-        tile_ndc_w = (128.0 / 1920.0) * 2.0  # 0.1333
-        tile_ndc_h = (128.0 / 1080.0) * 2.0  # 0.2370
+        # 2048x1536
+        tile_ndc_w = (128.0 / 2048.0) * 2.0  
+        tile_ndc_h = (128.0 / 1536.0) * 2.0  
         
-        # -1.0 〜 1.0 
-        # midpoint: 0
         half_w = tile_ndc_w / 2.0
         half_h = tile_ndc_h / 2.0
         

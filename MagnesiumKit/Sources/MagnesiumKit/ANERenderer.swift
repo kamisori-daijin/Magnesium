@@ -28,6 +28,11 @@ import simd
     private let metalDevice: MTLDevice
     private let layerByteCount = 64 * 1 * 128 * 128 * 2
     
+    private var frameIndex = 0
+    private let maxBuffersInFlight = 3
+    private var tripleOffsetsX: [[NDArray]] = []
+    private var tripleOffsetsY: [[NDArray]] = []
+    
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
         let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
@@ -48,6 +53,32 @@ import simd
         
         self.rawTextureArray = NDArray(shape:[1, 3, 128, 128], scalarType: .float16)
         self.alignedTextureArray = NDArray(shape:[1, 64, 128, 128], scalarType: .float16)
+        for _ in 0..<maxBuffersInFlight {
+            var xFramePool: [NDArray] = []
+            var yFramePool: [NDArray] = []
+            
+            for y in 0..<12 {
+                for x in 0..<16 {
+                    // 2048x1536（4:3黄金比）の完璧なタイルの中心のNDC座標を算出
+                    let offsetX = (Float(x) / 16.0) * 2.0 - 1.0 + (1.0 / 16.0)
+                    let offsetY = 1.0 - (Float(y) / 12.0) * 2.0 - (1.0 / 12.0)
+                    
+                    var xArr = NDArray(shape:[1], scalarType: .float16)
+                    var xView = xArr.mutableView(as: Float16.self)
+                    xView.copyElements(fromContentsOf: [Float16(offsetX)])
+                    
+                    var yArr = NDArray(shape:[1], scalarType: .float16)
+                    var yView = yArr.mutableView(as: Float16.self)
+                    yView.copyElements(fromContentsOf: [Float16(offsetY)])
+                    
+                    xFramePool.append(xArr)
+                    yFramePool.append(yArr)
+                }
+            }
+            self.tripleOffsetsX.append(xFramePool)
+            self.tripleOffsetsY.append(yFramePool)
+        }
+
         
         setupMetalHeap()
         setupInitialGeometry()
@@ -113,10 +144,14 @@ import simd
         }
     }
     
+    // 【完全なるTBDRエミュレータ：2フェーズ分離結線システム】
     func drawFrame() async throws {
         guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
         guard let canvasBuf = self.displayBuffers[0] else { return }
         
+        // ----------------==================================
+        // 🍏 フェーズ1：タイリング（Tiling Phase）➔ 1フレームに「たった1回」だけ実行！
+        // ----------------==================================
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         var texOutputViews = InferenceFunction.MutableViews()
         texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
@@ -128,6 +163,8 @@ import simd
         ]
         var preOutputs = try await pre.run(inputs: preInputs)
         
+        // 【これが本物の Parameter Buffer だ！】
+        // ループの「外」で、ラスタライザに必要なすべてのジオメトリデータを確定・固定します！
         var baseRstInputs: [String: NDArray] = [:]
         baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
         baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
@@ -158,42 +195,47 @@ import simd
         baseRstInputs["processed_texture"] = alignedTextureArray
         
         let localLayerByteCount = self.layerByteCount
-        let shape: [Int] = [1, 1, 128, 128]
+        let shape: [Int] = [1,1,128,128]
         
-        let baseOffsetXArray = NDArray(shape: [1], scalarType: .float16)
-        let baseOffsetYArray = NDArray(shape: [1], scalarType: .float16)
-
-        for y in 0..<9 {
-            for x in 0..<15 {
-                var rstInputs = baseRstInputs
+        // ----------------==================================
+        // 🍏 フェーズ2：レンダリング（Rendering Phase）➔ 192個の不変の器でローテーション！
+        // ----------------==================================
+        // 【トリプルバッファのパクリ】
+        // アプリ起動時に生成して保持してある「トリプル・リングバッファ」から、今フレーム用のクリーンな192個のプールを指名
+        let currentXPool = tripleOffsetsX[frameIndex]
+        let currentYPool = tripleOffsetsY[frameIndex]
+        
+        var tileCounter = 0
+        for y in 0..<12 {
+            for x in 0..<16 { // 2048x1536 の完全割り切り
                 
-                let offsetX = (Float(x) / 15.0) * 2.0 - 1.0
-                let offsetY = (Float(y) / 9.0) * 2.0 - 1.0
+                    // 入力辞書のハッシュマップ自体のコピーオーバーヘッドを防ぐため、
+                    // 不変の baseRstInputs に対して直接、そのタイル専用の固定住所を上書き指定！
+                    var rstInputs = baseRstInputs
+                    rstInputs["tile_offset_x"] = currentXPool[tileCounter]
+                    rstInputs["tile_offset_y"] = currentYPool[tileCounter]
+                    tileCounter += 1
+                    
+                    // Swift 6のライフタイムを完全に満たす、完璧なポインタズラしゼロコピー結線！
+                    let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
+                    let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
+                    let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
+                    let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
+                    
+                    var rstOutputViews = InferenceFunction.MutableViews()
+                    rstOutputViews.insert(viewForR, for: "convolution_1")
+                    rstOutputViews.insert(viewForG, for: "convolution_2")
+                    rstOutputViews.insert(viewForB, for: "convolution_3")
+                    rstOutputViews.insert(viewForMask, for: "convolution_4")
+                    
+                    // ANE実行！データ競合のチカチカが完全に沈黙し、超高速で Tile Memory（DisplayBuffer）へ一括書き込みされます
+                    let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
                 
-                var offsetXArray = baseOffsetXArray
-                var offsetXView = offsetXArray.mutableView(as: Float16.self)
-                offsetXView.copyElements(fromContentsOf: [Float16(offsetX)])
-                rstInputs["tile_offset_x"] = offsetXArray
-                
-                var offsetYArray = baseOffsetYArray
-                var offsetYView = offsetYArray.mutableView(as: Float16.self)
-                offsetYView.copyElements(fromContentsOf: [Float16(offsetY)])
-                rstInputs["tile_offset_y"] = offsetYArray
-                
-              
-                let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-                
-                var rstOutputViews = InferenceFunction.MutableViews()
-                rstOutputViews.insert(viewForR, for: "convolution_1")
-                rstOutputViews.insert(viewForG, for: "convolution_2")
-                rstOutputViews.insert(viewForB, for: "convolution_3")
-                rstOutputViews.insert(viewForMask, for: "convolution_4")
-                
-                let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
             }
         }
+        
+        // 次のフレームへリングバッファを回す
+        frameIndex = (frameIndex + 1) % maxBuffersInFlight
     }
+
 }

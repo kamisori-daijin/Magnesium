@@ -4,7 +4,7 @@ import torch
 from ShaderModel import ANE3DRenderer64  
 from pathlib import Path
 
-# 128x128 
+# 128x128
 WIDTH = 128
 HEIGHT = 128
 
