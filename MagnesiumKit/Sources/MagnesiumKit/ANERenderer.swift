@@ -145,97 +145,98 @@ import simd
     }
     
     // 【完全なるTBDRエミュレータ：2フェーズ分離結線システム】
-    func drawFrame() async throws {
-        guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
-        guard let canvasBuf = self.displayBuffers[0] else { return }
-        
-        // ----------------==================================
-        // 🍏 フェーズ1：タイリング（Tiling Phase）➔ 1フレームに「たった1回」だけ実行！
-        // ----------------==================================
-        let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
-        var texOutputViews = InferenceFunction.MutableViews()
-        texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
-        let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
-        
-        let preInputs: [String: NDArray] = [
-            "expanded_vertices": expandedVerticesArray, "mvp_weights": mvpWeightsArray,
-            "colors_r": colorsRArray, "colors_g": colorsGArray, "colors_b": colorsBArray
-        ]
-        var preOutputs = try await pre.run(inputs: preInputs)
-        
-        // 【これが本物の Parameter Buffer だ！】
-        // ループの「外」で、ラスタライザに必要なすべてのジオメトリデータを確定・固定します！
-        var baseRstInputs: [String: NDArray] = [:]
-        baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
-        baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        baseRstInputs["c0"] = preOutputs.remove("neg")?.ndArray
-        baseRstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-        baseRstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-        baseRstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
-        baseRstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-        baseRstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-        baseRstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
-        
-        let colorsR = preOutputs.remove("colors_r")?.ndArray
-        let colorsG = preOutputs.remove("colors_g")?.ndArray
-        let colorsB = preOutputs.remove("colors_b")?.ndArray
-        
-        baseRstInputs["r0"] = colorsR; baseRstInputs["r1"] = colorsR; baseRstInputs["r2"] = colorsR
-        baseRstInputs["g0"] = colorsG; baseRstInputs["g1"] = colorsG; baseRstInputs["g2"] = colorsG
-        baseRstInputs["b0_col"] = colorsB; baseRstInputs["b1_col"] = colorsB; baseRstInputs["b2_col"] = colorsB
-        
-        baseRstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
-        baseRstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
-        baseRstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
-        
-        baseRstInputs["u0"] = colorsR; baseRstInputs["v0"] = colorsR
-        baseRstInputs["u1"] = colorsR; baseRstInputs["v1"] = colorsR
-        baseRstInputs["u2"] = colorsR; baseRstInputs["v2"] = colorsR
-        
-        baseRstInputs["processed_texture"] = alignedTextureArray
-        
-        let localLayerByteCount = self.layerByteCount
-        let shape: [Int] = [1,1,128,128]
-        
-        // ----------------==================================
-        // 🍏 フェーズ2：レンダリング（Rendering Phase）➔ 192個の不変の器でローテーション！
-        // ----------------==================================
-        // 【トリプルバッファのパクリ】
-        // アプリ起動時に生成して保持してある「トリプル・リングバッファ」から、今フレーム用のクリーンな192個のプールを指名
-        let currentXPool = tripleOffsetsX[frameIndex]
-        let currentYPool = tripleOffsetsY[frameIndex]
-        
-        var tileCounter = 0
-        for y in 0..<12 {
-            for x in 0..<16 { // 2048x1536 の完全割り切り
-                
-                    // 入力辞書のハッシュマップ自体のコピーオーバーヘッドを防ぐため、
-                    // 不変の baseRstInputs に対して直接、そのタイル専用の固定住所を上書き指定！
-                    var rstInputs = baseRstInputs
-                    rstInputs["tile_offset_x"] = currentXPool[tileCounter]
-                    rstInputs["tile_offset_y"] = currentYPool[tileCounter]
-                    tileCounter += 1
+        func drawFrame() async throws {
+            guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
+            guard let canvasBuf = self.displayBuffers[0] else { return }
+            
+            // ----------------==================================
+            // 🍏 フェーズ1：タイリング（Tiling Phase）➔ 1フレームに「たった1回」だけ実行！
+            // ----------------==================================
+            let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
+            var texOutputViews = InferenceFunction.MutableViews()
+            texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
+            let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
+            
+            let preInputs: [String: NDArray] = [
+                "expanded_vertices": expandedVerticesArray, "mvp_weights": mvpWeightsArray,
+                "colors_r": colorsRArray, "colors_g": colorsGArray, "colors_b": colorsBArray
+            ]
+            var preOutputs = try await pre.run(inputs: preInputs)
+            
+            // 【これが本物の Parameter Buffer だ！】
+            // ループの「外」で、ラスタライザに必要なすべてのジオメトリデータを確定・固定します！
+            var baseRstInputs: [String: NDArray] = [:]
+            baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
+            baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
+            baseRstInputs["c0"] = preOutputs.remove("neg")?.ndArray
+            baseRstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
+            baseRstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
+            baseRstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
+            baseRstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
+            baseRstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
+            baseRstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
+            
+            let colorsR = preOutputs.remove("colors_r")?.ndArray
+            let colorsG = preOutputs.remove("colors_g")?.ndArray
+            let colorsB = preOutputs.remove("colors_b")?.ndArray
+            
+            baseRstInputs["r0"] = colorsR; baseRstInputs["r1"] = colorsR; baseRstInputs["r2"] = colorsR
+            baseRstInputs["g0"] = colorsG; baseRstInputs["g1"] = colorsG; baseRstInputs["g2"] = colorsG
+            baseRstInputs["b0_col"] = colorsB; baseRstInputs["b1_col"] = colorsB; baseRstInputs["b2_col"] = colorsB
+            
+            baseRstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
+            baseRstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
+            baseRstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
+            
+            baseRstInputs["u0"] = colorsR; baseRstInputs["v0"] = colorsR
+            baseRstInputs["u1"] = colorsR; baseRstInputs["v1"] = colorsR
+            baseRstInputs["u2"] = colorsR; baseRstInputs["v2"] = colorsR
+            
+            baseRstInputs["processed_texture"] = alignedTextureArray
+            
+            let localLayerByteCount = self.layerByteCount
+            let shape: [Int] = [1,1,128,128]
+            
+            // ----------------==================================
+            // 🍏 フェーズ2：レンダリング（Rendering Phase）➔ 192個の不変の器でローテーション！
+            // ----------------==================================
+            // 【トリプルバッファのパクリ】
+            // アプリ起動時に生成して保持してある「トリプル・リングバッファ」から、今フレーム用のクリーンな192個のプールを指名
+            let currentXPool = tripleOffsetsX[frameIndex]
+            let currentYPool = tripleOffsetsY[frameIndex]
+            
+            var tileCounter = 0
+            for y in 0..<12 {
+                for x in 0..<16 { // 2048x1536 の完全割り切り
                     
-                    // Swift 6のライフタイムを完全に満たす、完璧なポインタズラしゼロコピー結線！
-                    let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-                    let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-                    let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-                    let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
+                        // 入力辞書のハッシュマップ自体のコピーオーバーヘッドを防ぐため、
+                        // 不変の baseRstInputs に対して直接、そのタイル専用の固定住所を上書き指定！
+                        var rstInputs = baseRstInputs
+                        rstInputs["tile_offset_x"] = currentXPool[tileCounter]
+                        rstInputs["tile_offset_y"] = currentYPool[tileCounter]
+                        tileCounter += 1
+                        
+                        // Swift 6のライフタイムを完全に満たす、完璧なポインタズラしゼロコピー結線！
+                        let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
+                        let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
+                        let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
+                        let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
+                        
+                        var rstOutputViews = InferenceFunction.MutableViews()
+                        rstOutputViews.insert(viewForR, for: "convolution_1")
+                        rstOutputViews.insert(viewForG, for: "convolution_2")
+                        rstOutputViews.insert(viewForB, for: "convolution_3")
+                        rstOutputViews.insert(viewForMask, for: "convolution_4")
+                        
+                        // ANE実行！データ競合のチカチカが完全に沈黙し、超高速で Tile Memory（DisplayBuffer）へ一括書き込みされます
+                        let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
                     
-                    var rstOutputViews = InferenceFunction.MutableViews()
-                    rstOutputViews.insert(viewForR, for: "convolution_1")
-                    rstOutputViews.insert(viewForG, for: "convolution_2")
-                    rstOutputViews.insert(viewForB, for: "convolution_3")
-                    rstOutputViews.insert(viewForMask, for: "convolution_4")
-                    
-                    // ANE実行！データ競合のチカチカが完全に沈黙し、超高速で Tile Memory（DisplayBuffer）へ一括書き込みされます
-                    let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
-                
+                }
             }
+            
+            // 次のフレームへリングバッファを回す
+            frameIndex = (frameIndex + 1) % maxBuffersInFlight
         }
-        
-        // 次のフレームへリングバッファを回す
-        frameIndex = (frameIndex + 1) % maxBuffersInFlight
+
     }
 
-}

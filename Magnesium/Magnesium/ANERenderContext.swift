@@ -51,7 +51,7 @@ class ANERenderContext {
             pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
             pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
             pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .max
-           
+            
             self.renderPipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         }
     }
@@ -77,7 +77,7 @@ class ANERenderContext {
             if self.mgDevice != nil { self.startCameraRotation() }
         }
     }
-
+    
     func startCameraRotation() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
@@ -95,14 +95,14 @@ class ANERenderContext {
                     target: SIMD3<Float>(0.0, 0.0, 0.0),
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
-
+                
                 let wChannelOffset = 3 * 3 * 64
                 for faceIdx in 0..<64 {
                     self.vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
                     self.vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
                     self.vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
-
+                
                 let pyramidFaces: [[[Float16]]] = [
                     [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
                     [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
@@ -113,7 +113,7 @@ class ANERenderContext {
                 let faceColors: [(Float16, Float16, Float16)] = [
                     (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
                 ]
-
+                
                 for i in 0..<4 {
                     let slot = i
                     self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
@@ -157,7 +157,7 @@ class ANERenderContext {
             }
         }
     }
-
+    
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         guard let mgDevice = self.mgDevice, let queue = self.commandQueue, let pipeline = self.renderPipelineState,
@@ -168,10 +168,10 @@ class ANERenderContext {
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
-
+        
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
-           
+            
             for tileIndex in 0..<135 {
                 if let buffer = mgDevice.getDisplayBuffer(index: 0) {
                     var index = tileIndex
@@ -186,4 +186,5 @@ class ANERenderContext {
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
+    
 }
