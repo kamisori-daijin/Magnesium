@@ -5,7 +5,6 @@
 //  Created by kamisori-daijin on 2026/07/14.
 //
 
-
 #include <metal_stdlib>
 using namespace metal;
 
@@ -32,19 +31,19 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]],
         float2(1.0, 0.0)
     };
     
-    // 15x9 grid
-    int tileX = tileIndex % 15;
-    int tileY = tileIndex / 15;
+
+    int tileX = tileIndex % 16;
+    int tileY = tileIndex / 16;
     
-    // -1.0 〜 1.0
-    float offsetX = (float(tileX) / 15.0) * 2.0 - 1.0;
-    float offsetY = (float(tileY) / 9.0) * 2.0 - 1.0;
+    // -1.0 〜 1.0 の位置を 16x12 の黄金比タイルに完全割り切り
+    float offsetX = (float(tileX) / 16.0) * 2.0 - 1.0;
+    float offsetY = (float(tileY) / 12.0) * 2.0 - 1.0;
     
     VertexOut out;
     
-    // Caluclate Offset
-    out.position = float4(positions[vertexID].x / 15.0 + offsetX,
-                          positions[vertexID].y / 9.0 + offsetY,
+
+    out.position = float4(positions[vertexID].x / 16.0 + offsetX,
+                          positions[vertexID].y / 12.0 + offsetY,
                           0.0, 1.0);
     out.uv = uvs[vertexID];
     out.tileIndex = tileIndex;
@@ -61,13 +60,19 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
- 
-    uint componentStride = 64 * width * height;
+
+    // 1プレーン（192タイル分）の総要素数（halfの数）を正確に定義します。
+    // 128 * 128 * 192 ＝ 3,145,728 要素
+    uint singlePlaneElements = width * height * 192;
     
-    uint rIndex = (componentStride * 0) + pixelIndex;
-    uint gIndex = (componentStride * 1) + pixelIndex;
-    uint bIndex = (componentStride * 2) + pixelIndex;
-    uint mIndex = (componentStride * 3) + pixelIndex;
+    // 現在描画しているこのタイルが、プレーンの中でどこから始まっているかのオフセット
+    uint tileMemoryOffset = in.tileIndex * (width * height);
+    
+    // 各チャンネル（R, G, B, Mask）の、このピクセルへの絶対インデックスを算出！
+    uint rIndex = (singlePlaneElements * 0) + tileMemoryOffset + pixelIndex;
+    uint gIndex = (singlePlaneElements * 1) + tileMemoryOffset + pixelIndex;
+    uint bIndex = (singlePlaneElements * 2) + tileMemoryOffset + pixelIndex;
+    uint mIndex = (singlePlaneElements * 3) + tileMemoryOffset + pixelIndex;
     
     half r_val = currentBuffer[rIndex];
     half g_val = currentBuffer[gIndex];
@@ -81,5 +86,6 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
         discard_fragment();
     }
     
-    return float4(0.0);
+    return float4(0.0, 0.0, 0.0, 0.0);
 }
+
