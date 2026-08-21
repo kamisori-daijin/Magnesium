@@ -1,3 +1,4 @@
+
 import Foundation
 import CoreAI
 import Metal
@@ -13,6 +14,7 @@ import simd
     
     internal var expandedVerticesArray: NDArray
     internal var mvpWeightsArray: NDArray
+    // 後半のループで不整合を防ぐため、Arrayまたは個別のNDArrayとして適切に定義
     internal var colorsRArray: NDArray
     internal var colorsGArray: NDArray
     internal var colorsBArray: NDArray
@@ -25,11 +27,12 @@ import simd
     
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
-    private let metalCommandQueue: MTLCommandQueue // 🚀 Metalのキューを保持
-    private let metalStream: ComputeStream          // 🚀 合法ブリッジストリーム
+    private let metalCommandQueue: MTLCommandQueue
+    private let metalStream: ComputeStream
     
     // 1タイルあたり：1 * 1 * 128 * 128 * 2bytes = 32,768 bytes (32KB)
     private let tileSizeInBytes = 1 * 1 * 128 * 128 * 2
+    private let layerByteCount = 64 * 1 * 128 * 128 * 2
     
     private var frameIndex = 0
     private let maxBuffersInFlight = 3
@@ -38,9 +41,9 @@ import simd
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
-        // 🚀 自前のMetalコマンドキューを作成
+        // Metal CommandQueue
         self.metalCommandQueue = metalDevice.makeCommandQueue()!
-        // 🚀 iOS 27+ 公開API：Metalキューと紐づいたストリームを初期化
+        
         self.metalStream = ComputeStream(commandQueue: metalCommandQueue)
         
         let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
@@ -92,10 +95,8 @@ import simd
     }
     
     private func setupMetalHeap() {
-        // 1枚のプレーン（R, G, B, Maskのいずれか）につき、192タイル分の全容量を確保
-        // 32KB * 192タイル = 6,291,456 bytes (約6.29MB)
         let singlePlaneSize = tileSizeInBytes * 192
-        let singleDisplayBufferSize = singlePlaneSize * 4 // R, G, B, Maskの4プレーン分
+        let singleDisplayBufferSize = singlePlaneSize * 4
         let totalRequiredMemory = singleDisplayBufferSize * 4
         
         let heapDescriptor = MTLHeapDescriptor()
@@ -108,9 +109,9 @@ import simd
         guard let heap = self.metalHeap else { return }
         for i in 0..<4 {
             self.displayBuffers[i] = heap.makeBuffer(
-               length: singleDisplayBufferSize,
-               options: .storageModeShared,
-               offset: i * singleDisplayBufferSize
+                length: singleDisplayBufferSize,
+                options: .storageModeShared,
+                offset: i * singleDisplayBufferSize
             )
         }
     }
@@ -154,34 +155,57 @@ import simd
         }
     }
     
-    // 🚀 【完全非同期・ゼロコピー・TBDR ANEレンダラー】
+    // 【完全なるTBDRエミュレータ：2フェーズ分離結線システム】
     func drawFrame() async throws {
         guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
-        // 表示用のトリプルバッファから、現在のフレームインデックスに対応するバッファを選択
         guard let canvasBuf = self.displayBuffers[frameIndex] else { return }
         
-        // Metalのタイムラインを支配するコマンドバッファを生成
+        // 🚀 Metalのタイムラインを支配するコマンドバッファを生成
         guard let commandBuffer = metalCommandQueue.makeCommandBuffer() else { return }
         
-        // ----------------==================================
-        // 🍏 フェーズ1：タイリング（Tiling Phase）
-        // --------------------------------==================
-        // ストリームへエンコード（CPUは待たない、非同期予約）
-        let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
-        var texOutputViews = InferenceFunction.MutableViews()
-        texOutputViews.insert(alignedTextureArray.mutableView(as: Float16.self), for: "convolution")
-        try tex.encode(inputs: texInputs, outputViews: texOutputViews, to: metalStream)
+        // 事前計算用の定数定義
+        let shape: [Int] = [1, 1, 128, 128]
+        let singlePlaneSize = tileSizeInBytes * 192
+        let localLayerByteCount = self.layerByteCount
         
-        let preInputs: [String: NDArray] = [
-           "expanded_vertices": expandedVerticesArray, "mvp_weights": mvpWeightsArray,
-           "colors_r": colorsRArray, "colors_g": colorsGArray, "colors_b": colorsBArray
+        // ----------------==================================
+        // 🍏 フェーズ1：タイリング（Tiling Phase）➔ 1フレームに「たった1回」だけ実行！
+        // --------------------------------==================
+        
+        // 1. テクスチャプロセッサの入力を非同期型に適合
+        let texInputs: [String: InferenceFunction.AsyncValue] = [
+            "raw_image": InferenceFunction.AsyncValue(rawTextureArray)
         ]
         
-        // 🌟 ジオメトリ前処理をストリームに予約
-        // 注意: 前処理の出力を後続のラスタライザへスムーズに渡すため、
-        // 事前にプレビューバッファを用意するか、あるいはここだけ中間テンソルを使い回します
-        var preOutputs = try await pre.run(inputs: preInputs) // 前処理はフレームに1回なので安全
+        // 🚀 【上流の修正】alignedTextureArray を経由する通常ビューを廃止し、
+        // アドレスから「直接」非同期専用の AsyncMutableValue を作って結線！
+        var texOutputViews = InferenceFunction.AsyncMutableViews()
         
+        // alignedTextureArrayが内部で保持するバッファから安全に生成、または直接ラップ
+        // ※ alignedTextureArray が保持するメモリ領域（または対応するバッファ）に直接割り当てます
+        var asyncTexOutput = InferenceFunction.AsyncMutableValue(
+            unsafeBuffer: alignedTextureArray, // NDArrayもunsafeBufferとして直接渡せます
+            byteOffset: 0,
+            scalarType: .float16,
+            shape:,
+            strides: [1 * 64 * 128 * 128, 128 * 128, 128, 1] // 連続配置のデフォルトストライド
+        )
+        texOutputViews.insert(&asyncTexOutput, for: "convolution")
+        
+        // ストリームへ非同期エンコード（上流も下流もこれで完全に統一！）
+        try tex.encode(inputs: texInputs, outputViews: texOutputViews, to: metalStream)
+        
+        // 2. ジオメトリ前処理
+        let preInputs: [String: NDArray] = [
+            "expanded_vertices": expandedVerticesArray,
+            "mvp_weights": mvpWeightsArray,
+            "colors_r": colorsRArray,
+            "colors_g": colorsGArray,
+            "colors_b": colorsBArray
+        ]
+        var preOutputs = try await pre.run(inputs: preInputs)
+        
+        // 【これが本物の Parameter Buffer だ！】
         var baseRstInputs: [String: NDArray] = [:]
         baseRstInputs["a0"] = preOutputs.remove("sub")?.ndArray
         baseRstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
@@ -211,69 +235,90 @@ import simd
         
         baseRstInputs["processed_texture"] = alignedTextureArray
         
-        let shape: [Int] = [1, 1, 128, 128]
-        let singlePlaneSize = tileSizeInBytes * 192 // 1プレーン（192タイル分）の総バイト数
-        
-        let currentXPool = tripleOffsetsX[frameIndex]
-        let currentYPool = tripleOffsetsY[frameIndex]
         // ----------------==================================
         // 🍏 フェーズ2：レンダリング（Rendering Phase）➔ 192個の不変の器でローテーション！
-        // ----------------==================================
-        // 【トリプルバッファのパクリ】
-        // アプリ起動時に生成して保持してある「トリプル・リングバッファ」から、今フレーム用のクリーンな192個のプールを指名
+        // --------------------------------==================
         let currentXPool = tripleOffsetsX[frameIndex]
         let currentYPool = tripleOffsetsY[frameIndex]
-        
-        // Metalのタイムラインを支配するコマンドバッファを生成
-        guard let commandBuffer = metalCommandQueue.makeCommandBuffer() else { return }
         
         var tileCounter = 0
         for y in 0..<12 {
             for x in 0..<16 { // 2048x1536 の完全割り切り
                 
-                // 入力辞書のハッシュマップ自体のコピーオーバーヘッドを防ぐため、
-                // 不変の baseRstInputs に対して直接、そのタイル専用の固定住所を上書き指定！
-                var rstInputs = baseRstInputs
-                rstInputs["tile_offset_x"] = currentXPool[tileCounter]
-                rstInputs["tile_offset_y"] = currentYPool[tileCounter]
+                // ラスタライザ用の入力を非同期型（AsyncValue）で厳密に再構築
+                var rstInputs: [String: InferenceFunction.AsyncValue] = [:]
                 
-                // 💡 【超重要ハック】タイルごとに書き込みアドレス（byteOffset）を正しくずらす！
-                // 1プレーン（192タイル分）の中で、現在のタイル番号（tileCounter * 32KB）の分だけポインタをシフトさせます
+                // ベースとなるジオメトリバッファを高速型ラップ
+                for (key, ndArray) in baseRstInputs {
+                    if let ndArray = ndArray {
+                        rstInputs[key] = InferenceFunction.AsyncValue(ndArray)
+                    }
+                }
+                
+                // タイル専用の固定住所を上書き指定！
+                rstInputs["tile_offset_x"] = InferenceFunction.AsyncValue(currentXPool[tileCounter])
+                rstInputs["tile_offset_y"] = InferenceFunction.AsyncValue(currentYPool[tileCounter])
+                
+                // 💡 タイルごとに書き込みアドレス（byteOffset）を完璧にずらす計算
                 let currentTileOffset = tileCounter * tileSizeInBytes
                 
-                // Swift 6のライフタイムを完全に満たす、完璧なポインタズラしゼロコピー結線！
-                let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: (singlePlaneSize * 0) + currentTileOffset, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: (singlePlaneSize * 1) + currentTileOffset, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: (singlePlaneSize * 2) + currentTileOffset, scalarType: .float16, shape: shape).view(as: Float16.self)
-                let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: (singlePlaneSize * 3) + currentTileOffset, scalarType: .float16, shape: shape).view(as: Float16.self)
+                // MetalBufferから「直接」非同期専用の AsyncMutableValue を生成して一括結線！
+                var rstOutputViews = InferenceFunction.AsyncMutableViews()
                 
-                var rstOutputViews = InferenceFunction.MutableViews()
-                rstOutputViews.insert(viewForR, for: "convolution_1")
-                rstOutputViews.insert(viewForG, for: "convolution_2")
-                rstOutputViews.insert(viewForB, for: "convolution_3")
-                rstOutputViews.insert(viewForMask, for: "convolution_4")
+                var asyncValueR = InferenceFunction.AsyncMutableValue(
+                    unsafeBuffer: canvasBuf,
+                    byteOffset: (singlePlaneSize * 0) + currentTileOffset,
+                    scalarType: .float16,
+                    shape: shape,
+                    strides: [1 * 1 * 128 * 128, 128 * 128, 128, 1]
+                )
+                var asyncValueG = InferenceFunction.AsyncMutableValue(
+                    unsafeBuffer: canvasBuf,
+                    byteOffset: (singlePlaneSize * 1) + currentTileOffset,
+                    scalarType: .float16,
+                    shape: shape,
+                    strides: [1 * 1 * 128 * 128, 128 * 128, 128, 1]
+                )
+                var asyncValueB = InferenceFunction.AsyncMutableValue(
+                    unsafeBuffer: canvasBuf,
+                    byteOffset: (singlePlaneSize * 2) + currentTileOffset,
+                    scalarType: .float16,
+                    shape: shape,
+                    strides: [1 * 1 * 128 * 128, 128 * 128, 128, 1]
+                )
+                var asyncValueMask = InferenceFunction.AsyncMutableValue(
+                    unsafeBuffer: canvasBuf,
+                    byteOffset: (singlePlaneSize * 3) + currentTileOffset,
+                    scalarType: .float16,
+                    shape: shape,
+                    strides: [1 * 1 * 128 * 128, 128 * 128, 128, 1]
+                )
                 
-                // 🚀 【非同期予約】await を排除し、ストリームにエンコードコマンドを積むだけ！
-                // CPUは一瞬でこの192回のループを駆け抜けます（CPU負荷0%へ）
+                // `&` を使って安全に参照渡しでインサート
+                rstOutputViews.insert(&asyncValueR, for: "convolution_1")
+                rstOutputViews.insert(&asyncValueG, for: "convolution_2")
+                rstOutputViews.insert(&asyncValueB, for: "convolution_3")
+                rstOutputViews.insert(&asyncValueMask, for: "convolution_4")
+                
+                // ANE非同期エンコード！
                 try rst.encode(inputs: rstInputs, outputViews: rstOutputViews, to: metalStream)
                 
                 tileCounter += 1
             }
         }
         
-        // 🚀 全タイルの命令をストリーム経由でMetalコマンドキューにコミット
-        metalStream.commit()
+        // 🚀 全タイルの命令をストリーム経由でMetalコマンドキューに確定
+        _ = await metalStream.currentWorkCompleted()
         
-        // CPUをブロックせず、ハードウェア（ANE）の完了通知を非同期で受ける
+        // CPUを完全に解放した状態で、ハードウェアの最終完了通知をハンドリング
         commandBuffer.addCompletedHandler { _ in
-            // ここに到達した時点で、canvasBufの中に192枚のパズル（タイル）が完璧に整列して書き込まれています！
+            // ここに到達した時点で、canvasBufの中に192枚の完璧なパズルが整列して書き込まれています！
         }
         commandBuffer.commit()
         
         // 次のフレームへリングバッファを回す
         frameIndex = (frameIndex + 1) % maxBuffersInFlight
     }
+
     
 }
-
-   
