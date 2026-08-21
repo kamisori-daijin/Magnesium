@@ -172,24 +172,14 @@ import simd
         // 🍏 フェーズ1：タイリング（Tiling Phase）➔ 1フレームに「たった1回」だけ実行！
         // --------------------------------==================
         
-        // 1. テクスチャプロセッサの入力を非同期型に適合
         let texInputs: [String: InferenceFunction.AsyncValue] = [
             "raw_image": InferenceFunction.AsyncValue(rawTextureArray)
         ]
         
-        // 🚀 【上流の修正】alignedTextureArray を経由する通常ビューを廃止し、
-        // アドレスから「直接」非同期専用の AsyncMutableValue を作って結線！
         var texOutputViews = InferenceFunction.AsyncMutableViews()
         
-        // alignedTextureArrayが内部で保持するバッファから安全に生成、または直接ラップ
-        // ※ alignedTextureArray が保持するメモリ領域（または対応するバッファ）に直接割り当てます
-        var asyncTexOutput = InferenceFunction.AsyncMutableValue(
-            unsafeBuffer: alignedTextureArray, // NDArrayもunsafeBufferとして直接渡せます
-            byteOffset: 0,
-            scalarType: .float16,
-            shape:,
-            strides: [1 * 64 * 128 * 128, 128 * 128, 128, 1] // 連続配置のデフォルトストライド
-        )
+        // 🚀 【完全修正】すでにNDArrayがある場合は、引数にそのまま突っ込むだけで合法ラップ完了！
+        var asyncTexOutput = InferenceFunction.AsyncMutableValue(alignedTextureArray)
         texOutputViews.insert(&asyncTexOutput, for: "convolution")
         
         // ストリームへ非同期エンコード（上流も下流もこれで完全に統一！）
@@ -250,11 +240,10 @@ import simd
                 
                 // ベースとなるジオメトリバッファを高速型ラップ
                 for (key, ndArray) in baseRstInputs {
-                    if let ndArray = ndArray {
-                        rstInputs[key] = InferenceFunction.AsyncValue(ndArray)
-                    }
+                    // 最初からオプショナルではないので、そのままAsyncValueに入れてOK！
+                    rstInputs[key] = InferenceFunction.AsyncValue(ndArray)
                 }
-                
+
                 // タイル専用の固定住所を上書き指定！
                 rstInputs["tile_offset_x"] = InferenceFunction.AsyncValue(currentXPool[tileCounter])
                 rstInputs["tile_offset_y"] = InferenceFunction.AsyncValue(currentYPool[tileCounter])
