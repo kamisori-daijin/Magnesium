@@ -22,22 +22,22 @@ import simd
     internal var rawTextureArray: NDArray
     internal var alignedTextureArray: NDArray
     
-    private var metalHeap: MTLHeap?
-    private(set) var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
+    internal var metalHeap: MTLHeap?
+    var displayBuffers: [MTLBuffer?] = [nil, nil, nil, nil]
     
-    private let geometry = ANE3DGeometry()
-    private let metalDevice: MTLDevice
-    private let metalCommandQueue: MTLCommandQueue
-    private let metalStream: ComputeStream
+    internal let geometry = ANE3DGeometry()
+    internal let metalDevice: MTLDevice
+    internal let metalCommandQueue: MTLCommandQueue
+    internal let metalStream: ComputeStream
     
     // 1タイルあたり：1 * 1 * 128 * 128 * 2bytes = 32,768 bytes (32KB)
-    private let tileSizeInBytes = 1 * 1 * 128 * 128 * 2
-    private let layerByteCount = 64 * 1 * 128 * 128 * 2
+    internal let tileSizeInBytes = 1 * 1 * 128 * 128 * 2
+    internal let layerByteCount = 64 * 1 * 128 * 128 * 2
     
-    private var frameIndex = 0
-    private let maxBuffersInFlight = 3
-    private var tripleOffsetsX: [[NDArray]] = []
-    private var tripleOffsetsY: [[NDArray]] = []
+    internal var frameIndex = 0
+    internal let maxBuffersInFlight = 3
+    internal var tripleOffsetsX: [[NDArray]] = []
+    internal var tripleOffsetsY: [[NDArray]] = []
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
@@ -94,67 +94,7 @@ import simd
         setupInitialGeometry()
     }
     
-    private func setupMetalHeap() {
-        let singlePlaneSize = tileSizeInBytes * 192
-        let singleDisplayBufferSize = singlePlaneSize * 4
-        let totalRequiredMemory = singleDisplayBufferSize * 4
-        
-        let heapDescriptor = MTLHeapDescriptor()
-        heapDescriptor.size = totalRequiredMemory
-        heapDescriptor.storageMode = .shared
-        heapDescriptor.type = .placement
-        
-        self.metalHeap = metalDevice.makeHeap(descriptor: heapDescriptor)
-        
-        guard let heap = self.metalHeap else { return }
-        for i in 0..<4 {
-            self.displayBuffers[i] = heap.makeBuffer(
-                length: singleDisplayBufferSize,
-                options: .storageModeShared,
-                offset: i * singleDisplayBufferSize
-            )
-        }
-    }
-    
-    private func setupInitialGeometry() {
-        let vertices = geometry.getDummyVertices()
-        let mvp = geometry.getDummyMVPWeights()
-        let color = geometry.getDummyColor()
-        updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
-        
-        let debugTexture = geometry.createDebugCheckerboardTexture()
-        updateTexture(pixelData: debugTexture)
-    }
-    
-    func updateGeometry(vertices: [Float16], mvpWeights: [Float16], r: [Float16], g: [Float16], b: [Float16]) {
-        var vertexView = self.expandedVerticesArray.mutableView(as: Float16.self)
-        vertexView.copyElements(fromContentsOf: vertices)
-        
-        var mvpView = self.mvpWeightsArray.mutableView(as: Float16.self)
-        mvpView.copyElements(fromContentsOf: mvpWeights)
-        
-        var rView = self.colorsRArray.mutableView(as: Float16.self)
-        rView.copyElements(fromContentsOf: r)
-        
-        var gView = self.colorsGArray.mutableView(as: Float16.self)
-        gView.copyElements(fromContentsOf: g)
-        
-        var bView = self.colorsBArray.mutableView(as: Float16.self)
-        bView.copyElements(fromContentsOf: b)
-    }
-    
-    func updateTexture(pixelData: [Float16]) {
-        var texView = self.rawTextureArray.mutableView(as: Float16.self)
-        let expectedCount = 1 * 3 * 128 * 128
-        
-        if pixelData.count != expectedCount {
-            let debugData = geometry.createDebugCheckerboardTexture()
-            texView.copyElements(fromContentsOf: debugData)
-        } else {
-            texView.copyElements(fromContentsOf: pixelData)
-        }
-    }
-    
+
     // 【完全なるTBDRエミュレータ：2フェーズ分離結線システム】
     func drawFrame() async throws {
         guard let tex = texFunction, let pre = preFunction, let rst = rstFunction else { return }
@@ -295,14 +235,12 @@ import simd
                 tileCounter += 1
             }
         }
-        
-        // 🚀 全タイルの命令をストリーム経由でMetalコマンドキューに確定
-        _ = await metalStream.currentWorkCompleted()
-        
-        // CPUを完全に解放した状態で、ハードウェアの最終完了通知をハンドリング
         commandBuffer.addCompletedHandler { _ in
-            // ここに到達した時点で、canvasBufの中に192枚の完璧なパズルが整列して書き込まれています！
+            // 💡 ここに到達した時点で、192枚のタイルはcanvasBufの中に完璧に整列して書き込みが終わっています！
+            // このクロージャ内はスレッド安全なコンテキストなので、ここでテクスチャへの転送（Blit）などを呼び出すのが正解です。
         }
+        
+        // 🚀 ANEとGPUへ一斉射撃！
         commandBuffer.commit()
         
         // 次のフレームへリングバッファを回す
