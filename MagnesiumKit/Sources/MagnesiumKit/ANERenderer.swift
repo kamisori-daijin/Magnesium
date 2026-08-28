@@ -27,7 +27,7 @@ class ANERenderer {
     
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
-    private let layerByteCount = 64 * 1 * 256 * 256 * 2
+    private let layerByteCount = 1 * 1 * 256 * 256 * 2
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
@@ -149,34 +149,34 @@ class ANERenderer {
             // -----------------------------------------------------------------
             var rstInputs: [String: NDArray] = [:]
             
-            rstInputs["A0"] = preOutputs.remove("sub_0")?.ndArray
-            rstInputs["B0"] = preOutputs.remove("sub_1")?.ndArray
-            rstInputs["C0"] = preOutputs.remove("neg_0")?.ndArray
+            rstInputs["a0"] = preOutputs.remove("sub_0")?.ndArray
+            rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
+            rstInputs["b0"] = preOutputs.remove("neg_0")?.ndArray
             
-            rstInputs["A1"] = preOutputs.remove("sub_2")?.ndArray
-            rstInputs["B1"] = preOutputs.remove("sub_3")?.ndArray
-            rstInputs["C1"] = preOutputs.remove("neg_1")?.ndArray
+            rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
+            rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
+            rstInputs["b1"] = preOutputs.remove("neg_1")?.ndArray
             
-            rstInputs["A2"] = preOutputs.remove("sub_4")?.ndArray
-            rstInputs["B2"] = preOutputs.remove("sub_5")?.ndArray
-            rstInputs["C2"] = preOutputs.remove("neg_2")?.ndArray
+            rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
+            rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
+            rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
             
             let colorsR = preOutputs.remove("colors_r")?.ndArray
             let colorsG = preOutputs.remove("colors_g")?.ndArray
             let colorsB = preOutputs.remove("colors_b")?.ndArray
             
-            rstInputs["R0"] = colorsR; rstInputs["R1"] = colorsR; rstInputs["R2"] = colorsR
-            rstInputs["G0"] = colorsG; rstInputs["G1"] = colorsG; rstInputs["G2"] = colorsG
-            rstInputs["B0_col"] = colorsB; rstInputs["B1_col"] = colorsB; rstInputs["B2_col"] = colorsB
+            rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
+            rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
+            rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
             
             rstInputs["p0_iz"] = preOutputs.remove("slice_0")?.ndArray
             rstInputs["p1_iz"] = preOutputs.remove("slice_1")?.ndArray
             rstInputs["p2_iz"] = preOutputs.remove("slice_2")?.ndArray
             
             let placeholderUV = rstInputs["R0"]
-            rstInputs["U0"] = placeholderUV; rstInputs["V0"] = placeholderUV
-            rstInputs["U1"] = placeholderUV; rstInputs["V1"] = placeholderUV
-            rstInputs["U2"] = placeholderUV; rstInputs["V2"] = placeholderUV
+            rstInputs["u0"] = placeholderUV; rstInputs["v0"] = placeholderUV
+            rstInputs["u1"] = placeholderUV; rstInputs["v1"] = placeholderUV
+            rstInputs["u2"] = placeholderUV; rstInputs["v2"] = placeholderUV
             
             rstInputs["processed_texture"] = alignedTextureArray
             
@@ -190,16 +190,16 @@ class ANERenderer {
             nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
             
             let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForR, for: "convolution_4")
+            rstOutputViews.insert(viewForR, for: "convolution_1")
             
             let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForG, for: "convolution_5")
+            rstOutputViews.insert(viewForG, for: "convolution_2")
             
             let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForB, for: "convolution_6")
+            rstOutputViews.insert(viewForB, for: "convolution_3")
             
             let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForMask, for: "convolution_7")
+            rstOutputViews.insert(viewForMask, for: "convolution_4")
 
             // 戻り値は ~Copyable なので、変数に束縛せずに破棄する
             let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)

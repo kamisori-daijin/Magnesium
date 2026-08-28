@@ -13,7 +13,6 @@ struct VertexOut {
     float2 uv;
 };
 
-
 vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     float4 positions[4] = {
         float4(-1.0, -1.0, 0.0, 1.0),
@@ -34,23 +33,24 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     return out;
 }
 
-// Index 0 Only
 fragment float4 textureFragment(VertexOut in [[stage_in]],
                                  constant half* currentBuffer [[buffer(0)]]) {
     uint width = 256;
     uint height = 256;
     
-  
+    // 現在のテクスチャ座標からピクセル位置を特定
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
+    // 💡 【重要】1レイヤー（1チャンネル）あたりの正確なピクセル数
+    // ラスタライザの最終出力はポリゴン数が集約されて 1枚(1ch) になっているため、64を掛けてはいけません
+    uint singleChannelStride = width * height;
     
-    uint componentStride = 64 * width * height;
-    
-    uint rIndex = (componentStride * 0) + pixelIndex;
-    uint gIndex = (componentStride * 1) + pixelIndex;
-    uint bIndex = (componentStride * 2) + pixelIndex;
-    uint mIndex = (componentStride * 3) + pixelIndex;
+    // Swift側の byteOffset (0, 1, 2, 3) と完全に一致するプレーンなインデックス計算
+    uint rIndex = (singleChannelStride * 0) + pixelIndex;
+    uint gIndex = (singleChannelStride * 1) + pixelIndex;
+    uint bIndex = (singleChannelStride * 2) + pixelIndex;
+    uint mIndex = (singleChannelStride * 3) + pixelIndex;
     
     half r_val = currentBuffer[rIndex];
     half g_val = currentBuffer[gIndex];
@@ -59,14 +59,14 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     
     half4 finalColor = half4(0.0h);
     
+    // Wマスクによる正規化とブレンド処理
     if (mask_w > 0.001h) {
-        
         half3 sampledColor = half3(r_val, g_val, b_val) / (mask_w + 1e-4h);
         sampledColor = clamp(sampledColor, 0.0h, 1.0h);
         
         finalColor = half4(sampledColor, 1.0h);
     } else {
-        // Clear
+        // 背景透過
         discard_fragment();
     }
     
