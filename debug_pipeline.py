@@ -66,7 +66,9 @@ def main():
         W_c = transformed[:, :, 3:4, :] 
         print(f"[B] W_c Raw Max/Min       : {W_c.max().item()} / {W_c.min().item()}")
         
-        safe_W = torch.abs(W_c) + 1e-5
+        # 💡 前処理クラスと同じ安全ガードをこちらにも適用
+        abs_W_c = torch.relu(W_c) + torch.relu(-W_c)
+        safe_W = abs_W_c + 0.02
         screen_x = X_c / safe_W  
         screen_y = Y_c / safe_W  
         inv_Z = 1.0 / safe_W     
@@ -86,11 +88,8 @@ def main():
         for idx, name in enumerate(param_names):
             if idx < len(pre_outputs):
                 t = pre_outputs[idx]
-                # 💡 修正: list(t.shape) を文字列に変形して TypeError を回避！
                 shape_str = str(list(t.shape))
                 print(f"  [{idx:02d}] {name:<7} -> Shape: {shape_str:<15} | Max: {t.max().item():<8} | Min: {t.min().item():<8} | HasInf: {torch.isinf(t).any().item()}")
-            else:
-                print(f"  [{idx:02d}] {name:<7} -> ❌ MISSING IN TUPLE")
 
         dummy_uv = torch.zeros((1, 64, 1, 1), dtype=torch.float16)
         uv_params = (dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv)
@@ -99,37 +98,46 @@ def main():
         print("\n--- Running Full Rasterizer Module ---")
         R, G, B, mask_w, max_inv_z = rast_model(*all_args)
 
-         # debug_pipeline.py の「--- Running Full Rasterizer Module ---」部分を以下に置き換え
         print("\n==================================================")
         print(" 🔍 RASTERIZER INTERNAL TRACE (ログ増量版)")
         print("==================================================")
         
-        # 1. 引数の分解（21個のプリプロ出力 + 6個のUVダミー + 1個のテクスチャ）
-        # forwardの引数定義順に合わせて綺麗にアンパック
         A0, B0, C0, A1, B1, C1, A2, B2, C2 = all_args[0:9]
-        R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col = all_args[9:18]
         p0_iz, p1_iz, p2_iz = all_args[18:21]
         U0, V0, U1, V1, U2, V2 = all_args[21:27]
         processed_texture = all_args[27]
  
-        # 💡 レンダラーのforward内部の計算を1行ずつ実行し、NaNの発生箇所を暴く
+        # 💡 本番モデル (ShaderModel.py) の挙動と完全に一致させる
         edges0 = A0 * rast_model.x_coords + B0 * rast_model.y_coords + C0
         edges1 = A1 * rast_model.x_coords + B1 * rast_model.y_coords + C1
         edges2 = A2 * rast_model.x_coords + B2 * rast_model.y_coords + C2
         print(f"  [Step 1] Edges0 HasNaN        : {torch.isnan(edges0).any().item()}")
         print(f"           Edges0 Max/Min       : {edges0.max().item()} / {edges0.min().item()}")
-        valid_mask = torch.clamp((A0 * A0 + B0 * B0) * 100.0, min=0.0, max=1.0)
-        mask = torch.relu(edges0 * 100.0)
-        mask = mask * torch.relu(edges1 * 100.0)
-        mask = mask * torch.relu(edges2 * 100.0)
-        mask = mask * valid_mask
-        mask = torch.clamp(mask, min=0.0, max=1.0)
+
+        # 💡 危険な「* 100.0」を排除し、本番と全く同じ安全なReLU+Clampロジックに変更
+        zero_fp16 = torch.tensor(0.0, dtype=torch.float16)
+        one_fp16 = torch.tensor(1.0, dtype=torch.float16)
+        
+        abs_a0 = torch.relu(A0) + torch.relu(-A0)
+        abs_b0 = torch.relu(B0) + torch.relu(-B0)
+        v_mask = torch.clamp(abs_a0 + abs_b0, min=zero_fp16, max=one_fp16)
+        
+        mask0 = torch.clamp(torch.relu(edges0), min=zero_fp16, max=one_fp16)
+        mask1 = torch.clamp(torch.relu(edges1), min=zero_fp16, max=one_fp16)
+        mask2 = torch.clamp(torch.relu(edges2), min=zero_fp16, max=one_fp16)
+        
+        raw_mask = mask0 * mask1 * mask2 * v_mask
+        mask = raw_mask * raw_mask
+        mask = mask * mask
+        mask = torch.clamp(torch.relu(mask), min=zero_fp16, max=one_fp16)
+        
         print(f"  [Step 2] Raster Mask HasNaN   : {torch.isnan(mask).any().item()}")
         print(f"           Mask Max/Min         : {mask.max().item()} / {mask.min().item()}")
  
         # 重心座標ガード計算
-        total_area = torch.abs(edges0 + edges1 + edges2) + 0.02
-        inv_area = torch.reciprocal(total_area)
+        abs_sum_edges = torch.relu(edges0 + edges1 + edges2) + torch.relu(-(edges0 + edges1 + edges2))
+        total_area = abs_sum_edges + 0.02
+        inv_area = 1.0 / total_area
         print(f"  [Step 3] inv_area HasNaN      : {torch.isnan(inv_area).any().item()}")
         print(f"           inv_area Max/Min     : {inv_area.max().item()} / {inv_area.min().item()}")
         print(f"           inv_area HasInf      : {torch.isinf(inv_area).any().item()}")
@@ -138,33 +146,24 @@ def main():
         w1 = edges2 * inv_area
         w2 = edges0 * inv_area
         print(f"  [Step 4] Weights (w0) HasNaN  : {torch.isnan(w0).any().item()}")
+        
         pixel_inv_z = (p0_iz * w0) + (p1_iz * w1) + (p2_iz * w2)
         pixel_inv_z = pixel_inv_z * mask
         print(f"  [Step 5] Pixel Inv Z HasNaN   : {torch.isnan(pixel_inv_z).any().item()}")
 
         u_interp = (U0 * w0) + (U1 * w1) + (U2 * w2)
         v_interp = (V0 * w0) + (V1 * w1) + (V2 * w2)
-        sampled_texture = torch.clamp(processed_texture * u_interp * v_interp, min=0.0, max=1.0)
+        sampled_texture = torch.clamp(processed_texture * u_interp * v_interp, min=zero_fp16, max=one_fp16)
         print(f"  [Step 6] Sampled Texture NaN : {torch.isnan(sampled_texture).any().item()}")
 
         sum_inv_z = torch.conv2d(pixel_inv_z, rast_model.sum_kernel)
         z_diff = torch.relu(sum_inv_z - pixel_inv_z)
-        z_blend_weights = torch.clamp(1.0 - (z_diff * 10.0), min=0.0, max=1.0)
+        z_blend_weights = torch.clamp(1.0 - (z_diff * 10.0), min=zero_fp16, max=one_fp16)
         final_mask = mask * z_blend_weights
         print(f"  [Step 7] Final Z Mask HasNaN  : {torch.isnan(final_mask).any().item()}")
 
         color_payload = sampled_texture * final_mask
         print(f"  [Step 8] Color Payload HasNaN : {torch.isnan(color_payload).any().item()}")
-
-        # 最終Conv集約
-        R = torch.conv2d(color_payload, rast_model.sum_kernel)
-        G = torch.conv2d(color_payload, rast_model.sum_kernel)
-        B = torch.conv2d(color_payload, rast_model.sum_kernel)
-        mask_w = torch.conv2d(final_mask, rast_model.sum_kernel)
-        max_inv_z = torch.conv2d(pixel_inv_z * z_blend_weights, rast_model.sum_kernel)
-
-        print("==================================================\n")
-
 
 if __name__ == "__main__":
     main()
