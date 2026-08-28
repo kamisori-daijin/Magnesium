@@ -7,7 +7,7 @@ class ANE3DRenderer64(nn.Module):
         self.width = width
         self.height = height
         
-        # 座標バッファ
+        # 座標バッファ (ANEのFP16ネイティブ用に[1, 1, H, W]で初期化)
         y_coords = torch.linspace(1.0, -1.0, height, dtype=torch.float16).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width, dtype=torch.float16).view(1, 1, 1, width)
         
@@ -27,52 +27,50 @@ class ANE3DRenderer64(nn.Module):
 
         a0, b0, c0 = to_fp16(A0), to_fp16(B0), to_fp16(C0)
 
-        # 1. エッジ計算
+        # 1. エッジ計算 (動的Convを廃止し、ANEが最も得意なブロードキャスト積和に)
         edges0 = a0 * self.x_coords + b0 * self.y_coords + c0
         edges1 = to_fp16(A1) * self.x_coords + to_fp16(B1) * self.y_coords + to_fp16(C1)
         edges2 = to_fp16(A2) * self.x_coords + to_fp16(B2) * self.y_coords + to_fp16(C2)
 
-        valid_mask = torch.clamp_((a0 * a0 + b0 * b0) * 100.0, min=0.0, max=1.0)
+        # 2. マスク生成 (💡それぞれの乗算前に0.0〜1.0へクランプし、FP16上限突破によるNaNを根絶)
+        valid_mask = torch.clamp((a0 * a0 + b0 * b0) * 100.0, min=0.0, max=1.0)
         
-        # 2. マスク生成
-        mask = torch.relu(edges0 * 100.0)
-        mask.mul_(torch.relu(edges1 * 100.0))
-        mask.mul_(torch.relu(edges2 * 100.0))
-        mask.mul_(valid_mask)
-        mask = torch.clamp_(mask, min=0.0, max=1.0)
+        mask0 = torch.clamp(edges0 * 100.0, min=0.0, max=1.0)
+        mask1 = torch.clamp(edges1 * 100.0, min=0.0, max=1.0)
+        mask2 = torch.clamp(edges2 * 100.0, min=0.0, max=1.0)
+        
+        # 0.0〜1.0 同士の安全な掛け算 (infが発生しないため、inf * 0.0 -> nan に絶対になりません)
+        mask = mask0 * mask1 * mask2 * valid_mask
 
-        # 3. 重み（重心座標）の計算
-        # 💡 【究極の修正】1e-5へのクランプを廃止し、絶対値 + 0.02 の足し算ガードに変更！
-        # 未使用のパディングスロット（4〜63番目）でエッジ合計が完全に 0.0 であっても、
-        # 分母は確実に 0.02 になるため、1.0 / 0.02 = 50.0 となり、FP16の上限（65504）を絶対に突破しません。
-        # 0 * inf ➔ nan になるバグの発生源をモデルの内部で100%粉砕します。
+        # 3. 重み（重心座標）の計算 (💡絶対値 + 0.02 の足し算ガードで逆数オーバーフローを完全遮断)
         total_area = torch.abs(edges0 + edges1 + edges2) + 0.02
-        inv_area = torch.reciprocal(total_area)
+        inv_area = torch.reciprocal(total_area) # ANE専用の高速逆数ユニットを使用
         
         w0 = edges1 * inv_area
         w1 = edges2 * inv_area
         w2 = edges0 * inv_area
 
-        # 4. 深度(Z)バッファ計算
+        # 4. 深度(Z)バッファ計算 (加算と乗算をインプレイス化してメモリ削減)
         pixel_inv_z = (to_fp16(p0_iz) * w0)
         pixel_inv_z.add_(to_fp16(p1_iz) * w1)
         pixel_inv_z.add_(to_fp16(p2_iz) * w2)
         pixel_inv_z.mul_(mask)
 
-        # 5. テクスチャの正しいサンプリング数式
+        # 5. テクスチャ座標の重心補間 ＆ サンプリング
         u_interp = (to_fp16(U0) * w0) + (to_fp16(U1) * w1) + (to_fp16(U2) * w2)
         v_interp = (to_fp16(V0) * w0) + (to_fp16(V1) * w1) + (to_fp16(V2) * w2)
         
+        # ピクセルごとに補間された2次元のUV強度をテクスチャに直積
         sampled_texture = torch.clamp_(processed_texture * u_interp * v_interp, min=0.0, max=1.0)
 
-        # 6. Z-Buffer テスト
+        # 6. Z-Buffer テスト (ここだけ1x1 Convでチャンネルを[1, 1, H, W]へ集約)
         sum_inv_z = torch.conv2d(pixel_inv_z, self.sum_kernel)
         z_diff = torch.relu_(sum_inv_z - pixel_inv_z)
 
         z_blend_weights = torch.clamp_(1.0 - (z_diff * 10.0), min=0.0, max=1.0)
-        mask.mul_(z_blend_weights)
+        mask.mul_(z_blend_weights) # mask テンソルを z_mask として再利用してメモリ削減
 
-        # 7. 最終出力の集約
+        # 7. 最終出力の集約 (R_full などの巨大な複製テンソルをすべて排除)
         color_payload = sampled_texture * mask
         
         R = torch.conv2d(color_payload, self.sum_kernel)
