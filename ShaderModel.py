@@ -32,7 +32,6 @@ class ANE3DRenderer64(nn.Module):
         edges1 = to_fp16(A1) * self.x_coords + to_fp16(B1) * self.y_coords + to_fp16(C1)
         edges2 = to_fp16(A2) * self.x_coords + to_fp16(B2) * self.y_coords + to_fp16(C2)
 
-        # 💡 【改善点】**2 を排除し、a0 * a0 に変更して pow を抹殺
         valid_mask = torch.clamp_((a0 * a0 + b0 * b0) * 100.0, min=0.0, max=1.0)
         
         # 2. マスク生成
@@ -56,18 +55,16 @@ class ANE3DRenderer64(nn.Module):
         pixel_inv_z.add_(to_fp16(p2_iz) * w2)
         pixel_inv_z.mul_(mask)
 
-        # 5. テクスチャ座標のグラジエント
-        u_gradient = (to_fp16(U0) * w0) + (to_fp16(U1) * w1) + (to_fp16(U2) * w2)
-        v_gradient = (to_fp16(V0) * w0) + (to_fp16(V1) * w1) + (to_fp16(V2) * w2)
+        # 5. 【修正】テクスチャの正しいサンプリング数式
+        # 各ピクセル位置におけるポリゴン表面の正しい補間UV（テクスチャのめくり位置）を算出
+        # 頂点のUV座標に重心座標の重みを掛けて、画面全体にわたる正しいUVグラジエントマップを作ります
+        u_interp = (to_fp16(U0) * w0) + (to_fp16(U1) * w1) + (to_fp16(U2) * w2)
+        v_interp = (to_fp16(V0) * w0) + (to_fp16(V1) * w1) + (to_fp16(V2) * w2)
         
-        sampled_texture = torch.clamp_((u_gradient + v_gradient) * (processed_texture * 0.5), min=0.0, max=1.0)
-
-        # 🎨 【将来用】頂点カラーの線形補間（ブレンド準備）
-        # 必要になったら下の3行のコメントアウトを解除してください
-        # r_blend = to_fp16(R0) * w0 + to_fp16(R1) * w1 + to_fp16(R2) * w2
-        # g_blend = to_fp16(G0) * w0 + to_fp16(G1) * w1 + to_fp16(G2) * w2
-        # b_blend = to_fp16(B0_col) * w0 + to_fp16(B1) * w1 + to_fp16(B2_col) * w2
-        # 例: sampled_texture = sampled_texture * r_blend (乗算ブレンドの場合)
+        # ANE（1x1 Convベースのモデル）でテクスチャサンプリングを模擬する正しい数式：
+        # 補間された U, V 座標（0.0 〜 1.0）そのものをマスクとしてテクスチャに直接ブレンド掛け合わせます
+        # ANEは動的なテクスチャアドレス指定ができないため、各ポリゴンのテクスチャの寄与度を「補間されたUV強度」として扱います
+        sampled_texture = torch.clamp_(processed_texture * u_interp * v_interp, min=0.0, max=1.0)
 
         # 6. Z-Buffer テスト
         sum_inv_z = torch.conv2d(pixel_inv_z, self.sum_kernel)

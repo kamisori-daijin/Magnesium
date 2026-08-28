@@ -122,6 +122,7 @@ class ANERenderer {
                   let rst = rstFunction else { return }
             
             guard let canvasBuf = self.displayBuffers[0] else { return }
+
             
             // -----------------------------------------------------------------
             // STAGE 0: Texture Alignment Processing
@@ -149,36 +150,36 @@ class ANERenderer {
             // -----------------------------------------------------------------
             var rstInputs: [String: NDArray] = [:]
             
-            rstInputs["a0"] = preOutputs.remove("sub_0")?.ndArray
-            rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-            rstInputs["b0"] = preOutputs.remove("neg_0")?.ndArray
-            
-            rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-            rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-            rstInputs["b1"] = preOutputs.remove("neg_1")?.ndArray
-            
-            rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-            rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-            rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
-            
-            let colorsR = preOutputs.remove("colors_r")?.ndArray
-            let colorsG = preOutputs.remove("colors_g")?.ndArray
-            let colorsB = preOutputs.remove("colors_b")?.ndArray
-            
-            rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
-            rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
-            rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
-            
-            rstInputs["p0_iz"] = preOutputs.remove("slice_0")?.ndArray
-            rstInputs["p1_iz"] = preOutputs.remove("slice_1")?.ndArray
-            rstInputs["p2_iz"] = preOutputs.remove("slice_2")?.ndArray
-            
-            let placeholderUV = rstInputs["R0"]
-            rstInputs["u0"] = placeholderUV; rstInputs["v0"] = placeholderUV
-            rstInputs["u1"] = placeholderUV; rstInputs["v1"] = placeholderUV
-            rstInputs["u2"] = placeholderUV; rstInputs["v2"] = placeholderUV
-            
-            rstInputs["processed_texture"] = alignedTextureArray
+        rstInputs["a0"] = preOutputs.remove("sub_0")?.ndArray
+        rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
+        rstInputs["c0"] = preOutputs.remove("neg_0")?.ndArray
+        
+        rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
+        rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
+        rstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
+        
+        rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
+        rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
+        rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
+        
+        let colorsR = preOutputs.remove("colors_r")?.ndArray
+        let colorsG = preOutputs.remove("colors_g")?.ndArray
+        let colorsB = preOutputs.remove("colors_b")?.ndArray
+        
+        rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
+        rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
+        rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
+        
+        rstInputs["p0_iz"] = preOutputs.remove("slice_0")?.ndArray
+        rstInputs["p1_iz"] = preOutputs.remove("slice_1")?.ndArray
+        rstInputs["p2_iz"] = preOutputs.remove("slice_2")?.ndArray
+        
+        let placeholderUV = rstInputs["r0"]
+        rstInputs["u0"] = placeholderUV; rstInputs["v0"] = placeholderUV
+        rstInputs["u1"] = placeholderUV; rstInputs["v1"] = placeholderUV
+        rstInputs["u2"] = placeholderUV; rstInputs["v2"] = placeholderUV
+        
+        rstInputs["processed_texture"] = alignedTextureArray
             
             // -----------------------------------------------------------------
             // STAGE 3: Metal Shared Canvas Direct Blit
