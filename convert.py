@@ -7,59 +7,59 @@ from pathlib import Path
 WIDTH = 256
 HEIGHT = 256
 
-# モデルをfloat16で初期化
+# 1. モデルの初期化 (FP16/Evalモード)
 model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
 model.eval()
 
-# -------------------------------------------------------------------------
-# 2. 入力ポートの定義 (最適化版のShapeに合わせる)
-# -------------------------------------------------------------------------
-# エッジ係数 (weights_0, 1, 2) 用のダミー：[64, 3, 1, 1] に変更
-def make_edge_dummy():
-    return torch.zeros(64, 3, 1, 1, dtype=torch.float16)
-
-# その他のパラメータ用（p0_iz, U0, V0など）のダミー：[1, 64, 1, 1] 
-def make_param_dummy():
+# 2. 形状 [1, 64, 1, 1] のダミーバッファ
+def make_param():
     return torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
-# forwardの引数の順番に合わせてタプルを構築
-args = (
-    make_edge_dummy(),  # weights_0
-    make_edge_dummy(),  # weights_1
-    make_edge_dummy(),  # weights_2
+# 💡 forward の引数名と完全に一致する辞書型（kwargs）を作成
+# これにより、順番の間違いや「引数が見つからない」エラーを 100% 防ぎます
+kwargs = {
+    # 幾何エッジ (9個)
+    "A0": make_param(), "B0": make_param(), "C0": make_param(),
+    "A1": make_param(), "B1": make_param(), "C1": make_param(),
+    "A2": make_param(), "B2": make_param(), "C2": make_param(),
     
-    make_param_dummy(), # p0_iz
-    make_param_dummy(), # p1_iz
-    make_param_dummy(), # p2_iz
+    # 将来カラーブレンドで使う頂点カラー (9個)
+    "R0": make_param(), "G0": make_param(), "B0_col": make_param(),
+    "R1": make_param(), "G1": make_param(), "B1_col": make_param(),
+    "R2": make_param(), "G2": make_param(), "B2_col": make_param(),
     
-    make_param_dummy(), # U0
-    make_param_dummy(), # V0
-    make_param_dummy(), # U1
-    make_param_dummy(), # V1
-    make_param_dummy(), # U2
-    make_param_dummy(), # V2
+    # 深度逆数 (3個)
+    "p0_iz": make_param(), "p1_iz": make_param(), "p2_iz": make_param(),
     
-    torch.zeros(1, 64, 256, 256, dtype=torch.float16) # processed_texture
-)
+    # UV座標 (6個)
+    "U0": make_param(), "V0": make_param(),
+    "U1": make_param(), "V1": make_param(),
+    "U2": make_param(), "V2": make_param(),
+    
+    # テクスチャ (1個)
+    "processed_texture": torch.zeros(1, 64, HEIGHT, WIDTH, dtype=torch.float16)
+}
 
 # -------------------------------------------------------------------------
-# 3. Core AI向けエクスポート設定
+# 3. Core AI向けエクスポート設定 (kwargs を渡す形に修正)
 # -------------------------------------------------------------------------
 converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
         m, 
-        args=args
+        args=(),      # 位置引数は空にする
+        kwargs=kwargs # 名前付き引数で安全にマッピング！
     ).run_decompositions(
         coreai_torch.get_decomp_table()
     ),
 )
 
+# 4. Core AI プログラムの生成とANE最適化
 coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
-# 保存
-output_path = Path("ane_3d_rasterizer_64_optimized.aimodel")
+# 5. 保存
+output_path = Path("ane_3d_rasterizer_64.aimodel")
 coreai_program.save_asset(output_path)
 
 print(f"Conversion Success!: `{output_path}`")
