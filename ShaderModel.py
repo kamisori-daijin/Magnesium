@@ -42,7 +42,11 @@ class ANE3DRenderer64(nn.Module):
         mask = torch.clamp_(mask, min=0.0, max=1.0)
 
         # 3. 重み（重心座標）の計算
-        total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
+        # 💡 【究極の修正】1e-5へのクランプを廃止し、絶対値 + 0.02 の足し算ガードに変更！
+        # 未使用のパディングスロット（4〜63番目）でエッジ合計が完全に 0.0 であっても、
+        # 分母は確実に 0.02 になるため、1.0 / 0.02 = 50.0 となり、FP16の上限（65504）を絶対に突破しません。
+        # 0 * inf ➔ nan になるバグの発生源をモデルの内部で100%粉砕します。
+        total_area = torch.abs(edges0 + edges1 + edges2) + 0.02
         inv_area = torch.reciprocal(total_area)
         
         w0 = edges1 * inv_area
@@ -55,15 +59,10 @@ class ANE3DRenderer64(nn.Module):
         pixel_inv_z.add_(to_fp16(p2_iz) * w2)
         pixel_inv_z.mul_(mask)
 
-        # 5. 【修正】テクスチャの正しいサンプリング数式
-        # 各ピクセル位置におけるポリゴン表面の正しい補間UV（テクスチャのめくり位置）を算出
-        # 頂点のUV座標に重心座標の重みを掛けて、画面全体にわたる正しいUVグラジエントマップを作ります
+        # 5. テクスチャの正しいサンプリング数式
         u_interp = (to_fp16(U0) * w0) + (to_fp16(U1) * w1) + (to_fp16(U2) * w2)
         v_interp = (to_fp16(V0) * w0) + (to_fp16(V1) * w1) + (to_fp16(V2) * w2)
         
-        # ANE（1x1 Convベースのモデル）でテクスチャサンプリングを模擬する正しい数式：
-        # 補間された U, V 座標（0.0 〜 1.0）そのものをマスクとしてテクスチャに直接ブレンド掛け合わせます
-        # ANEは動的なテクスチャアドレス指定ができないため、各ポリゴンのテクスチャの寄与度を「補間されたUV強度」として扱います
         sampled_texture = torch.clamp_(processed_texture * u_interp * v_interp, min=0.0, max=1.0)
 
         # 6. Z-Buffer テスト

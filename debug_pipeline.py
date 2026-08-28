@@ -99,16 +99,72 @@ def main():
         print("\n--- Running Full Rasterizer Module ---")
         R, G, B, mask_w, max_inv_z = rast_model(*all_args)
 
-    print("\n==================================================")
-    print(" 🔍 FINAL RASTERIZER OUTPUT INFO")
-    print("==================================================")
-    print(f"  R Channel Max/Min     : {R.max().item()} / {R.min().item()}")
-    print(f"  G Channel Max/Min     : {G.max().item()} / {G.min().item()}")
-    print(f"  B Channel Max/Min     : {B.max().item()} / {B.min().item()}")
-    print(f"  Mask (mask_w) Max/Min : {mask_w.max().item()} / {mask_w.min().item()}")
-    print(f"  Max Inv Z Max/Min     : {max_inv_z.max().item()} / {max_inv_z.min().item()}")
-    print(f"  Mask HasNaN           : {torch.isnan(mask_w).any().item()}")
-    print("==================================================\n")
+         # debug_pipeline.py の「--- Running Full Rasterizer Module ---」部分を以下に置き換え
+        print("\n==================================================")
+        print(" 🔍 RASTERIZER INTERNAL TRACE (ログ増量版)")
+        print("==================================================")
+        
+        # 1. 引数の分解（21個のプリプロ出力 + 6個のUVダミー + 1個のテクスチャ）
+        # forwardの引数定義順に合わせて綺麗にアンパック
+        A0, B0, C0, A1, B1, C1, A2, B2, C2 = all_args[0:9]
+        R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col = all_args[9:18]
+        p0_iz, p1_iz, p2_iz = all_args[18:21]
+        U0, V0, U1, V1, U2, V2 = all_args[21:27]
+        processed_texture = all_args[27]
+ 
+        # 💡 レンダラーのforward内部の計算を1行ずつ実行し、NaNの発生箇所を暴く
+        edges0 = A0 * rast_model.x_coords + B0 * rast_model.y_coords + C0
+        edges1 = A1 * rast_model.x_coords + B1 * rast_model.y_coords + C1
+        edges2 = A2 * rast_model.x_coords + B2 * rast_model.y_coords + C2
+        print(f"  [Step 1] Edges0 HasNaN        : {torch.isnan(edges0).any().item()}")
+        print(f"           Edges0 Max/Min       : {edges0.max().item()} / {edges0.min().item()}")
+        valid_mask = torch.clamp((A0 * A0 + B0 * B0) * 100.0, min=0.0, max=1.0)
+        mask = torch.relu(edges0 * 100.0)
+        mask = mask * torch.relu(edges1 * 100.0)
+        mask = mask * torch.relu(edges2 * 100.0)
+        mask = mask * valid_mask
+        mask = torch.clamp(mask, min=0.0, max=1.0)
+        print(f"  [Step 2] Raster Mask HasNaN   : {torch.isnan(mask).any().item()}")
+        print(f"           Mask Max/Min         : {mask.max().item()} / {mask.min().item()}")
+ 
+        # 重心座標ガード計算
+        total_area = torch.abs(edges0 + edges1 + edges2) + 0.02
+        inv_area = torch.reciprocal(total_area)
+        print(f"  [Step 3] inv_area HasNaN      : {torch.isnan(inv_area).any().item()}")
+        print(f"           inv_area Max/Min     : {inv_area.max().item()} / {inv_area.min().item()}")
+        print(f"           inv_area HasInf      : {torch.isinf(inv_area).any().item()}")
+
+        w0 = edges1 * inv_area
+        w1 = edges2 * inv_area
+        w2 = edges0 * inv_area
+        print(f"  [Step 4] Weights (w0) HasNaN  : {torch.isnan(w0).any().item()}")
+        pixel_inv_z = (p0_iz * w0) + (p1_iz * w1) + (p2_iz * w2)
+        pixel_inv_z = pixel_inv_z * mask
+        print(f"  [Step 5] Pixel Inv Z HasNaN   : {torch.isnan(pixel_inv_z).any().item()}")
+
+        u_interp = (U0 * w0) + (U1 * w1) + (U2 * w2)
+        v_interp = (V0 * w0) + (V1 * w1) + (V2 * w2)
+        sampled_texture = torch.clamp(processed_texture * u_interp * v_interp, min=0.0, max=1.0)
+        print(f"  [Step 6] Sampled Texture NaN : {torch.isnan(sampled_texture).any().item()}")
+
+        sum_inv_z = torch.conv2d(pixel_inv_z, rast_model.sum_kernel)
+        z_diff = torch.relu(sum_inv_z - pixel_inv_z)
+        z_blend_weights = torch.clamp(1.0 - (z_diff * 10.0), min=0.0, max=1.0)
+        final_mask = mask * z_blend_weights
+        print(f"  [Step 7] Final Z Mask HasNaN  : {torch.isnan(final_mask).any().item()}")
+
+        color_payload = sampled_texture * final_mask
+        print(f"  [Step 8] Color Payload HasNaN : {torch.isnan(color_payload).any().item()}")
+
+        # 最終Conv集約
+        R = torch.conv2d(color_payload, rast_model.sum_kernel)
+        G = torch.conv2d(color_payload, rast_model.sum_kernel)
+        B = torch.conv2d(color_payload, rast_model.sum_kernel)
+        mask_w = torch.conv2d(final_mask, rast_model.sum_kernel)
+        max_inv_z = torch.conv2d(pixel_inv_z * z_blend_weights, rast_model.sum_kernel)
+
+        print("==================================================\n")
+
 
 if __name__ == "__main__":
     main()
