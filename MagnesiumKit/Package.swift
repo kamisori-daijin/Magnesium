@@ -22,7 +22,6 @@ let package = Package(
             name: "MagnesiumKit",
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
-                .swiftLanguageMode(.v5)
             ],
    
         ),
