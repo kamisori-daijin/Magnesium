@@ -24,15 +24,14 @@ def create_camera_matrix(eye, target, up):
     return (R @ T).astype(np.float16)
 
 def create_debug_texture():
-    tex = np.zeros((1, 64, 256, 256), dtype=np.float16) # 💡新設計: 64チャンネル画像
+    # ⭕️ 正しいコード: 入力はRGBの3チャンネルに戻します
+    tex = np.zeros((1, 3, 256, 256), dtype=np.float16) 
     for y in range(256):
         for x in range(256):
             is_white = ((x // 32) + (y // 32)) % 2 == 0
             color = 1.0 if is_white else 0.0
             tex[0, :, y, x] = color
     return tex
-
-    # (省略: 前半の関数の定義などはそのまま)
 
 async def main():
     pre_path = Path("./ane_3d_pre_processor_64_optimized.aimodel")
