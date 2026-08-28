@@ -1,8 +1,3 @@
-//
-//  ANERenderer.swift
-//  Magnesium
-//
-
 import Foundation
 import CoreAI
 import Metal
@@ -46,11 +41,12 @@ class ANERenderer {
         self.rstFunction = try rstModel?.loadFunction(named: "main")
         self.texFunction = try texModel?.loadFunction(named: "main")
         
-        self.expandedVerticesArray = NDArray(shape:[1, 4, 3, 64], scalarType: .float16)
-        self.mvpWeightsArray = NDArray(shape:[1, 4, 4, 1, 64], scalarType: .float16)
-        self.colorsRArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
-        self.colorsGArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
-        self.colorsBArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
+        
+        self.expandedVerticesArray = NDArray(shape:[1, 64, 4, 3], scalarType: .float16)
+        self.mvpWeightsArray = NDArray(shape:[1, 64, 4, 4], scalarType: .float16)
+        self.colorsRArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
+        self.colorsGArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
+        self.colorsBArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
         
         self.rawTextureArray = NDArray(shape:[1, 3, 256, 256], scalarType: .float16)
         self.alignedTextureArray = NDArray(shape:[1, 64, 256, 256], scalarType: .float16)
@@ -58,7 +54,7 @@ class ANERenderer {
         setupMetalHeap()
         setupInitialGeometry()
     }
-
+    
     private func setupMetalHeap() {
         let singleDisplayBufferSize = layerByteCount * 4
         let totalRequiredMemory = singleDisplayBufferSize * 4
@@ -79,17 +75,17 @@ class ANERenderer {
             )
         }
     }
-
+    
     private func setupInitialGeometry() {
-            let vertices = geometry.getDummyVertices()
-            let mvp = geometry.getDummyMVPWeights()
-            let color = geometry.getDummyColor()
-            updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
-            
-            let debugTexture = geometry.createDebugCheckerboardTexture()
-            updateTexture(pixelData: debugTexture)
-        }
-
+        let vertices = geometry.getDummyVertices() // [1, 64, 4, 3] 形状のデータ配列
+        let mvp = geometry.getDummyMVPWeights()   // [1, 64, 4, 4] 形状のデータ配列
+        let color = geometry.getDummyColor()       // [1, 64, 1, 1] 形状のデータ配列
+        updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
+        
+        let debugTexture = geometry.createDebugCheckerboardTexture()
+        updateTexture(pixelData: debugTexture)
+    }
+    
     func updateGeometry(vertices: [Float16], mvpWeights: [Float16], r: [Float16], g: [Float16], b: [Float16]) {
         var vertexView = self.expandedVerticesArray.mutableView(as: Float16.self)
         vertexView.copyElements(fromContentsOf: vertices)
@@ -108,95 +104,90 @@ class ANERenderer {
     }
     
     func updateTexture(pixelData: [Float16]) {
-            var texView = self.rawTextureArray.mutableView(as: Float16.self)
-            
-            let expectedCount = 1 * 3 * 256 * 256
-            
-            if pixelData.count != expectedCount {
-                
-                print("Warning: Received \(pixelData.count) elements, but expected \(expectedCount). Overriding with Debug Texture.")
-                
-                let debugData = geometry.createDebugCheckerboardTexture()
-                texView.copyElements(fromContentsOf: debugData)
-            } else {
-               
-                texView.copyElements(fromContentsOf: pixelData)
-            }
+        var texView = self.rawTextureArray.mutableView(as: Float16.self)
+        let expectedCount = 1 * 3 * 256 * 256
+        
+        if pixelData.count != expectedCount {
+            print("Warning: Received \(pixelData.count) elements, but expected \(expectedCount). Overriding with Debug Texture.")
+            let debugData = geometry.createDebugCheckerboardTexture()
+            texView.copyElements(fromContentsOf: debugData)
+        } else {
+            texView.copyElements(fromContentsOf: pixelData)
         }
-
-   func drawFrame() async throws {
-        guard let tex = texFunction,
-              let pre = preFunction,
-              let rst = rstFunction else { return }
-        
-        guard let canvasBuf = self.displayBuffers[0] else { return }
-        
-        // -----------------------------------------------------------------
-        // STAGE 0: Texture Alignment Processing
-        // -----------------------------------------------------------------
-        let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
-        var texOutputViews = InferenceFunction.MutableViews()
-        let texDestView = alignedTextureArray.mutableView(as: Float16.self)
-        texOutputViews.insert(texDestView, for: "convolution")
-        let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
-        
-        // -----------------------------------------------------------------
-        // STAGE 1: 3D PreProcessor
-        // -----------------------------------------------------------------
-        let preInputs: [String: NDArray] = [
-            "expanded_vertices": expandedVerticesArray,
-            "mvp_weights": mvpWeightsArray,
-            "colors_r": colorsRArray,
-            "colors_g": colorsGArray,
-            "colors_b": colorsBArray
-        ]
-        var preOutputs = try await pre.run(inputs: preInputs)
-        
-        // -----------------------------------------------------------------
-        // STAGE 2: 3D Rasterizer Inputs Mapping
-        // -----------------------------------------------------------------
-        var rstInputs: [String: NDArray] = [:]
-        
-        rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
-        rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        rstInputs["c0"] = preOutputs.remove("neg")?.ndArray
-        
-        rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-        rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-        rstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
-        
-        rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-        rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-        rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
-        
-        let colorsR = preOutputs.remove("colors_r")?.ndArray
-        let colorsG = preOutputs.remove("colors_g")?.ndArray
-        let colorsB = preOutputs.remove("colors_b")?.ndArray
-        
-        rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
-        rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
-        rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
-        
-        let zWeight = preOutputs.remove("slice_10")?.ndArray
-        rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
-        rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
-        rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
-        
-        rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
-        rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
-        rstInputs["u2"] = colorsR; rstInputs["v2"] = colorsR
-        
-        rstInputs["processed_texture"] = alignedTextureArray
-        
-        // -----------------------------------------------------------------
-        // STAGE 3: Metal Shared Canvas Direct Blit
-        // -----------------------------------------------------------------
-        let localLayerByteCount = self.layerByteCount
-        
-        
-       
-            var rstOutputViews = InferenceFunction.MutableViews()
-            let shape: [Int] = [64, 1, 256, 256]
+    }
+    
+    func drawFrame() async throws {
+            guard let tex = texFunction,
+                  let pre = preFunction,
+                  let rst = rstFunction else { return }
+            
+            guard let canvasBuf = self.displayBuffers[0] else { return }
+            
+            // -----------------------------------------------------------------
+            // STAGE 0: Texture Alignment Processing
+            // -----------------------------------------------------------------
+            let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
+            var texOutputViews = InferenceFunction.MutableViews()
+            let texDestView = alignedTextureArray.mutableView(as: Float16.self)
+            texOutputViews.insert(texDestView, for: "convolution")
+            let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
+            
+            // -----------------------------------------------------------------
+            // STAGE 1: 3D PreProcessor
+            // -----------------------------------------------------------------
+            let preInputs: [String: NDArray] = [
+                "expanded_vertices": expandedVerticesArray,
+                "mvp_weights": mvpWeightsArray,
+                "colors_r": colorsRArray,
+                "colors_g": colorsGArray,
+                "colors_b": colorsBArray
+            ]
+            var preOutputs = try await pre.run(inputs: preInputs)
+            
+            // -----------------------------------------------------------------
+            // STAGE 2: 3D Rasterizer Inputs Mapping
+            // -----------------------------------------------------------------
+            var rstInputs: [String: NDArray] = [:]
+            
+            rstInputs["A0"] = preOutputs.remove("sub_0")?.ndArray
+            rstInputs["B0"] = preOutputs.remove("sub_1")?.ndArray
+            rstInputs["C0"] = preOutputs.remove("neg_0")?.ndArray
+            
+            rstInputs["A1"] = preOutputs.remove("sub_2")?.ndArray
+            rstInputs["B1"] = preOutputs.remove("sub_3")?.ndArray
+            rstInputs["C1"] = preOutputs.remove("neg_1")?.ndArray
+            
+            rstInputs["A2"] = preOutputs.remove("sub_4")?.ndArray
+            rstInputs["B2"] = preOutputs.remove("sub_5")?.ndArray
+            rstInputs["C2"] = preOutputs.remove("neg_2")?.ndArray
+            
+            let colorsR = preOutputs.remove("colors_r")?.ndArray
+            let colorsG = preOutputs.remove("colors_g")?.ndArray
+            let colorsB = preOutputs.remove("colors_b")?.ndArray
+            
+            rstInputs["R0"] = colorsR; rstInputs["R1"] = colorsR; rstInputs["R2"] = colorsR
+            rstInputs["G0"] = colorsG; rstInputs["G1"] = colorsG; rstInputs["G2"] = colorsG
+            rstInputs["B0_col"] = colorsB; rstInputs["B1_col"] = colorsB; rstInputs["B2_col"] = colorsB
+            
+            rstInputs["p0_iz"] = preOutputs.remove("slice_0")?.ndArray
+            rstInputs["p1_iz"] = preOutputs.remove("slice_1")?.ndArray
+            rstInputs["p2_iz"] = preOutputs.remove("slice_2")?.ndArray
+            
+            let placeholderUV = rstInputs["R0"]
+            rstInputs["U0"] = placeholderUV; rstInputs["V0"] = placeholderUV
+            rstInputs["U1"] = placeholderUV; rstInputs["V1"] = placeholderUV
+            rstInputs["U2"] = placeholderUV; rstInputs["V2"] = placeholderUV
+            
+            rstInputs["processed_texture"] = alignedTextureArray
+            
+            // -----------------------------------------------------------------
+            // STAGE 3: Metal Shared Canvas Direct Blit
+            // -----------------------------------------------------------------
+            let localLayerByteCount = self.layerByteCount
+            let shape: [Int] = [1, 1, 256, 256]
+            
+            // @MainActor 内で直接実行することで、データ競合の警告を回避
+            nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
             
             let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
             rstOutputViews.insert(viewForR, for: "convolution_4")
@@ -210,7 +201,9 @@ class ANERenderer {
             let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
             rstOutputViews.insert(viewForMask, for: "convolution_7")
 
+            // 戻り値は ~Copyable なので、変数に束縛せずに破棄する
             let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
         }
-    }
+}
+
 
