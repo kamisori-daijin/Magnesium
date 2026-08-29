@@ -117,6 +117,7 @@ class ANERenderer {
     }
     
     func drawFrame() async throws {
+        
             guard let tex = texFunction,
                   let pre = preFunction,
                   let rst = rstFunction else { return }
@@ -144,23 +145,24 @@ class ANERenderer {
                 "colors_b": colorsBArray
             ]
             var preOutputs = try await pre.run(inputs: preInputs)
+
             
             // -----------------------------------------------------------------
             // STAGE 2: 3D Rasterizer Inputs Mapping
             // -----------------------------------------------------------------
             var rstInputs: [String: NDArray] = [:]
             
-        rstInputs["a0"] = preOutputs.remove("sub_0")?.ndArray
+        rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
         rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        rstInputs["c0"] = preOutputs.remove("neg_0")?.ndArray
+        rstInputs["c0"] = preOutputs.remove("sub_3")?.ndArray
         
-        rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-        rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-        rstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
+        rstInputs["a1"] = preOutputs.remove("sub_4")?.ndArray
+        rstInputs["b1"] = preOutputs.remove("sub_5")?.ndArray
+        rstInputs["c1"] = preOutputs.remove("sub_7")?.ndArray
         
-        rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-        rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-        rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
+        rstInputs["a2"] = preOutputs.remove("sub_8")?.ndArray
+        rstInputs["b2"] = preOutputs.remove("sub_9")?.ndArray
+        rstInputs["c2"] = preOutputs.remove("sub_11")?.ndArray
         
         let colorsR = preOutputs.remove("colors_r")?.ndArray
         let colorsG = preOutputs.remove("colors_g")?.ndArray
@@ -170,9 +172,9 @@ class ANERenderer {
         rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
         rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
         
-        rstInputs["p0_iz"] = preOutputs.remove("slice_0")?.ndArray
-        rstInputs["p1_iz"] = preOutputs.remove("slice_1")?.ndArray
-        rstInputs["p2_iz"] = preOutputs.remove("slice_2")?.ndArray
+        rstInputs["p0_iz"] = preOutputs.remove("view_9")?.ndArray
+        rstInputs["p1_iz"] = preOutputs.remove("view_10")?.ndArray
+        rstInputs["p2_iz"] = preOutputs.remove("view_11")?.ndArray
         
         let placeholderUV = rstInputs["r0"]
         rstInputs["u0"] = placeholderUV; rstInputs["v0"] = placeholderUV
