@@ -154,25 +154,24 @@ class ANERenderer {
             var rstInputs: [String: NDArray] = [:]
             
         // 1. 先にすべての出力を変数として取り出す（removeは1回だけ）
-                let a0 = preOutputs.remove("sub")?.ndArray
-                let b0 = preOutputs.remove("sub_1")?.ndArray
-                let c0 = preOutputs.remove("sub_3")?.ndArray
+                let a0 = preOutputs.remove("mul_10")?.ndArray
+                let b0 = preOutputs.remove("sub_2")?.ndArray
+                let c0 = preOutputs.remove("sub_4")?.ndArray
                 
-                let a1 = preOutputs.remove("sub_4")?.ndArray
-                let b1 = preOutputs.remove("sub_5")?.ndArray
-                let c1 = preOutputs.remove("sub_7")?.ndArray
-                
-                let a2 = preOutputs.remove("sub_8")?.ndArray
-                let b2 = preOutputs.remove("sub_9")?.ndArray
-                let c2 = preOutputs.remove("sub_11")?.ndArray
+                let a1 = preOutputs.remove("mul_11")?.ndArray
+                let b1 = preOutputs.remove("sub_6")?.ndArray
+                let c1 = preOutputs.remove("sub_8")?.ndArray
+                let a2 = preOutputs.remove("mul_12")?.ndArray
+                let b2 = preOutputs.remove("sub_10")?.ndArray
+                let c2 = preOutputs.remove("sub_12")?.ndArray
                 
                 let colorsR = preOutputs.remove("colors_r")?.ndArray
                 let colorsG = preOutputs.remove("colors_g")?.ndArray
                 let colorsB = preOutputs.remove("colors_b")?.ndArray
                 
-                let p0_iz = preOutputs.remove("view_9")?.ndArray
-                let p1_iz = preOutputs.remove("view_10")?.ndArray
-                let p2_iz = preOutputs.remove("view_11")?.ndArray
+                let p0_iz = preOutputs.remove("slice_11")?.ndArray
+                let p1_iz = preOutputs.remove("slice_12")?.ndArray
+                let p2_iz = preOutputs.remove("slice_13")?.ndArray
                 
                 // 2. ラスタライザの入力にマッピング
                 rstInputs["a0"] = a0; rstInputs["b0"] = b0; rstInputs["c0"] = c0

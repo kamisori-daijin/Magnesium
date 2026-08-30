@@ -10,28 +10,28 @@ class ANE3DPreProcessor64(nn.Module):
         # 1. 座標変換
         transformed = torch.matmul(mvp_weights.to(torch.float16), expanded_vertices.to(torch.float16))
         
-        X_c = transformed[:, :, 0, :].unsqueeze(-1)
-        Y_c = transformed[:, :, 1, :].unsqueeze(-1)
-        W_c = transformed[:, :, 3, :].unsqueeze(-1)
+        # 💡 4次元を維持: [1, 64, 4, 1]
+        X_c = transformed[:, :, 0:1, :].transpose(2, 3)
+        Y_c = transformed[:, :, 1:2, :].transpose(2, 3)
+        W_c = transformed[:, :, 3:4, :].transpose(2, 3)
         
         abs_W_c = torch.relu(W_c) + torch.relu(-W_c)
         safe_W = abs_W_c + 0.02
         
-        # 💡 除算を1回にまとめ、以降は乗算を使用
+        # 除算を1回にまとめ、以降は乗算を使用
         inv_W = 1.0 / safe_W
         screen_x = X_c * inv_W
         screen_y = Y_c * inv_W
         
-        # 💡 3次元 [1, 64, 1] になってしまうのを防ぐ
+        # 💡 クリッピング処理（4次元を維持）
         near_clip = 0.1
         clip_mask = torch.clamp(torch.relu(safe_W - near_clip) * 1000.0, min=0.0, max=1.0)
+        clip_mask_view = clip_mask[:, :, 0:1, :] # [1, 64, 1, 1]
         
-        # 💡 4次元 [1, 64, 1, 1] に統一する
-        clip_mask_view = clip_mask[:, :, 0].unsqueeze(-1)
-        
-        p0_x, p1_x, p2_x = screen_x[:, :, 0], screen_x[:, :, 1], screen_x[:, :, 2]
-        p0_y, p1_y, p2_y = screen_y[:, :, 0], screen_y[:, :, 1], screen_y[:, :, 2]
-        p0_iz, p1_iz, p2_iz = inv_W[:, :, 0], inv_W[:, :, 1], inv_W[:, :, 2]
+        # 💡 スライス時に次元が落ちないように範囲指定
+        p0_x, p1_x, p2_x = screen_x[:, :, 0:1, :], screen_x[:, :, 1:2, :], screen_x[:, :, 2:3, :]
+        p0_y, p1_y, p2_y = screen_y[:, :, 0:1, :], screen_y[:, :, 1:2, :], screen_y[:, :, 2:3, :]
+        p0_iz, p1_iz, p2_iz = inv_W[:, :, 0:1, :], inv_W[:, :, 1:2, :], inv_W[:, :, 2:3, :]
 
         # 2. エッジ計算
         A0 = p0_y - p1_y
@@ -47,7 +47,7 @@ class ANE3DPreProcessor64(nn.Module):
         B2 = p0_x - p2_x
         C2 = zero_fp16 - (A2 * p2_x) - (B2 * p2_y)
         
-        # 💡 クリッピングマスクを適用
+        # クリッピングマスクを適用
         A0 = A0 * clip_mask_view
         A1 = A1 * clip_mask_view
         A2 = A2 * clip_mask_view
