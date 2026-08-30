@@ -7,7 +7,6 @@ class ANE3DRenderer64(nn.Module):
         self.width = width
         self.height = height
         
-        # チャンネル次元（dim=1）を最初から明示的に「64」に引き伸ばして保持
         y_coords = torch.linspace(1.0, -1.0, height, dtype=torch.float16).view(1, 1, height, 1)
         x_coords = torch.linspace(-1.0, 1.0, width, dtype=torch.float16).view(1, 1, 1, width)
         
@@ -54,37 +53,30 @@ class ANE3DRenderer64(nn.Module):
         total_area = abs_sum_edges + 0.02
         inv_area = 1.0 / total_area
         
-        # 💡 【NaN完全封鎖】マスクの値を重みに直接乗算して、画面外・未使用スロットの重みを「絶対零度」にする
-        # これにより、この後のカラーや深度の掛け算で異常値（隠れNaN）が混入する可能性を根絶します。
         w0 = edges1 * inv_area * mask
         w1 = edges2 * inv_area * mask
         w2 = edges0 * inv_area * mask
 
-        # 4. 深度(Z)バッファ計算 (w0〜w2が既にmaskでガードされているため安全)
-        pixel_inv_z = (to_fp16(p0_iz) * w0)
-        pixel_inv_z.add_(to_fp16(p1_iz) * w1)
-        pixel_inv_z.add_(to_fp16(p2_iz) * w2)
+        # 4. 深度(Z)バッファ計算 (インプレース操作 add_ を通常の + に変更)
+        pixel_inv_z = (to_fp16(p0_iz) * w0) + (to_fp16(p1_iz) * w1) + (to_fp16(p2_iz) * w2)
 
-        # 5. 頂点カラーの重心補間 
-        # 重み（w0, w1, w2）自体にすでにmaskが掛かっているため、
-        # 未使用ポリゴンのスロットは確実に「純粋な 0.0」になり、NaNバグの割り込みを許しません。
+        # 5. 頂点カラーの重心補間
         color_payload_r = (to_fp16(R0) * w0) + (to_fp16(R1) * w1) + (to_fp16(R2) * w2)
         color_payload_g = (to_fp16(G0) * w0) + (to_fp16(G1) * w1) + (to_fp16(G2) * w2)
         color_payload_b = (to_fp16(B0_col) * w0) + (to_fp16(B1_col) * w1) + (to_fp16(B2_col) * w2)
 
-        # 6. Z-Buffer テスト 
+        # 6. Z-Buffer テスト
         sum_inv_z = torch.conv2d(pixel_inv_z, self.sum_kernel)
-        z_diff = torch.relu_(sum_inv_z - pixel_inv_z)
+        z_diff = torch.relu(sum_inv_z - pixel_inv_z)
 
-        z_blend_weights = torch.clamp_(1.0 - (z_diff * 10.0), min=zero_fp16, max=one_fp16)
+        z_blend_weights = torch.clamp(1.0 - (z_diff * 10.0), min=zero_fp16, max=one_fp16)
         
-        # 最終的な色の切り出し（Zテストの重みを適用）
         final_color_r = color_payload_r * z_blend_weights
         final_color_g = color_payload_g * z_blend_weights
         final_color_b = color_payload_b * z_blend_weights
         final_mask = mask * z_blend_weights
 
-        # 7. 最終出力の集約 (1x1 Convでチャンネルを[1, 1, H, W]へ集約)
+        # 7. 最終出力の集約
         R = torch.conv2d(final_color_r, self.sum_kernel)
         G = torch.conv2d(final_color_g, self.sum_kernel)
         B = torch.conv2d(final_color_b, self.sum_kernel)
