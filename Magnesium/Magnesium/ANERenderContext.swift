@@ -100,12 +100,13 @@ class ANERenderContext {
                 self.isComputing = true
                 self.angle += 0.05
                 
-                let radius: Float = 5.0
+                // 💡 カメラの距離と高さを調整
+                let radius: Float = 8.0 // 5.0 から 8.0 に変更して遠ざける
                 let eyeX = radius * sin(self.angle)
                 let eyeZ = radius * cos(self.angle)
-                
+                            
                 let cameraMatrix = mgDevice.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 2.0, eyeZ),
+                    eye: SIMD3<Float>(eyeX, 4.0, eyeZ), // 高さを 2.0 から 4.0 に変更
                     target: SIMD3<Float>(0.0, 0.0, 0.0),
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
