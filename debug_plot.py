@@ -18,12 +18,36 @@ def debug_projection():
     expanded_vertices[0, 0, 2, :] = torch.tensor([1.0, -1.0, -2.0])
     
     with torch.no_grad():
-        outputs = model(expanded_vertices, mvp_weights, colors_r, colors_g, colors_b)
+        # PreProcessorの内部計算を再現して座標を取得
+        transformed = torch.matmul(mvp_weights, expanded_vertices)
+        X_c = transformed[:, :, 0:1, :].transpose(2, 3)
+        Y_c = transformed[:, :, 1:2, :].transpose(2, 3)
+        W_c = transformed[:, :, 3:4, :].transpose(2, 3)
         
-    # A0, B0, C0 などのエッジ係数から座標を逆算するか、
-    # PreProcessorの内部変数を出力するように一時的に変更してプロットします
-    print("デバッグ実行が完了しました。")
-    print(f"出力テンソル数: {len(outputs)}")
+        safe_W = torch.relu(W_c) + torch.relu(-W_c) + 0.02
+        screen_x = X_c / safe_W
+        screen_y = Y_c / safe_W
+        
+        # プロット用のデータ抽出
+        x = screen_x[0, 0, :3, 0].numpy()
+        y = screen_y[0, 0, :3, 0].numpy()
+        
+        # プロットの作成
+        plt.figure(figsize=(6, 6))
+        plt.plot(x, y, 'r-') # 三角形の辺
+        plt.plot([x[2], x[0]], [y[2], y[0]], 'r-') # 閉じる
+        plt.scatter(x, y, color='blue') # 頂点
+        
+        plt.xlim(-1.5, 1.5)
+        plt.ylim(-1.5, 1.5)
+        plt.axhline(0, color='black',linewidth=0.5)
+        plt.axvline(0, color='black',linewidth=0.5)
+        plt.grid(True)
+        plt.title("Projected Triangle")
+        
+        # 画像として保存
+        plt.savefig("debug_projection.png")
+        print("📸 'debug_projection.png' を保存しました。")
 
 if __name__ == "__main__":
     debug_projection()
