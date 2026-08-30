@@ -56,7 +56,7 @@ class ANERenderer {
     }
     
     private func setupMetalHeap() {
-        let singleDisplayBufferSize = layerByteCount * 4
+        let singleDisplayBufferSize = layerByteCount * 5
         let totalRequiredMemory = singleDisplayBufferSize * 4
         
         let heapDescriptor = MTLHeapDescriptor()
@@ -145,6 +145,7 @@ class ANERenderer {
                 "colors_b": colorsBArray
             ]
             var preOutputs = try await pre.run(inputs: preInputs)
+ 
 
             
             // -----------------------------------------------------------------
@@ -152,37 +153,47 @@ class ANERenderer {
             // -----------------------------------------------------------------
             var rstInputs: [String: NDArray] = [:]
             
-        rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
-        rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        rstInputs["c0"] = preOutputs.remove("sub_3")?.ndArray
-        
-        rstInputs["a1"] = preOutputs.remove("sub_4")?.ndArray
-        rstInputs["b1"] = preOutputs.remove("sub_5")?.ndArray
-        rstInputs["c1"] = preOutputs.remove("sub_7")?.ndArray
-        
-        rstInputs["a2"] = preOutputs.remove("sub_8")?.ndArray
-        rstInputs["b2"] = preOutputs.remove("sub_9")?.ndArray
-        rstInputs["c2"] = preOutputs.remove("sub_11")?.ndArray
-        
-        let colorsR = preOutputs.remove("colors_r")?.ndArray
-        let colorsG = preOutputs.remove("colors_g")?.ndArray
-        let colorsB = preOutputs.remove("colors_b")?.ndArray
-        
-        rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
-        rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
-        rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
-        
-        rstInputs["p0_iz"] = preOutputs.remove("view_9")?.ndArray
-        rstInputs["p1_iz"] = preOutputs.remove("view_10")?.ndArray
-        rstInputs["p2_iz"] = preOutputs.remove("view_11")?.ndArray
-        
-        let placeholderUV = rstInputs["r0"]
-        rstInputs["u0"] = placeholderUV; rstInputs["v0"] = placeholderUV
-        rstInputs["u1"] = placeholderUV; rstInputs["v1"] = placeholderUV
-        rstInputs["u2"] = placeholderUV; rstInputs["v2"] = placeholderUV
-        
-        rstInputs["processed_texture"] = alignedTextureArray
-            
+        // 1. 先にすべての出力を変数として取り出す（removeは1回だけ）
+                let a0 = preOutputs.remove("sub")?.ndArray
+                let b0 = preOutputs.remove("sub_1")?.ndArray
+                let c0 = preOutputs.remove("sub_3")?.ndArray
+                
+                let a1 = preOutputs.remove("sub_4")?.ndArray
+                let b1 = preOutputs.remove("sub_5")?.ndArray
+                let c1 = preOutputs.remove("sub_7")?.ndArray
+                
+                let a2 = preOutputs.remove("sub_8")?.ndArray
+                let b2 = preOutputs.remove("sub_9")?.ndArray
+                let c2 = preOutputs.remove("sub_11")?.ndArray
+                
+                let colorsR = preOutputs.remove("colors_r")?.ndArray
+                let colorsG = preOutputs.remove("colors_g")?.ndArray
+                let colorsB = preOutputs.remove("colors_b")?.ndArray
+                
+                let p0_iz = preOutputs.remove("view_9")?.ndArray
+                let p1_iz = preOutputs.remove("view_10")?.ndArray
+                let p2_iz = preOutputs.remove("view_11")?.ndArray
+                
+                // 2. ラスタライザの入力にマッピング
+                rstInputs["a0"] = a0; rstInputs["b0"] = b0; rstInputs["c0"] = c0
+                rstInputs["a1"] = a1; rstInputs["b1"] = b1; rstInputs["c1"] = c1
+                rstInputs["a2"] = a2; rstInputs["b2"] = b2; rstInputs["c2"] = c2
+                
+                // カラーは同じものを使い回す
+                rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
+                rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
+                rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
+                
+                rstInputs["p0_iz"] = p0_iz
+                rstInputs["p1_iz"] = p1_iz
+                rstInputs["p2_iz"] = p2_iz
+                
+                // UVのプレースホルダー（r0を流用）
+                rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
+                rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
+                rstInputs["u2"] = colorsR; rstInputs["v2"] = colorsR
+                
+                rstInputs["processed_texture"] = alignedTextureArray
             // -----------------------------------------------------------------
             // STAGE 3: Metal Shared Canvas Direct Blit
             // -----------------------------------------------------------------
@@ -203,9 +214,13 @@ class ANERenderer {
             
             let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
             rstOutputViews.insert(viewForMask, for: "convolution_4")
+        let viewForZ = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 4, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForZ, for: "convolution_5")
 
             // 戻り値は ~Copyable なので、変数に束縛せずに破棄する
             let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
+        
+
         }
 }
 

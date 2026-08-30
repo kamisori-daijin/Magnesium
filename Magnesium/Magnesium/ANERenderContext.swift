@@ -100,29 +100,25 @@ class ANERenderContext {
                 self.isComputing = true
                 self.angle += 0.05
                 
-                let radius: Float = 5.5
+                let radius: Float = 5.0
                 let eyeX = radius * sin(self.angle)
                 let eyeZ = radius * cos(self.angle)
                 
                 let cameraMatrix = mgDevice.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
+                    eye: SIMD3<Float>(eyeX, 2.0, eyeZ),
                     target: SIMD3<Float>(0.0, 0.0, 0.0),
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
 
-                // Reuse
-                let wChannelOffset = 3 * 3 * 64
-                for faceIdx in 0..<64 {
-                    self.vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
-                }
+                // 配列をゼロリセット
+                self.vertices = [Float16](repeating: 0.0, count: 1 * 64 * 4 * 3)
+                self.mvpWeights = [Float16](repeating: 0.0, count: 1 * 64 * 4 * 4)
 
-                let pyramidFaces: [[[Float16]]] = [
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
+                let pyramidFaces: [[Float16]] = [
+                    [ 0.0,  1.0, 0.0,  -1.0, -1.0, 1.0,   1.0, -1.0, 1.0,   0.0, 0.0, 0.0],
+                    [ 0.0,  1.0, 0.0,   1.0, -1.0, 1.0,   1.0, -1.0, -1.0,  0.0, 0.0, 0.0],
+                    [ 0.0,  1.0, 0.0,   1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  0.0, 0.0, 0.0],
+                    [ 0.0,  1.0, 0.0,  -1.0, -1.0, -1.0, -1.0, -1.0, 1.0,   0.0, 0.0, 0.0]
                 ]
                 
                 let faceColors: [(Float16, Float16, Float16)] = [
@@ -130,33 +126,14 @@ class ANERenderContext {
                 ]
 
                 for i in 0..<4 {
-                    let slot = i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue -= 2.0 }
-                            self.vertices[pIndex] = offsetValue
-                        }
-                    }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+                    self.colorsR[i] = faceColors[i].0
+                    self.colorsG[i] = faceColors[i].1
+                    self.colorsB[i] = faceColors[i].2
+                    
+                    for v in 0..<12 { self.vertices[(i * 12) + v] = pyramidFaces[i][v] }
+                    for m in 0..<16 { self.mvpWeights[(i * 16) + m] = cameraMatrix[m] }
                 }
 
-                for i in 0..<4 {
-                    let slot = 4 + i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue += 2.0 }
-                            self.vertices[pIndex] = offsetValue
-                        }
-                    }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
-                }
-                
                 guard let mgCommandQueue = mgDevice.makeCommandQueue(),
                       let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
                       let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
@@ -164,13 +141,13 @@ class ANERenderContext {
                     return
                 }
                 
-                self.vertices.withUnsafeBytes { vertexPtr in
-                    mgEncoder.setVertexBytes(vertexPtr.baseAddress!, length: self.vertices.count * 2, index: 0)
+                // 💡 API仕様に合わせて setVertexBytes でデータを渡す
+                self.vertices.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.vertices.count * 2, index: 0)
                 }
-                self.mvpWeights.withUnsafeBytes { mvpPtr in
-                    mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: self.mvpWeights.count * 2, index: 1)
+                self.mvpWeights.withUnsafeBytes { ptr in
+                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.mvpWeights.count * 2, index: 1)
                 }
-              
                 self.colorsR.withUnsafeBytes { ptr in
                     mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsR.count * 2, index: 2)
                 }
@@ -182,14 +159,11 @@ class ANERenderContext {
                 }
                 
                 mgEncoder.setFragmentTexture(self.debugTextureData, index: 0)
-                
                 mgEncoder.drawPrimitives(vertexCount: 8)
                 mgEncoder.endEncoding()
                 
                 do {
                     try await mgCommandBuffer.commit()
-                    self.currentEventValue += 1
-                    self.sharedEvent?.signaledValue = self.currentEventValue
                 } catch {
                     print("Inference error: \(error)")
                 }
@@ -198,7 +172,6 @@ class ANERenderContext {
             }
         }
     }
-
     // Output
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
