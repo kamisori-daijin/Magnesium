@@ -19,25 +19,26 @@ def debug_projection():
         print(f"[1] Transformed Shape: {transformed.shape}")
         print(f"    Transformed Max: {transformed.max().item()}, Min: {transformed.min().item()}")
         
-        X_c = transformed[:, :, 0:1, :].transpose(2, 3)
-        Y_c = transformed[:, :, 1:2, :].transpose(2, 3)
-        W_c = transformed[:, :, 3:4, :].transpose(2, 3)
-        
-        safe_W = torch.relu(W_c) + torch.relu(-W_c) + 0.02
-        print(f"[2] safe_W Max: {safe_W.max().item()}, Min: {safe_W.min().item()}")
-        
-        screen_x = X_c / safe_W
-        screen_y = Y_c / safe_W
-        
-        x = screen_x[0, 0, :3, 0].numpy()
-        y = screen_y[0, 0, :3, 0].numpy()
-        
-        print(f"[3] Screen X: {x}")
-        print(f"[4] Screen Y: {y}")
-        
-        if torch.all(screen_x == 0) and torch.all(screen_y == 0):
-            print("⚠️ 警告: すべての座標がゼロです。W除算か行列の掛け算に問題があります。")
-        
+    # 💡 XYZWが最後の次元にある場合
+    X_c = transformed[:, :, :, 0:1]
+    Y_c = transformed[:, :, :, 1:2]
+    W_c = transformed[:, :, :, 3:4]
+    
+    safe_W = torch.relu(W_c) + torch.relu(-W_c) + 0.02
+    print(f"[2] safe_W Max: {safe_W.max().item()}, Min: {safe_W.min().item()}")
+    
+    screen_x = X_c / safe_W
+    screen_y = Y_c / safe_W
+    
+    x = screen_x[0, 0, :3, 0].numpy()
+    y = screen_y[0, 0, :3, 0].numpy()
+    
+    print(f"[3] Screen X: {x}")
+    print(f"[4] Screen Y: {y}")
+    
+    if torch.all(screen_x == 0) and torch.all(screen_y == 0):
+        print("⚠️ 警告: すべての座標がゼロです。W除算か行列の掛け算に問題があります。")
+    
         plt.figure(figsize=(6, 6))
         plt.plot(x, y, 'r-')
         plt.plot([x[2], x[0]], [y[2], y[0]], 'r-')
