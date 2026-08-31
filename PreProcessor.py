@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class ANE3DPreProcessor64(nn.Module):
     def __init__(self):
@@ -8,10 +9,17 @@ class ANE3DPreProcessor64(nn.Module):
         
     def forward(self, expanded_vertices, mvp_weights, colors_r, colors_g, colors_b):
         # 1. 座標変換
-        transformed = torch.matmul(mvp_weights.to(torch.float16), expanded_vertices.to(torch.float16))
+        V = expanded_vertices.squeeze(0)
+        W = mvp_weights.squeeze(0)
         
-        # 💡 4次元を維持: [1, 64, 4, 1]
-        # 💡 XYZWが最後の次元にある場合の正しいスライス
+        # バッチ行列積 (bmm) を使用
+        # これにより、64面それぞれに対して 4x4 の行列積が独立して計算されます
+        transformed = torch.bmm(W, V)
+        
+        # 元の形 [1, 64, 4, 4] に戻す
+        transformed = transformed.unsqueeze(0)
+        
+        # --- 以降は元のコードと同じ ---
         X_c = transformed[:, :, :, 0].unsqueeze(-1)
         Y_c = transformed[:, :, :, 1].unsqueeze(-1)
         W_c = transformed[:, :, :, 3].unsqueeze(-1)
@@ -35,6 +43,7 @@ class ANE3DPreProcessor64(nn.Module):
         p0_iz, p1_iz, p2_iz = inv_W[:, :, 0:1, :], inv_W[:, :, 1:2, :], inv_W[:, :, 2:3, :]
 
         # 2. エッジ計算
+       
         A0 = p0_y - p1_y
         B0 = p1_x - p0_x
         zero_fp16 = torch.tensor(0.0, dtype=torch.float16, device=A0.device)
