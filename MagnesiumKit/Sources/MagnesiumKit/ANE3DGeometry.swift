@@ -55,25 +55,36 @@ public struct ANE3DGeometry {
         return packed
     }
 
-    /// [1, 64, 4, 3] 形状の頂点データを生成
-    public func getDummyVertices() -> [Float16] {
-        var buffer = [Float16](repeating: 0.0, count: 1 * 64 * 4 * 3)
-        
-        let pyramidFaces: [[Float]] = [
-            [ 0.0,  1.0, 0.0,  -1.0, -1.0, 1.0,   1.0, -1.0, 1.0,   0.0, 0.0, 0.0], // Face0
-            [ 0.0,  1.0, 0.0,   1.0, -1.0, 1.0,   1.0, -1.0, -1.0,  0.0, 0.0, 0.0], // Face1
-            [ 0.0,  1.0, 0.0,   1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  0.0, 0.0, 0.0], // Face2
-            [ 0.0,  1.0, 0.0,  -1.0, -1.0, -1.0, -1.0, -1.0, 1.0,   0.0, 0.0, 0.0]  // Face3
-        ]
-        
-        for faceIdx in 0..<64 {
-            let faceData = faceIdx < 4 ? pyramidFaces[faceIdx] : [Float](repeating: 0.0, count: 12)
-            for i in 0..<12 {
-                buffer[(faceIdx * 12) + i] = Float16(faceData[i])
+    /// [1, 64, 4, 4] 形状の頂点データを生成
+        public func getDummyVertices() -> [Float16] {
+            // 💡 サイズを 4 * 4 に拡張
+            var buffer = [Float16](repeating: 0.0, count: 1 * 64 * 4 * 4)
+            
+            let pyramidFaces: [[Float]] = [
+                [ 0.0,  1.0, 0.0,  -1.0, -1.0, 1.0,   1.0, -1.0, 1.0,   0.0, 0.0, 0.0], // Face0
+                [ 0.0,  1.0, 0.0,   1.0, -1.0, 1.0,   1.0, -1.0, -1.0,  0.0, 0.0, 0.0], // Face1
+                [ 0.0,  1.0, 0.0,   1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  0.0, 0.0, 0.0], // Face2
+                [ 0.0,  1.0, 0.0,  -1.0, -1.0, -1.0, -1.0, -1.0, 1.0,   0.0, 0.0, 0.0]  // Face3
+            ]
+            
+            for faceIdx in 0..<64 {
+                let faceData = faceIdx < 4 ? pyramidFaces[faceIdx] : [Float](repeating: 0.0, count: 12)
+                
+                for v in 0..<4 {
+                    let baseIdx = (faceIdx * 16) + (v * 4)
+                    let srcIdx = v * 3
+                    
+                    // X, Y, Z をコピー
+                    buffer[baseIdx + 0] = Float16(faceData[srcIdx + 0])
+                    buffer[baseIdx + 1] = Float16(faceData[srcIdx + 1])
+                    buffer[baseIdx + 2] = Float16(faceData[srcIdx + 2])
+                    
+                    // 💡 W座標に 1.0 を設定
+                    buffer[baseIdx + 3] = (faceIdx < 4) ? 1.0 : 0.0
+                }
             }
+            return buffer
         }
-        return buffer
-    }
 
     /// [1, 64, 4, 4] 形状のMVPウェイトを生成
     public func getDummyMVPWeights() -> [Float16] {

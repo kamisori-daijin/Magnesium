@@ -12,9 +12,9 @@ class ANE3DPreProcessor64(nn.Module):
         
         # 💡 4次元を維持: [1, 64, 4, 1]
         # 💡 XYZWが最後の次元にある場合の正しいスライス
-        X_c = transformed[:, :, :, 0:1]
-        Y_c = transformed[:, :, :, 1:2]
-        W_c = transformed[:, :, :, 3:4]
+        X_c = transformed[:, :, :, 0].unsqueeze(-1)
+        Y_c = transformed[:, :, :, 1].unsqueeze(-1)
+        W_c = transformed[:, :, :, 3].unsqueeze(-1)
         
         abs_W_c = torch.relu(W_c) + torch.relu(-W_c)
         safe_W = abs_W_c + 0.02

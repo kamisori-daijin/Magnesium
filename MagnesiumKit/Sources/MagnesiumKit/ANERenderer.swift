@@ -42,7 +42,7 @@ class ANERenderer {
         self.texFunction = try texModel?.loadFunction(named: "main")
         
         
-        self.expandedVerticesArray = NDArray(shape:[1, 64, 4, 3], scalarType: .float16)
+        self.expandedVerticesArray = NDArray(shape:[1, 64, 4, 4], scalarType: .float16)
         self.mvpWeightsArray = NDArray(shape:[1, 64, 4, 4], scalarType: .float16)
         self.colorsRArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
         self.colorsGArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
@@ -169,9 +169,9 @@ class ANERenderer {
                 let colorsG = preOutputs.remove("colors_g")?.ndArray
                 let colorsB = preOutputs.remove("colors_b")?.ndArray
                 
-                let p0_iz = preOutputs.remove("slice_11")?.ndArray
-                let p1_iz = preOutputs.remove("slice_12")?.ndArray
-                let p2_iz = preOutputs.remove("slice_13")?.ndArray
+                let p0_iz = preOutputs.remove("slice_8")?.ndArray
+                let p1_iz = preOutputs.remove("slice_9")?.ndArray
+                let p2_iz = preOutputs.remove("slice_10")?.ndArray
                 
                 // 2. ラスタライザの入力にマッピング
                 rstInputs["a0"] = a0; rstInputs["b0"] = b0; rstInputs["c0"] = c0

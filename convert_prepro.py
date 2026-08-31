@@ -17,7 +17,7 @@ model.eval()
 # 💡 forward(self, expanded_vertices, mvp_weights, colors_r, colors_g, colors_b)
 
 # 頂点バッファ: [バッチ, ポリゴン数(64), 同次座標(4), 頂点数(3)]
-dummy_vertices = torch.zeros(1, 64, 4, 3, dtype=torch.float16)
+dummy_vertices = torch.zeros(1, 64, 4, 4, dtype=torch.float16)
 
 # MVP行列バッファ: [バッチ, ポリゴン数(64), 行列行(4), 行列列(4)]
 dummy_mvp_w    = torch.zeros(1, 64, 4, 4, dtype=torch.float16)
