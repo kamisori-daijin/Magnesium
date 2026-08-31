@@ -32,7 +32,7 @@ class ANERenderer {
     
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
-    private let layerByteCount = 64 * 1 * 256 * 256 * 2
+    private let layerByteCount = 64 * 1 * 512 * 512 * 2
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
@@ -195,20 +195,20 @@ class ANERenderer {
         
         
        
-            var rstOutputViews = InferenceFunction.MutableViews()
-            let shape: [Int] = [64, 1, 256, 256]
+        nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
+        let shape: [Int] = [64, 1, 512, 512]
             
-            let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForR, for: "convolution_4")
+        let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForR, for: "pixel_shuffle")
             
-            let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForG, for: "convolution_5")
+        let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForG, for: "pixel_shuffle_1")
             
             let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForB, for: "convolution_6")
+            rstOutputViews.insert(viewForB, for: "pixel_shuffle_2")
             
             let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForMask, for: "convolution_7")
+            rstOutputViews.insert(viewForMask, for: "pixel_shuffle_3")
 
             let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
         }
