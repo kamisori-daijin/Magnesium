@@ -104,23 +104,32 @@ def main():
     # -----------------------------------------------------------------
     # 3. デバッグ情報の出力
     # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # 3. デバッグ情報の出力 (犯人を特定するための拡張デバッグ)
+    # -----------------------------------------------------------------
     print("\n=== 🔍 DETAILED RASTERIZER DEBUG INFO ===")
     
-    # 修正: mask_w ではなく、プリプロセッサの出力から深度情報を確認する
     for i in range(4):
         iz_max = pre_outputs[18][0, i, 0, 0].item() # p0_iz
-        e0_max = pre_outputs[0][0, i, 0, 0].item()  # A0
+        e0_max = pre_outputs[0][0, i, 0, 0].item()  # A0 (Edge0の傾き要素)
         
-        # 深度が0より大きければ、その面はカメラの前に存在していると判定
+        # 💡 追加: ラスタライザーに渡っている3つのエッジ関数の基準値をチェック
+        # (pre_outputs[0]=A0, pre_outputs[3]=A1, pre_outputs[6]=A2)
+        e1_max = pre_outputs[3][0, i, 0, 0].item()  # A1
+        e2_max = pre_outputs[6][0, i, 0, 0].item()  # A2
+        
         status = "✅ カメラの前にあります" if iz_max > 0 else "❌ 画面外または裏面"
         
         print(f"Face {i} ({['Red', 'Green', 'Blue', 'Yellow'][i]}):")
         print(f"  - Status             : {status}")
         print(f"  - Depth (1/Z)        : {iz_max:.4f}")
-        print(f"  - Edge0 Value        : {e0_max:.4f}")
+        print(f"  - Edge0 (A0) Value   : {e0_max:.4f}")
+        print(f"  - Edge1 (A1) Value   : {e1_max:.4f}") # 💡 追加
+        print(f"  - Edge2 (A2) Value   : {e2_max:.4f}") # 💡 追加
 
     print(f"\nTotal Mask Max Value   : {mask_w.max().item()}")
     print("========================================\n")
+
 
     # -----------------------------------------------------------------
     # 4. 後処理と画像保存

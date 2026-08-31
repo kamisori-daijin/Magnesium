@@ -53,9 +53,11 @@ class ANE3DRenderer64(nn.Module):
         total_area = abs_sum_edges + 0.02
         inv_area = 1.0 / total_area
         
-        w0 = edges1 * inv_area * mask
-        w1 = edges2 * inv_area * mask
-        w2 = edges0 * inv_area * mask
+        # 💡 【修正点】対応関係を正順（edges0->w0, edges1->w1, edges2->w2）に修正
+        # これにより、プリプロセッサ側でプラスに出ているエッジ強度が、正しく対応する頂点カラーや深度に掛け合わされます。
+        w0 = edges0 * inv_area * mask
+        w1 = edges1 * inv_area * mask
+        w2 = edges2 * inv_area * mask
 
         # 4. 深度(Z)バッファ計算 (インプレース操作 add_ を通常の + に変更)
         pixel_inv_z = (to_fp16(p0_iz) * w0) + (to_fp16(p1_iz) * w1) + (to_fp16(p2_iz) * w2)

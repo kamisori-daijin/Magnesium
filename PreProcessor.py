@@ -65,8 +65,8 @@ class ANE3DPreProcessor64(nn.Module):
         B1 = p2_x - p1_x
         C1 = zero_fp16 - (A1 * p1_x) - (B1 * p1_y)
         
-        A2 = p2_y - p0_y
-        B2 = p0_x - p2_x
+        A2 = p0_y - p2_y
+        B2 = p2_x - p0_x
         C2 = zero_fp16 - (A2 * p2_x) - (B2 * p2_y)
         
         A0 = A0 * clip_mask_view
