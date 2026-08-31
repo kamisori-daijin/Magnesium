@@ -63,10 +63,11 @@ def main():
         
         mvp_weights[0, i, :, :] = base_mvp
         
-        face_tensor = torch.tensor(pyramid_faces[i], dtype=torch.float16)
+        face_tensor = torch.tensor(pyramid_faces[i], dtype=torch.float16) # [3, 4]
+        
+        # 修正前: expanded_vertices[0, i, :, :] = face_tensor.t()
+        # 修正後: 転置せず、最初の3頂点分にそのまま代入
         expanded_vertices[0, i, :3, :] = face_tensor
-        print("Face 0 Vertex 0:", expanded_vertices[0, 0, 0, :])
-        print("Face 1 Vertex 0:", expanded_vertices[0, 1, 0, :])
 
     for i in range(4, 64):
         mvp_weights[0, i, :, :] = torch.eye(4, dtype=torch.float16)
@@ -77,8 +78,21 @@ def main():
     # 2. パイプラインのフォワード実行
     # -----------------------------------------------------------------
     print("🚀 Running PreProcessor...")
+    
+    # 🔍 追加: プリプロセッサ実行前のデータ確認
+    print("\n--- 🔍 [DEBUG] 入力データの確認 ---")
+    print("Face 0 の頂点1:", expanded_vertices[0, 0, 1, :])
+    print("Face 1 の頂点1:", expanded_vertices[0, 1, 1, :])
+    print("-----------------------------------\n")
+    
     with torch.no_grad():
         pre_outputs = pre_model(expanded_vertices, mvp_weights, colors_r, colors_g, colors_b)
+        
+        # 🔍 追加: プリプロセッサ実行後のデータ確認
+        print("\n--- 🔍 [DEBUG] 入力データの確認 ---")
+        print("Face 0 の頂点1:", expanded_vertices[0, 0, 1, :])
+        print("Face 1 の頂点1:", expanded_vertices[0, 1, 1, :])
+        print("-----------------------------------\n")
         
         dummy_uv = torch.zeros((1, 64, 1, 1), dtype=torch.float16)
         uv_params = (dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv)

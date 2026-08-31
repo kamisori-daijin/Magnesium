@@ -66,10 +66,16 @@ class ANE3DRenderer64(nn.Module):
         color_payload_b = (to_fp16(B0_col) * w0) + (to_fp16(B1_col) * w1) + (to_fp16(B2_col) * w2)
 
         # 6. Z-Buffer テスト
-        sum_inv_z = torch.conv2d(pixel_inv_z, self.sum_kernel)
-        z_diff = torch.relu(sum_inv_z - pixel_inv_z)
-
-        z_blend_weights = torch.clamp(1.0 - (z_diff * 10.0), min=zero_fp16, max=one_fp16)
+        valid_mask = torch.clamp(mask, min=zero_fp16, max=one_fp16)
+        
+        # 手前のピクセルを強調するために、深度に大きな値を掛ける
+        z_logits = pixel_inv_z * 100.0
+        
+        # 描画対象外のピクセルは、Softmaxの計算から除外する
+        z_logits = z_logits + (valid_mask - 1.0) * 10000.0
+        
+        # Softmaxで、最も手前にあるピクセルのウェイトを1に近づける
+        z_blend_weights = torch.nn.functional.softmax(z_logits, dim=1)
         
         final_color_r = color_payload_r * z_blend_weights
         final_color_g = color_payload_g * z_blend_weights
