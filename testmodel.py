@@ -24,7 +24,6 @@ def create_camera_matrix(eye, target, up):
     return torch.from_numpy(R @ T).to(torch.float16)
 
 def create_debug_texture():
-    # レンダラーが期待する 64チャンネルのテクスチャを生成
     tex = torch.zeros((1, 64, 256, 256), dtype=torch.float16)
     for y in range(256):
         for x in range(256):
@@ -39,9 +38,9 @@ def main():
     rast_model = ANE3DRenderer64(width=256, height=256).to(dtype=torch.float16).eval()
 
     # -----------------------------------------------------------------
-    # 1. データの準備 (最初から 1, 64, ... の新設計形状で Tensor を作成)
+    # 1. データの準備
     # -----------------------------------------------------------------
-    expanded_vertices = torch.zeros((1, 64, 4, 3), dtype=torch.float16)
+    expanded_vertices = torch.zeros((1, 64, 4, 4), dtype=torch.float16)
     mvp_weights = torch.zeros((1, 64, 4, 4), dtype=torch.float16)
     colors_r = torch.zeros((1, 64, 1, 1), dtype=torch.float16)
     colors_g = torch.zeros((1, 64, 1, 1), dtype=torch.float16)
@@ -64,55 +63,59 @@ def main():
         
         mvp_weights[0, i, :, :] = base_mvp
         
-        face_tensor = torch.tensor(pyramid_faces[i], dtype=torch.float16) # [3, 4]
-        expanded_vertices[0, i, :, :] = face_tensor.t() # [4, 3] に転置して代入
+        face_tensor = torch.tensor(pyramid_faces[i], dtype=torch.float16)
+        expanded_vertices[0, i, :3, :] = face_tensor
+        print("Face 0 Vertex 0:", expanded_vertices[0, 0, 0, :])
+        print("Face 1 Vertex 0:", expanded_vertices[0, 1, 0, :])
 
-    # 残りの空きスロット(4〜63)に単位行列を詰める
     for i in range(4, 64):
         mvp_weights[0, i, :, :] = torch.eye(4, dtype=torch.float16)
 
     processed_texture = create_debug_texture()
 
     # -----------------------------------------------------------------
-    # 2. パイプラインのフォワード実行 (純粋なPyTorch演算)
-    # -----------------------------------------------------------------
-    # -----------------------------------------------------------------
-    # 2. パイプラインのフォワード実行 (純粋なPyTorch演算)
+    # 2. パイプラインのフォワード実行
     # -----------------------------------------------------------------
     print("🚀 Running PreProcessor...")
     with torch.no_grad():
-        # プリプロセッサの戻り値（21個のタプル）を受ける
         pre_outputs = pre_model(expanded_vertices, mvp_weights, colors_r, colors_g, colors_b)
         
-        # 💡 UV座標のダミー（6個分）をテンソルで用意する
-        # 現状はカラーバッファと同じ形状 [1, 64, 1, 1] のゼロテンソルを仮に流用
         dummy_uv = torch.zeros((1, 64, 1, 1), dtype=torch.float16)
         uv_params = (dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv, dummy_uv)
         
         print("🚀 Running Rasterizer...")
-        # 1. プリプロ出力 (21個)
-        # 2. 生成したUVダミー (6個)
-        # 3. テクスチャ (1個)
-        # これらをすべて足して合計28個の引数をレンダラーに綺麗にアンパックして流し込みます
         all_args = pre_outputs + uv_params + (processed_texture,)
-        
         R, G, B, mask_w, max_inv_z = rast_model(*all_args)
 
+    # -----------------------------------------------------------------
+    # 3. デバッグ情報の出力
+    # -----------------------------------------------------------------
+    print("\n=== 🔍 DETAILED RASTERIZER DEBUG INFO ===")
+    
+    # 修正: mask_w ではなく、プリプロセッサの出力から深度情報を確認する
+    for i in range(4):
+        iz_max = pre_outputs[18][0, i, 0, 0].item() # p0_iz
+        e0_max = pre_outputs[0][0, i, 0, 0].item()  # A0
+        
+        # 深度が0より大きければ、その面はカメラの前に存在していると判定
+        status = "✅ カメラの前にあります" if iz_max > 0 else "❌ 画面外または裏面"
+        
+        print(f"Face {i} ({['Red', 'Green', 'Blue', 'Yellow'][i]}):")
+        print(f"  - Status             : {status}")
+        print(f"  - Depth (1/Z)        : {iz_max:.4f}")
+        print(f"  - Edge0 Value        : {e0_max:.4f}")
+
+    print(f"\nTotal Mask Max Value   : {mask_w.max().item()}")
+    print("========================================\n")
 
     # -----------------------------------------------------------------
-    # 3. 後処理とNumPy変換、画像保存
+    # 4. 後処理と画像保存
     # -----------------------------------------------------------------
     print("📸 Processing outputs and saving image...")
     r_out = R[0, 0, :, :].numpy()
     g_out = G[0, 0, :, :].numpy()
     b_out = B[0, 0, :, :].numpy()
     mask_out = mask_w[0, 0, :, :].numpy()
-
-    print("\n=== 🔍 RASTERIZER DEBUG INFO ===")
-    print(f"Mask Max Value (マスクの最大値) : {mask_w.max().item()}") # ❌これが0なら、ポリゴンが1つも描画されていません
-    print(f"Edges0 Max/Min (エッジ0の範囲) : {pre_outputs[0].max().item()} / {pre_outputs[0].min().item()}")
-    print(f"p0_iz Max Value (深度の逆数)    : {pre_outputs[18].max().item()}") # ❌これが0なら、座標変換自体が失敗しています
-    print("================================\n")
 
     safe_mask = mask_out + 1e-6
     final_r = np.where(mask_out > 0.001, r_out / safe_mask, 0.0)
@@ -123,7 +126,7 @@ def main():
     final_img_data = (np.clip(final_frame_rgb, 0.0, 1.0) * 255).astype(np.uint8)
     
     Image.fromarray(final_img_data, 'RGB').save("torch_final_output.png")
-    print("✨ 'torch_final_output.png' saved successfully via pure PyTorch!")
+    print("✨ 'torch_final_output.png' saved successfully!")
 
 if __name__ == "__main__":
     main()
