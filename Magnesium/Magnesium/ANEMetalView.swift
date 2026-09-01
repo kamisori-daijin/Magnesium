@@ -32,6 +32,8 @@ struct ANEMetalView: NSViewRepresentable {
         mtkView.framebufferOnly = false
         mtkView.colorPixelFormat = .bgra8Unorm
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        mtkView.autoResizeDrawable = false
+        mtkView.drawableSize = CGSize(width: 1024, height: 1024)
         
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false

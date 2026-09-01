@@ -80,12 +80,12 @@ class ANERenderContext {
     func startCameraRotation() {
         timer?.invalidate()
         
-        timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.005, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let mgDevice = self.mgDevice, !self.isComputing else { return }
                 
                 self.isComputing = true
-                self.angle += 0.05
+                self.angle += 0.0083 
                 
                 let radius: Float = 5.5
                 let eyeX = radius * sin(self.angle)
