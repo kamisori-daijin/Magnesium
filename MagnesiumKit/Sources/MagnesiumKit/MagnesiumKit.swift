@@ -8,6 +8,9 @@ public protocol MGDevice: AnyObject {
     func makeCommandQueue() -> MGCommandQueue?
     func getDisplayBuffer(index: Int) -> MTLBuffer?
     func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16]
+    
+    // 【追加】ゼロコピー用のポインタアクセス
+    func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void)
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
@@ -44,6 +47,23 @@ internal final class MagnesiumDevice: MGDevice {
     public func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16] {
         geometry.createCameraMatrix(eye: eye, target: target, up: up)
     }
+    
+    // 【追加】ANERendererのポインタを直接公開
+    public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
+        guard let renderer = renderer else { return }
+        
+        renderer.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { vPtr, _, _ in
+            renderer.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { mPtr, _, _ in
+                renderer.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { rPtr, _, _ in
+                    renderer.colorsGArray.mutableView(as: Float16.self).withUnsafeMutablePointer { gPtr, _, _ in
+                        renderer.colorsBArray.mutableView(as: Float16.self).withUnsafeMutablePointer { bPtr, _, _ in
+                            body(vPtr, mPtr, rPtr, gPtr, bPtr)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @MainActor private final class MagnesiumCommandQueue: MGCommandQueue {
@@ -64,35 +84,20 @@ internal final class MagnesiumDevice: MGDevice {
     }
     
     func commit() async throws {
-        guard let enc = encoder, let renderer = device.renderer else { return }
-        if !enc.boundTexture.isEmpty { renderer.updateTexture(pixelData: enc.boundTexture) }
-        if !enc.boundVertices.isEmpty {
-            renderer.updateGeometry(vertices: enc.boundVertices, mvpWeights: enc.boundMVP, r: enc.colorsR, g: enc.colorsG, b: enc.colorsB)
-        }
+        guard let renderer = device.renderer else { return }
+        // 【修正】データは既にポインタ経由で書き込まれているため、描画のみを実行
         try await renderer.drawFrame()
     }
 }
 
 @MainActor private final class MagnesiumRenderCommandEncoder: MGRenderCommandEncoder {
     let device: MagnesiumDevice
-    var boundVertices: [Float16] = []
-    var boundMVP: [Float16] = []
-    var boundTexture: [Float16] = []
-    var colorsR: [Float16] = []; var colorsG: [Float16] = []; var colorsB: [Float16] = []
     
     init(device: MagnesiumDevice) { self.device = device }
     
-    func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {
-            let count = length / MemoryLayout<Float16>.size
-            let ptr = bytes.bindMemory(to: Float16.self, capacity: count)
-            
-            if index == 0 { self.boundVertices = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-            else if index == 1 { self.boundMVP = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-            else if index == 2 { self.colorsR = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-            else if index == 3 { self.colorsG = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-            else if index == 4 { self.colorsB = Array(UnsafeBufferPointer(start: ptr, count: count)) }
-    }
-    func setFragmentTexture(_ texture: [Float16], index: Int) { self.boundTexture = texture }
+    // 【修正】ゼロコピー化により、ここでのデータ保持は不要に
+    func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {}
+    func setFragmentTexture(_ texture: [Float16], index: Int) {}
     func drawPrimitives(vertexCount: Int) {}
     func endEncoding() {}
 }

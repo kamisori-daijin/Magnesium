@@ -25,20 +25,9 @@ class ANERenderContext {
     var isComputing = false
     
     var activeDevice: MTLDevice?
-    // Re Use buffer
-    private var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
-    private var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
-    private var colorsR = [Float16](repeating: 0.0, count: 64)
-    private var colorsG = [Float16](repeating: 0.0, count: 64)
-    private var colorsB = [Float16](repeating: 0.0, count: 64)
     
-    private var debugTextureData: [Float16] = []
-    init(){
-        self.debugTextureData = geometry.createDebugCheckerboardTexture()
-    }
+    init() {}
     
-    
-    // Setup
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
@@ -60,11 +49,9 @@ class ANERenderContext {
     func handleSelectedURLs(_ urls: [URL]) {
         guard urls.count == 3 else { return }
         
-       
         let allowedExtensions = ["aimodel"]
         
         for url in urls {
-        
             guard allowedExtensions.contains(url.pathExtension.lowercased()) else {
                 print("Error: Invalid file extension for \(url.lastPathComponent)")
                 return
@@ -89,7 +76,7 @@ class ANERenderContext {
             if self.mgDevice != nil { self.startCameraRotation() }
         }
     }
-    // Camera Loop
+
     func startCameraRotation() {
         timer?.invalidate()
         
@@ -110,51 +97,53 @@ class ANERenderContext {
                     up: SIMD3<Float>(0.0, 1.0, 0.0)
                 )
 
-                // Reuse
-                let wChannelOffset = 3 * 3 * 64
-                for faceIdx in 0..<64 {
-                    self.vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
-                }
-
-                let pyramidFaces: [[[Float16]]] = [
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
-                ]
-                
-                let faceColors: [(Float16, Float16, Float16)] = [
-                    (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
-                ]
-
-                for i in 0..<4 {
-                    let slot = i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue -= 2.0 }
-                            self.vertices[pIndex] = offsetValue
-                        }
+                // 【修正】MGDeviceのポインタに直接書き込む
+                mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
+                    let wChannelOffset = 3 * 3 * 64
+                    for faceIdx in 0..<64 {
+                        vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
+                        vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
+                        vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                     }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
-                }
 
-                for i in 0..<4 {
-                    let slot = 4 + i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue += 2.0 }
-                            self.vertices[pIndex] = offsetValue
+                    let pyramidFaces: [[[Float16]]] = [
+                        [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
+                        [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
+                        [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
+                        [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
+                    ]
+                    
+                    let faceColors: [(Float16, Float16, Float16)] = [
+                        (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
+                    ]
+
+                    for i in 0..<4 {
+                        let slot = i
+                        colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                        for v in 0..<3 {
+                            for ch in 0..<4 {
+                                let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                                var offsetValue = pyramidFaces[i][v][ch]
+                                if ch == 0 { offsetValue -= 2.0 }
+                                vertices[pIndex] = offsetValue
+                            }
                         }
+                        for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
                     }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+
+                    for i in 0..<4 {
+                        let slot = 4 + i
+                        colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                        for v in 0..<3 {
+                            for ch in 0..<4 {
+                                let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                                var offsetValue = pyramidFaces[i][v][ch]
+                                if ch == 0 { offsetValue += 2.0 }
+                                vertices[pIndex] = offsetValue
+                            }
+                        }
+                        for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+                    }
                 }
                 
                 guard let mgCommandQueue = mgDevice.makeCommandQueue(),
@@ -164,26 +153,6 @@ class ANERenderContext {
                     return
                 }
                 
-                self.vertices.withUnsafeBytes { vertexPtr in
-                    mgEncoder.setVertexBytes(vertexPtr.baseAddress!, length: self.vertices.count * 2, index: 0)
-                }
-                self.mvpWeights.withUnsafeBytes { mvpPtr in
-                    mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: self.mvpWeights.count * 2, index: 1)
-                }
-              
-                self.colorsR.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsR.count * 2, index: 2)
-                }
-                self.colorsG.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsG.count * 2, index: 3)
-                }
-                self.colorsB.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsB.count * 2, index: 4)
-                }
-                
-                mgEncoder.setFragmentTexture(self.debugTextureData, index: 0)
-                
-                mgEncoder.drawPrimitives(vertexCount: 8)
                 mgEncoder.endEncoding()
                 
                 do {
@@ -199,7 +168,6 @@ class ANERenderContext {
         }
     }
 
-    // Output
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         

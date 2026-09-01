@@ -89,42 +89,39 @@ class ANERenderer {
     }
 
     private func setupInitialGeometry() {
-        let vertices = geometry.getDummyVertices()
-        let mvp = geometry.getDummyMVPWeights()
-        let color = geometry.getDummyColor()
-        updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
-        
-        let debugTexture = geometry.createDebugCheckerboardTexture()
-        updateTexture(pixelData: debugTexture)
+        updateGeometry()
+        updateTexture()
     }
 
-    func updateGeometry(vertices: [Float16], mvpWeights: [Float16], r: [Float16], g: [Float16], b: [Float16]) {
-        var vertexView = self.expandedVerticesArray.mutableView(as: Float16.self)
-        vertexView.copyElements(fromContentsOf: vertices)
-        
-        var mvpView = self.mvpWeightsArray.mutableView(as: Float16.self)
-        mvpView.copyElements(fromContentsOf: mvpWeights)
-        
-        var rView = self.colorsRArray.mutableView(as: Float16.self)
-        rView.copyElements(fromContentsOf: r)
-        
-        var gView = self.colorsGArray.mutableView(as: Float16.self)
-        gView.copyElements(fromContentsOf: g)
-        
-        var bView = self.colorsBArray.mutableView(as: Float16.self)
-        bView.copyElements(fromContentsOf: b)
+    // ジオメトリデータをゼロコピーで更新
+    func updateGeometry() {
+            // 頂点データ (1 * 4 * 3 * 64 = 768要素)
+        self.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyVertices(to: ptr)
+        }
+            
+        // MVPウェイト (1 * 4 * 4 * 1 * 64 = 1024要素)
+        self.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyMVPWeights(to: ptr)
+        }
+            
+        // カラーデータ (各64要素)
+        self.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
+        self.colorsGArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
+        self.colorsBArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
     }
-    
-    func updateTexture(pixelData: [Float16]) {
-        var texView = self.rawTextureArray.mutableView(as: Float16.self)
-        let expectedCount = 1 * 3 * 256 * 256
         
-        if pixelData.count != expectedCount {
-            print("Warning: Received \(pixelData.count) elements, but expected \(expectedCount). Overriding with Debug Texture.")
-            let debugData = geometry.createDebugCheckerboardTexture()
-            texView.copyElements(fromContentsOf: debugData)
-        } else {
-            texView.copyElements(fromContentsOf: pixelData)
+        // テクスチャデータをゼロコピーで更新
+    func updateTexture() {
+        self.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            // 1 * 3 * 256 * 256 要素を直接書き込む
+            geometry.writeDebugCheckerboardTexture(to: ptr)
         }
     }
 
