@@ -11,16 +11,14 @@ class ANE3DRenderer64(nn.Module):
         self.internal_w = 256
         self.internal_h = 256
         
-        # 256空間用の正確な座標バッファ
         y_grid = torch.linspace(1.0, -1.0, self.internal_h, dtype=torch.float16).view(1, 1, self.internal_h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.internal_w, dtype=torch.float16).view(1, 1, 1, self.internal_w)
         
         self.register_buffer("x_grid_64ch", x_grid.expand(1, 64, self.internal_h, self.internal_w).contiguous())
         self.register_buffer("y_grid_64ch", y_grid.expand(1, 64, self.internal_h, self.internal_w).contiguous())
         
-        # 【修正】1x1 Convカーネルの形状と初期化を torch.export が誤解しないよう明示
         rgb_kernel = torch.zeros(4, 64, 1, 1, dtype=torch.float16)
-        rgb_kernel[0:3, :, 0, 0] = 1.0  # 次元を明示的に指定
+        rgb_kernel[0:3, :, 0, 0] = 1.0
         self.register_buffer("rgb_kernel", rgb_kernel)
         
         z_mask_kernel = torch.zeros(4, 64, 1, 1, dtype=torch.float16)
@@ -36,8 +34,16 @@ class ANE3DRenderer64(nn.Module):
                 R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col,
                 p0_iz, p1_iz, p2_iz,
                 U0, V0, U1, V1, U2, V2,
-                processed_texture): # Shape: (1, 64, 256, 256)
+                processed_texture):
         
+        # 【修正】ブロードキャストエラー対策: 入力テンソルを [1, 64, 1, 1] にリシェイプ
+        A0, B0, C0 = A0.view(1, 64, 1, 1), B0.view(1, 64, 1, 1), C0.view(1, 64, 1, 1)
+        A1, B1, C1 = A1.view(1, 64, 1, 1), B1.view(1, 64, 1, 1), C1.view(1, 64, 1, 1)
+        A2, B2, C2 = A2.view(1, 64, 1, 1), B2.view(1, 64, 1, 1), C2.view(1, 64, 1, 1)
+        
+        p0_iz, p1_iz, p2_iz = p0_iz.view(1, 64, 1, 1), p1_iz.view(1, 64, 1, 1), p2_iz.view(1, 64, 1, 1)
+        U0, V0, U1, V1, U2, V2 = U0.view(1, 64, 1, 1), V0.view(1, 64, 1, 1), U1.view(1, 64, 1, 1), V1.view(1, 64, 1, 1), U2.view(1, 64, 1, 1), V2.view(1, 64, 1, 1)
+
         edges0 = (A0 * self.x_grid_64ch) + (B0 * self.y_grid_64ch) + C0
         edges1 = (A1 * self.x_grid_64ch) + (B1 * self.y_grid_64ch) + C1
         edges2 = (A2 * self.x_grid_64ch) + (B2 * self.y_grid_64ch) + C2
@@ -48,8 +54,6 @@ class ANE3DRenderer64(nn.Module):
 
         total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
         
-        # 【修正】torch.exportのブロードキャストエラー対策
-        # 除算を避け、逆数（reciprocal）を一度計算してから乗算（ANE爆速化）
         inv_total_area = torch.reciprocal(total_area)
         w0 = edges1 * inv_total_area
         w1 = edges2 * inv_total_area
@@ -60,7 +64,6 @@ class ANE3DRenderer64(nn.Module):
         u_gradient = (U0 * w0 + U1 * w1 + U2 * w2)
         v_gradient = (V0 * w0 + V1 * w1 + V2 * w2)
         
-        # 【修正】除算を排除し、逆数（reciprocal）による乗算に変更
         safe_inv_z = torch.clamp(pixel_inv_z, min=1e-4)
         inv_z_reciprocal = torch.reciprocal(safe_inv_z)
         
@@ -68,7 +71,6 @@ class ANE3DRenderer64(nn.Module):
         v_sampler = processed_texture * (v_gradient * inv_z_reciprocal)
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
-        # 【検証】F.conv2d が確実に動くよう、カーネルをそのまま適用
         sum_inv_z = F.conv2d(pixel_inv_z, self.z_mask_kernel, bias=None)[:, 0:1, :, :] 
         z_diff = torch.relu(sum_inv_z - pixel_inv_z) 
         z_blend_weights = torch.clamp(self.ONES_64CH - (z_diff * self.SHARPNESS), min=0.0, max=1.0)
@@ -82,7 +84,6 @@ class ANE3DRenderer64(nn.Module):
         max_inv_z_low = F.conv2d(pixel_inv_z * z_blend_weights, self.z_mask_kernel, bias=None)[:, 0:1, :, :]
         mask_w_low = F.conv2d(z_mask, self.z_mask_kernel, bias=None)[:, 1:2, :, :]
         
-        # 1024x1024 へアップスケール（ANEネイティブサンプラーへマッピング）
         R = F.interpolate(R_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
         G = F.interpolate(G_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
         B = F.interpolate(B_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)

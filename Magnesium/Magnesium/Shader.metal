@@ -37,8 +37,8 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
 // Index 0 Only
 fragment float4 textureFragment(VertexOut in [[stage_in]],
                                  constant half* currentBuffer [[buffer(0)]]) {
-    uint width = 256;
-    uint height = 256;
+    uint width = 1024;
+    uint height = 1024;
     
   
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
