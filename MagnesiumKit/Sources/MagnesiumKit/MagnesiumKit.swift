@@ -9,7 +9,7 @@ public protocol MGDevice: AnyObject {
     func getDisplayBuffer(index: Int) -> MTLBuffer?
     func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16]
     
-    // 【追加】ゼロコピー用のポインタアクセス
+    // Pointer Acces
     func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void)
 }
 
@@ -48,7 +48,7 @@ internal final class MagnesiumDevice: MGDevice {
         geometry.createCameraMatrix(eye: eye, target: target, up: up)
     }
     
-    // 【追加】ANERendererのポインタを直接公開
+
     public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer else { return }
         
@@ -85,7 +85,7 @@ internal final class MagnesiumDevice: MGDevice {
     
     func commit() async throws {
         guard let renderer = device.renderer else { return }
-        // 【修正】データは既にポインタ経由で書き込まれているため、描画のみを実行
+        // Run
         try await renderer.drawFrame()
     }
 }
@@ -95,7 +95,7 @@ internal final class MagnesiumDevice: MGDevice {
     
     init(device: MagnesiumDevice) { self.device = device }
     
-    // 【修正】ゼロコピー化により、ここでのデータ保持は不要に
+ 
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {}
     func setFragmentTexture(_ texture: [Float16], index: Int) {}
     func drawPrimitives(vertexCount: Int) {}

@@ -3,11 +3,6 @@
 //  Magnesium
 //
 
-//
-//  ANERenderer.swift
-//  Magnesium
-//
-
 import Foundation
 import CoreAI
 import Metal
@@ -38,7 +33,7 @@ class ANERenderer {
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
     
-    // 【修正】1024x1024出力に合わせてバイト数を更新 (Float16 = 2バイト)
+ 
     private let layerByteCount = 1 * 1 * 1024 * 1024 * 2
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
@@ -67,7 +62,7 @@ class ANERenderer {
     }
 
     private func setupMetalHeap() {
-        // R, G, B, Mask の4チャンネル分
+        // R, G, B, Mask 4 Channel
         let singleDisplayBufferSize = layerByteCount * 4
         let totalRequiredMemory = singleDisplayBufferSize * 4
         
@@ -93,19 +88,19 @@ class ANERenderer {
         updateTexture()
     }
 
-    // ジオメトリデータをゼロコピーで更新
+   
     func updateGeometry() {
-            // 頂点データ (1 * 4 * 3 * 64 = 768要素)
+            // Vertex Data (1 * 4 * 3 * 64 = 768)
         self.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyVertices(to: ptr)
         }
             
-        // MVPウェイト (1 * 4 * 4 * 1 * 64 = 1024要素)
+        // MVP weight (1 * 4 * 4 * 1 * 64 = 1024)
         self.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyMVPWeights(to: ptr)
         }
             
-        // カラーデータ (各64要素)
+        // Color Data
         self.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyColor(to: ptr)
         }
@@ -117,10 +112,10 @@ class ANERenderer {
         }
     }
         
-        // テクスチャデータをゼロコピーで更新
+        
     func updateTexture() {
         self.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
-            // 1 * 3 * 256 * 256 要素を直接書き込む
+            // 1 * 3 * 256 * 256
             geometry.writeDebugCheckerboardTexture(to: ptr)
         }
     }
@@ -185,7 +180,7 @@ class ANERenderer {
         let localLayerByteCount = self.layerByteCount
         
         nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
-        // 【修正】1024x1024の出力シェイプに変更
+       
         let shape: [Int] = [1, 1, 1024, 1024]
         
         let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)

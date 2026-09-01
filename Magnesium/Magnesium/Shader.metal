@@ -46,7 +46,7 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
-    // 【修正】チャンネル数を64から1に変更したため、64の乗算を削除
+    // Channel:1
     uint componentStride = width * height;
     
     uint rIndex = (componentStride * 0) + pixelIndex;

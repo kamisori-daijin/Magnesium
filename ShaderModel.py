@@ -36,7 +36,7 @@ class ANE3DRenderer64(nn.Module):
                 U0, V0, U1, V1, U2, V2,
                 processed_texture):
         
-        # 【修正】ブロードキャストエラー対策: 入力テンソルを [1, 64, 1, 1] にリシェイプ
+        # Reshape [1, 64, 1, 1] 
         A0, B0, C0 = A0.view(1, 64, 1, 1), B0.view(1, 64, 1, 1), C0.view(1, 64, 1, 1)
         A1, B1, C1 = A1.view(1, 64, 1, 1), B1.view(1, 64, 1, 1), C1.view(1, 64, 1, 1)
         A2, B2, C2 = A2.view(1, 64, 1, 1), B2.view(1, 64, 1, 1), C2.view(1, 64, 1, 1)
