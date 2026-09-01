@@ -12,10 +12,10 @@ import MagnesiumKit
 @Observable
 class ANERenderContext {
     private var angle: Float = 0.0
-    private var timer: Timer?
     private(set) var mgDevice: MGDevice?
     private let geometry = ANE3DGeometry()
     private(set) var commandQueue: MTLCommandQueue?
+    private var mgCommandQueue: MGCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
     
     private var sharedEvent: MTLSharedEvent?
@@ -25,20 +25,9 @@ class ANERenderContext {
     var isComputing = false
     
     var activeDevice: MTLDevice?
-    // Re Use buffer
-    private var mvpWeights = [Float16](repeating: 0.0, count: 4 * 4 * 64)
-    private var vertices = [Float16](repeating: 0.0, count: 1 * 4 * 3 * 64)
-    private var colorsR = [Float16](repeating: 0.0, count: 64)
-    private var colorsG = [Float16](repeating: 0.0, count: 64)
-    private var colorsB = [Float16](repeating: 0.0, count: 64)
     
-    private var debugTextureData: [Float16] = []
-    init(){
-        self.debugTextureData = geometry.createDebugCheckerboardTexture()
-    }
+    init() {}
     
-    
-    // Setup
     func setup(with device: MTLDevice) {
         self.activeDevice = device
         self.commandQueue = device.makeCommandQueue()
@@ -60,11 +49,9 @@ class ANERenderContext {
     func handleSelectedURLs(_ urls: [URL]) {
         guard urls.count == 3 else { return }
         
-       
         let allowedExtensions = ["aimodel"]
         
         for url in urls {
-        
             guard allowedExtensions.contains(url.pathExtension.lowercased()) else {
                 print("Error: Invalid file extension for \(url.lastPathComponent)")
                 return
@@ -86,120 +73,96 @@ class ANERenderContext {
             
             for url in urls { url.stopAccessingSecurityScopedResource() }
             
-            if self.mgDevice != nil { self.startCameraRotation() }
-        }
-    }
-    // Camera Loop
-    func startCameraRotation() {
-        timer?.invalidate()
-        
-        timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self, let mgDevice = self.mgDevice, !self.isComputing else { return }
-                
-                self.isComputing = true
-                self.angle += 0.05
-                
-                let radius: Float = 5.5
-                let eyeX = radius * sin(self.angle)
-                let eyeZ = radius * cos(self.angle)
-                
-                let cameraMatrix = mgDevice.createCameraMatrix(
-                    eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
-                    target: SIMD3<Float>(0.0, 0.0, 0.0),
-                    up: SIMD3<Float>(0.0, 1.0, 0.0)
-                )
-
-                // Reuse
-                let wChannelOffset = 3 * 3 * 64
-                for faceIdx in 0..<64 {
-                    self.vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                    self.vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
-                }
-
-                let pyramidFaces: [[[Float16]]] = [
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
-                ]
-                
-                let faceColors: [(Float16, Float16, Float16)] = [
-                    (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
-                ]
-
-                for i in 0..<4 {
-                    let slot = i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue -= 2.0 }
-                            self.vertices[pIndex] = offsetValue
-                        }
-                    }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
-                }
-
-                for i in 0..<4 {
-                    let slot = 4 + i
-                    self.colorsR[slot] = faceColors[i].0; self.colorsG[slot] = faceColors[i].1; self.colorsB[slot] = faceColors[i].2
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            var offsetValue = pyramidFaces[i][v][ch]
-                            if ch == 0 { offsetValue += 2.0 }
-                            self.vertices[pIndex] = offsetValue
-                        }
-                    }
-                    for m in 0..<16 { self.mvpWeights[m * 64 + slot] = cameraMatrix[m] }
-                }
-                
-                guard let mgCommandQueue = mgDevice.makeCommandQueue(),
-                      let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
-                      let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
-                    self.isComputing = false
-                    return
-                }
-                
-                self.vertices.withUnsafeBytes { vertexPtr in
-                    mgEncoder.setVertexBytes(vertexPtr.baseAddress!, length: self.vertices.count * 2, index: 0)
-                }
-                self.mvpWeights.withUnsafeBytes { mvpPtr in
-                    mgEncoder.setVertexBytes(mvpPtr.baseAddress!, length: self.mvpWeights.count * 2, index: 1)
-                }
-              
-                self.colorsR.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsR.count * 2, index: 2)
-                }
-                self.colorsG.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsG.count * 2, index: 3)
-                }
-                self.colorsB.withUnsafeBytes { ptr in
-                    mgEncoder.setVertexBytes(ptr.baseAddress!, length: self.colorsB.count * 2, index: 4)
-                }
-                
-                mgEncoder.setFragmentTexture(self.debugTextureData, index: 0)
-                
-                mgEncoder.drawPrimitives(vertexCount: 8)
-                mgEncoder.endEncoding()
-                
-                do {
-                    try await mgCommandBuffer.commit()
-                    self.currentEventValue += 1
-                    self.sharedEvent?.signaledValue = self.currentEventValue
-                } catch {
-                    print("Inference error: \(error)")
-                }
-                
-                self.isComputing = false
+            if self.mgDevice != nil {
+                self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
             }
         }
     }
 
-    // Output
+    func update() async {
+        guard let mgDevice = self.mgDevice, !self.isComputing else { return }
+        
+        self.isComputing = true
+        self.angle += 0.0083
+        
+        let radius: Float = 5.5
+        let eyeX = radius * sin(self.angle)
+        let eyeZ = radius * cos(self.angle)
+        
+        let cameraMatrix = mgDevice.createCameraMatrix(
+            eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
+            target: SIMD3<Float>(0.0, 0.0, 0.0),
+            up: SIMD3<Float>(0.0, 1.0, 0.0)
+        )
+
+        mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
+            let wChannelOffset = 3 * 3 * 64
+            for faceIdx in 0..<64 {
+                vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
+                vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
+                vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
+            }
+
+            let pyramidFaces: [[[Float16]]] = [
+                [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
+                [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
+                [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
+                [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
+            ]
+            
+            let faceColors: [(Float16, Float16, Float16)] = [
+                (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
+            ]
+
+            for i in 0..<4 {
+                let slot = i
+                colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                for v in 0..<3 {
+                    for ch in 0..<4 {
+                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                        var offsetValue = pyramidFaces[i][v][ch]
+                        if ch == 0 { offsetValue -= 2.0 }
+                        vertices[pIndex] = offsetValue
+                    }
+                }
+                for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+            }
+
+            for i in 0..<4 {
+                let slot = 4 + i
+                colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+                for v in 0..<3 {
+                    for ch in 0..<4 {
+                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                        var offsetValue = pyramidFaces[i][v][ch]
+                        if ch == 0 { offsetValue += 2.0 }
+                        vertices[pIndex] = offsetValue
+                    }
+                }
+                for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
+            }
+        }
+        
+        guard let mgCommandQueue = self.mgCommandQueue,
+              let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
+              let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
+            self.isComputing = false
+            return
+        }
+        
+        mgEncoder.endEncoding()
+        
+        do {
+            try await mgCommandBuffer.commit()
+            self.currentEventValue += 1
+            self.sharedEvent?.signaledValue = self.currentEventValue
+        } catch {
+            print("Inference error: \(error)")
+        }
+        
+        self.isComputing = false
+    }
+
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         

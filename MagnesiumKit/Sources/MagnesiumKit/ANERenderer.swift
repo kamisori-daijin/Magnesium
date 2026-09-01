@@ -32,7 +32,9 @@ class ANERenderer {
     
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
-    private let layerByteCount = 64 * 1 * 256 * 256 * 2
+    
+ 
+    private let layerByteCount = 1 * 1 * 1024 * 1024 * 2
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
@@ -60,6 +62,7 @@ class ANERenderer {
     }
 
     private func setupMetalHeap() {
+        // R, G, B, Mask 4 Channel
         let singleDisplayBufferSize = layerByteCount * 4
         let totalRequiredMemory = singleDisplayBufferSize * 4
         
@@ -81,68 +84,57 @@ class ANERenderer {
     }
 
     private func setupInitialGeometry() {
-            let vertices = geometry.getDummyVertices()
-            let mvp = geometry.getDummyMVPWeights()
-            let color = geometry.getDummyColor()
-            updateGeometry(vertices: vertices, mvpWeights: mvp, r: color, g: color, b: color)
-            
-            let debugTexture = geometry.createDebugCheckerboardTexture()
-            updateTexture(pixelData: debugTexture)
-        }
-
-    func updateGeometry(vertices: [Float16], mvpWeights: [Float16], r: [Float16], g: [Float16], b: [Float16]) {
-        var vertexView = self.expandedVerticesArray.mutableView(as: Float16.self)
-        vertexView.copyElements(fromContentsOf: vertices)
-        
-        var mvpView = self.mvpWeightsArray.mutableView(as: Float16.self)
-        mvpView.copyElements(fromContentsOf: mvpWeights)
-        
-        var rView = self.colorsRArray.mutableView(as: Float16.self)
-        rView.copyElements(fromContentsOf: r)
-        
-        var gView = self.colorsGArray.mutableView(as: Float16.self)
-        gView.copyElements(fromContentsOf: g)
-        
-        var bView = self.colorsBArray.mutableView(as: Float16.self)
-        bView.copyElements(fromContentsOf: b)
+        updateGeometry()
+        updateTexture()
     }
-    
-    func updateTexture(pixelData: [Float16]) {
-            var texView = self.rawTextureArray.mutableView(as: Float16.self)
-            
-            let expectedCount = 1 * 3 * 256 * 256
-            
-            if pixelData.count != expectedCount {
-                
-                print("Warning: Received \(pixelData.count) elements, but expected \(expectedCount). Overriding with Debug Texture.")
-                
-                let debugData = geometry.createDebugCheckerboardTexture()
-                texView.copyElements(fromContentsOf: debugData)
-            } else {
-               
-                texView.copyElements(fromContentsOf: pixelData)
-            }
-        }
 
-   func drawFrame() async throws {
+   
+    func updateGeometry() {
+            // Vertex Data (1 * 4 * 3 * 64 = 768)
+        self.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyVertices(to: ptr)
+        }
+            
+        // MVP weight (1 * 4 * 4 * 1 * 64 = 1024)
+        self.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyMVPWeights(to: ptr)
+        }
+            
+        // Color Data
+        self.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
+        self.colorsGArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
+        self.colorsBArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            geometry.writeDummyColor(to: ptr)
+        }
+    }
+        
+        
+    func updateTexture() {
+        self.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
+            // 1 * 3 * 256 * 256
+            geometry.writeDebugCheckerboardTexture(to: ptr)
+        }
+    }
+
+    func drawFrame() async throws {
         guard let tex = texFunction,
               let pre = preFunction,
               let rst = rstFunction else { return }
         
         guard let canvasBuf = self.displayBuffers[0] else { return }
         
-        // -----------------------------------------------------------------
-        // STAGE 0: Texture Alignment Processing
-        // -----------------------------------------------------------------
+        // STAGE 0
         let texInputs: [String: NDArray] = ["raw_image": rawTextureArray]
         var texOutputViews = InferenceFunction.MutableViews()
         let texDestView = alignedTextureArray.mutableView(as: Float16.self)
         texOutputViews.insert(texDestView, for: "convolution")
         let _ = try await tex.run(inputs: texInputs, outputViews: texOutputViews)
         
-        // -----------------------------------------------------------------
-        // STAGE 1: 3D PreProcessor
-        // -----------------------------------------------------------------
+        // STAGE 1
         let preInputs: [String: NDArray] = [
             "expanded_vertices": expandedVerticesArray,
             "mvp_weights": mvpWeightsArray,
@@ -152,11 +144,8 @@ class ANERenderer {
         ]
         var preOutputs = try await pre.run(inputs: preInputs)
         
-        // -----------------------------------------------------------------
-        // STAGE 2: 3D Rasterizer Inputs Mapping
-        // -----------------------------------------------------------------
+        // STAGE 2
         var rstInputs: [String: NDArray] = [:]
-        
         rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
         rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
         rstInputs["c0"] = preOutputs.remove("neg")?.ndArray
@@ -177,7 +166,6 @@ class ANERenderer {
         rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
         rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
         
-        let zWeight = preOutputs.remove("slice_10")?.ndArray
         rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
         rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
         rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
@@ -188,29 +176,25 @@ class ANERenderer {
         
         rstInputs["processed_texture"] = alignedTextureArray
         
-        // -----------------------------------------------------------------
-        // STAGE 3: Metal Shared Canvas Direct Blit
-        // -----------------------------------------------------------------
+        // STAGE 3
         let localLayerByteCount = self.layerByteCount
         
-        
+        nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
        
-            var rstOutputViews = InferenceFunction.MutableViews()
-            let shape: [Int] = [64, 1, 256, 256]
-            
-            let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForR, for: "convolution_4")
-            
-            let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForG, for: "convolution_5")
-            
-            let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForB, for: "convolution_6")
-            
-            let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
-            rstOutputViews.insert(viewForMask, for: "convolution_7")
+        let shape: [Int] = [1, 1, 1024, 1024]
+        
+        let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForR, for: "upsample_bilinear2d")
+        
+        let viewForG = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 1, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForG, for: "upsample_bilinear2d_1")
+        
+        let viewForB = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 2, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForB, for: "upsample_bilinear2d_2")
+        
+        let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForMask, for: "upsample_bilinear2d_3")
 
-            let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
-        }
+        let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
     }
-
+}

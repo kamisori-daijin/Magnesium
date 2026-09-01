@@ -5,6 +5,11 @@
 //  Created by kamisori-daijin on 2026/07/14.
 //
 
+//
+//  Shader.metal
+//  Magnesium
+//
+
 #include <metal_stdlib>
 using namespace metal;
 
@@ -12,7 +17,6 @@ struct VertexOut {
     float4 position [[position]];
     float2 uv;
 };
-
 
 vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     float4 positions[4] = {
@@ -34,18 +38,16 @@ vertex VertexOut textureVertex(uint vertexID [[vertex_id]]) {
     return out;
 }
 
-// Index 0 Only
 fragment float4 textureFragment(VertexOut in [[stage_in]],
                                  constant half* currentBuffer [[buffer(0)]]) {
-    uint width = 256;
-    uint height = 256;
+    uint width = 1024;
+    uint height = 1024;
     
-  
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
     uint pixelIndex = coord.y * width + coord.x;
     
-    
-    uint componentStride = 64 * width * height;
+    // Channel:1
+    uint componentStride = width * height;
     
     uint rIndex = (componentStride * 0) + pixelIndex;
     uint gIndex = (componentStride * 1) + pixelIndex;
@@ -60,13 +62,11 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     half4 finalColor = half4(0.0h);
     
     if (mask_w > 0.001h) {
-        
         half3 sampledColor = half3(r_val, g_val, b_val) / (mask_w + 1e-4h);
         sampledColor = clamp(sampledColor, 0.0h, 1.0h);
         
         finalColor = half4(sampledColor, 1.0h);
     } else {
-        // Clear
         discard_fragment();
     }
     

@@ -5,6 +5,7 @@
 //  Created by kamisori-daijin on 2026/07/12.
 //
 
+
 import SwiftUI
 import MetalKit
 
@@ -32,6 +33,8 @@ struct ANEMetalView: NSViewRepresentable {
         mtkView.framebufferOnly = false
         mtkView.colorPixelFormat = .bgra8Unorm
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        mtkView.autoResizeDrawable = false
+        mtkView.drawableSize = CGSize(width: 1024, height: 1024)
         
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
@@ -51,17 +54,19 @@ struct ANEMetalView: NSViewRepresentable {
     }
     
     class Coordinator: NSObject, MTKViewDelegate {
-            private let manager: ANERenderContext
-            
-            init(manager: ANERenderContext) {
-                self.manager = manager
-            }
-            
-            func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
-            
-            func draw(in view: MTKView) {
-               
+        private let manager: ANERenderContext
+        
+        init(manager: ANERenderContext) {
+            self.manager = manager
+        }
+        
+        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+        
+        func draw(in view: MTKView) {
+            Task { @MainActor in
+                await manager.update()
                 manager.renderFrame(in: view)
             }
         }
+    }
 }
