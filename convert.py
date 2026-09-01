@@ -4,11 +4,11 @@ import torch
 from ShaderModel import ANE3DRenderer64  
 from pathlib import Path
 
-WIDTH = 256
-HEIGHT = 256
+WIDTH = 1024
+HEIGHT = 1024
 
 
-model = ANE3DRenderer64(width=WIDTH, height=HEIGHT).to(dtype=torch.float16)
+model = ANE3DRenderer64().to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
