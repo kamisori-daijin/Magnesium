@@ -195,7 +195,7 @@ class ANERenderer {
         
         
        
-            var rstOutputViews = InferenceFunction.MutableViews()
+            nonisolated(unsafe) var rstOutputViews = InferenceFunction.MutableViews()
             let shape: [Int] = [64, 1, 256, 256]
             
             let viewForR = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 0, scalarType: .float16, shape: shape).view(as: Float16.self)
