@@ -13,7 +13,6 @@ import MagnesiumKit
 class ANERenderContext {
     private var angle: Float = 0.0
     private(set) var mgDevice: MGDevice?
-    private let geometry = ANE3DGeometry()
     private(set) var commandQueue: MTLCommandQueue?
     private var mgCommandQueue: MGCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
@@ -85,12 +84,12 @@ class ANERenderContext {
             self.isComputing = true
             self.angle += 0.0083
             
-            let radius: Float = 8.0
+            let radius: Float = 6.0
             let eyeX = radius * sin(self.angle)
             let eyeZ = radius * cos(self.angle)
             
             let cameraMatrix = mgDevice.createCameraMatrix(
-                eye: SIMD3<Float>(eyeX, 3.0, eyeZ),
+                eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
                 target: SIMD3<Float>(0.0, 0.0, 0.0),
                 up: SIMD3<Float>(0.0, 1.0, 0.0)
             )
@@ -103,46 +102,27 @@ class ANERenderContext {
                     vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
                 }
 
-                let pyramidFaces: [[[Float16]]] = [
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                    [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
-                ]
-                
-                let faceColors: [(Float16, Float16, Float16)] = [
-                    (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
-                ]
+                // 外部ファイルからトーラスのデータを取得
+                let faces = TorusGeometry.generateFaces()
 
-                let pyramidCount = 8
-                for i in 0..<pyramidCount {
-                    let angle = Float(i) * (2.0 * Float.pi / Float(pyramidCount))
-                    let circleRadius: Float = 3.0
-                    let offsetX = circleRadius * cos(angle)
-                    let offsetZ = circleRadius * sin(angle)
+                // 64ポリゴンをセット
+                for slot in 0..<min(faces.count, 64) {
+                    let face = faces[slot]
                     
-                    for face in 0..<4 {
-                        let slot = i * 4 + face
-                        
-                        colorsR[slot] = faceColors[face].0
-                        colorsG[slot] = faceColors[face].1
-                        colorsB[slot] = faceColors[face].2
-                        
-                        for v in 0..<3 {
-                            for ch in 0..<4 {
-                                let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                                var offsetValue = pyramidFaces[face][v][ch]
-                                
-                                if ch == 0 { offsetValue += Float16(offsetX) }
-                                if ch == 2 { offsetValue += Float16(offsetZ) }
-                                
-                                vertices[pIndex] = offsetValue
-                            }
+                    // 適当な色を設定（リングごとに色を変える）
+                    colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
+                    colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
+                    colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
+                    
+                    for v in 0..<3 {
+                        for ch in 0..<4 {
+                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                            vertices[pIndex] = face[v][ch]
                         }
-                        
-                        for m in 0..<16 {
-                            mvpWeights[m * 64 + slot] = cameraMatrix[m]
-                        }
+                    }
+                    
+                    for m in 0..<16 {
+                        mvpWeights[m * 64 + slot] = cameraMatrix[m]
                     }
                 }
             }
@@ -165,6 +145,14 @@ class ANERenderContext {
             }
             
             self.isComputing = false
+        }
+
+        // ヘルパー関数
+        private func getTorusPoint(_ theta: Float, _ phi: Float, _ R: Float, _ r: Float) -> [Float16] {
+            let x = (R + r * cos(phi)) * cos(theta)
+            let y = r * sin(phi)
+            let z = (R + r * cos(phi)) * sin(theta)
+            return [Float16(x), Float16(y), Float16(z), 1.0]
         }
 
     func renderFrame(in view: MTKView) {

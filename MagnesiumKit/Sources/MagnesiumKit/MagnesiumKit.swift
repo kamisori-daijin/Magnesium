@@ -29,7 +29,7 @@ public protocol MGDevice: AnyObject {
 @MainActor
 internal final class MagnesiumDevice: MGDevice {
     public let name = "MagnesiumKit"
-    internal let geometry = ANE3DGeometry()
+    internal let geometry = MGUtil()
     internal var renderer: ANERenderer?
     
     public init(preURL: URL, rastURL: URL, texURL: URL) async {
