@@ -27,6 +27,8 @@ class ANE3DRenderer64(nn.Module):
         self.register_buffer("z_mask_kernel", z_mask_kernel)
         
         self.register_buffer("ONES_64CH", torch.ones(1, 64, 1, 1, dtype=torch.float16))
+        
+        # パキッとMetal互換のZテストにするため、必要に応じて10.0からさらに大きな値（例: 1000.0）に調整してください
         self.register_buffer("SHARPNESS", torch.full((1, 64, 1, 1), 10.0, dtype=torch.float16))
 
     def forward(self, 
@@ -71,8 +73,15 @@ class ANE3DRenderer64(nn.Module):
         v_sampler = processed_texture * (v_gradient * inv_z_reciprocal)
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
-        sum_inv_z = F.conv2d(pixel_inv_z, self.z_mask_kernel, bias=None)[:, 0:1, :, :] 
-        z_diff = torch.relu(sum_inv_z - pixel_inv_z) 
+        # -------------------------------------------------------------
+        # 【修正後】最大値（一番手前）ベースのZバッファ処理
+        # -------------------------------------------------------------
+        max_inv_z_per_pixel = torch.max(pixel_inv_z, dim=1, keepdim=True)[0]
+
+        # 自分が「一番手前のポリゴン」からどれだけ奥にいるかの正確な差分
+        z_diff = torch.relu(max_inv_z_per_pixel - pixel_inv_z) 
+
+        # z_diff が 0.0（一番手前）なら z_blend_weights は 1.0、奥にあれば一瞬で 0.0 に張り付く
         z_blend_weights = torch.clamp(self.ONES_64CH - (z_diff * self.SHARPNESS), min=0.0, max=1.0)
         z_mask = mask * z_blend_weights 
 
