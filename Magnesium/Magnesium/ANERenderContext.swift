@@ -90,7 +90,7 @@ class ANERenderContext {
         let eyeZ = radius * cos(self.angle)
         
         let cameraMatrix = mgDevice.createCameraMatrix(
-            eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
+            eye: SIMD3<Float>(eyeX, 2.0, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )

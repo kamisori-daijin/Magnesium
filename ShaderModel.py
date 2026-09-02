@@ -27,9 +27,7 @@ class ANE3DRenderer64(nn.Module):
         self.register_buffer("z_mask_kernel", z_mask_kernel)
         
         self.register_buffer("ONES_64CH", torch.ones(1, 64, 1, 1, dtype=torch.float16))
-        
-        # パキッとMetal互換のZテストにするため、必要に応じて10.0からさらに大きな値（例: 1000.0）に調整してください
-        self.register_buffer("SHARPNESS", torch.full((1, 64, 1, 1), 10.0, dtype=torch.float16))
+        self.register_buffer("SHARPNESS", torch.full((1, 64, 1, 1), 100.0, dtype=torch.float16))
 
     def forward(self, 
                 A0, B0, C0, A1, B1, C1, A2, B2, C2, 
@@ -38,7 +36,6 @@ class ANE3DRenderer64(nn.Module):
                 U0, V0, U1, V1, U2, V2,
                 processed_texture):
         
-        # Reshape [1, 64, 1, 1] 
         A0, B0, C0 = A0.view(1, 64, 1, 1), B0.view(1, 64, 1, 1), C0.view(1, 64, 1, 1)
         A1, B1, C1 = A1.view(1, 64, 1, 1), B1.view(1, 64, 1, 1), C1.view(1, 64, 1, 1)
         A2, B2, C2 = A2.view(1, 64, 1, 1), B2.view(1, 64, 1, 1), C2.view(1, 64, 1, 1)
@@ -69,21 +66,17 @@ class ANE3DRenderer64(nn.Module):
         safe_inv_z = torch.clamp(pixel_inv_z, min=1e-4)
         inv_z_reciprocal = torch.reciprocal(safe_inv_z)
         
+        # 元のANEフレンドリーなテクスチャ計算
         u_sampler = processed_texture * (u_gradient * inv_z_reciprocal)
         v_sampler = processed_texture * (v_gradient * inv_z_reciprocal)
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
-        # -------------------------------------------------------------
-        # 【修正後】最大値（一番手前）ベースのZバッファ処理
-        # -------------------------------------------------------------
-        max_inv_z_per_pixel = torch.max(pixel_inv_z, dim=1, keepdim=True)[0]
-
-        # 自分が「一番手前のポリゴン」からどれだけ奥にいるかの正確な差分
-        z_diff = torch.relu(max_inv_z_per_pixel - pixel_inv_z) 
-
-        # z_diff が 0.0（一番手前）なら z_blend_weights は 1.0、奥にあれば一瞬で 0.0 に張り付く
+        # --- 修正: MetalライクなZバッファ（最大値との比較） ---
+        max_inv_z, _ = torch.max(pixel_inv_z, dim=1, keepdim=True)
+        z_diff = torch.relu(max_inv_z - pixel_inv_z) 
         z_blend_weights = torch.clamp(self.ONES_64CH - (z_diff * self.SHARPNESS), min=0.0, max=1.0)
         z_mask = mask * z_blend_weights 
+        # --------------------------------------------------------
 
         rgb_out = F.conv2d(sampled_texture * z_mask, self.rgb_kernel, bias=None)
         R_low = rgb_out[:, 0:1, :, :]

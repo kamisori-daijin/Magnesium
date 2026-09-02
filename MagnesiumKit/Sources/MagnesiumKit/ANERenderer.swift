@@ -3,6 +3,7 @@
 //  Magnesium
 //
 
+
 import Foundation
 import CoreAI
 import Metal
@@ -33,7 +34,6 @@ class ANERenderer {
     private let geometry = ANE3DGeometry()
     private let metalDevice: MTLDevice
     
- 
     private let layerByteCount = 1 * 1 * 1024 * 1024 * 2
     
     init(preURL: URL, rastURL: URL, texURL: URL, metalDevice: MTLDevice) async throws {
@@ -62,8 +62,7 @@ class ANERenderer {
     }
 
     private func setupMetalHeap() {
-        // R, G, B, Mask 4 Channel
-        let singleDisplayBufferSize = layerByteCount * 4
+        let singleDisplayBufferSize = layerByteCount * 5
         let totalRequiredMemory = singleDisplayBufferSize * 4
         
         let heapDescriptor = MTLHeapDescriptor()
@@ -88,19 +87,15 @@ class ANERenderer {
         updateTexture()
     }
 
-   
     func updateGeometry() {
-            // Vertex Data (1 * 4 * 3 * 64 = 768)
         self.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyVertices(to: ptr)
         }
             
-        // MVP weight (1 * 4 * 4 * 1 * 64 = 1024)
         self.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyMVPWeights(to: ptr)
         }
             
-        // Color Data
         self.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
             geometry.writeDummyColor(to: ptr)
         }
@@ -112,10 +107,8 @@ class ANERenderer {
         }
     }
         
-        
     func updateTexture() {
         self.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { ptr, _, _ in
-            // 1 * 3 * 256 * 256
             geometry.writeDebugCheckerboardTexture(to: ptr)
         }
     }
@@ -194,6 +187,9 @@ class ANERenderer {
         
         let viewForMask = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 3, scalarType: .float16, shape: shape).view(as: Float16.self)
         rstOutputViews.insert(viewForMask, for: "upsample_bilinear2d_3")
+
+        let viewForZ = NDArray.MutableRawView(metalBuffer: canvasBuf, byteOffset: localLayerByteCount * 4, scalarType: .float16, shape: shape).view(as: Float16.self)
+        rstOutputViews.insert(viewForZ, for: "upsample_bilinear2d_4")
 
         let _ = try await rst.run(inputs: rstInputs, outputViews: rstOutputViews)
     }
