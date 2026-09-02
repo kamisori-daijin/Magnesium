@@ -48,9 +48,11 @@ class ANE3DRenderer64(nn.Module):
         edges2 = (A2 * self.x_grid_64ch) + (B2 * self.y_grid_64ch) + C2
 
         valid_mask = torch.clamp(torch.relu((A0 * A0 + B0 * B0) * 100.0), min=0.0, max=1.0)
+        # 元の計算に戻す
         inside_cw = torch.relu(edges0 * 100.0) * torch.relu(edges1 * 100.0) * torch.relu(edges2 * 100.0)
-        mask = torch.clamp(inside_cw, min=0.0, max=1.0) * valid_mask 
-
+        mask = torch.clamp(inside_cw, min=0.0, max=1.0) * valid_mask
+     
+        # --- 面積正規化 ---
         total_area = torch.clamp(edges0 + edges1 + edges2, min=1e-5)
         
         inv_total_area = torch.reciprocal(total_area)

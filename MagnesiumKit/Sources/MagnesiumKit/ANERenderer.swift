@@ -138,36 +138,40 @@ class ANERenderer {
         var preOutputs = try await pre.run(inputs: preInputs)
         
         // STAGE 2
-        var rstInputs: [String: NDArray] = [:]
-        rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
-        rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
-        rstInputs["c0"] = preOutputs.remove("neg")?.ndArray
-        
-        rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
-        rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
-        rstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
-        
-        rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
-        rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
-        rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
-        
-        let colorsR = preOutputs.remove("colors_r")?.ndArray
-        let colorsG = preOutputs.remove("colors_g")?.ndArray
-        let colorsB = preOutputs.remove("colors_b")?.ndArray
-        
-        rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
-        rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
-        rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
-        
-        rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
-        rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
-        rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
-        
-        rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
-        rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
-        rstInputs["u2"] = colorsR; rstInputs["v2"] = colorsR
-        
-        rstInputs["processed_texture"] = alignedTextureArray
+        // STAGE 2
+                var rstInputs: [String: NDArray] = [:]
+                rstInputs["a0"] = preOutputs.remove("sub")?.ndArray
+                rstInputs["b0"] = preOutputs.remove("sub_1")?.ndArray
+                rstInputs["c0"] = preOutputs.remove("neg")?.ndArray
+                
+                rstInputs["a1"] = preOutputs.remove("sub_2")?.ndArray
+                rstInputs["b1"] = preOutputs.remove("sub_3")?.ndArray
+                rstInputs["c1"] = preOutputs.remove("neg_1")?.ndArray
+                
+                rstInputs["a2"] = preOutputs.remove("sub_4")?.ndArray
+                rstInputs["b2"] = preOutputs.remove("sub_5")?.ndArray
+                rstInputs["c2"] = preOutputs.remove("neg_2")?.ndArray
+                
+                let colorsR = preOutputs.remove("colors_r")?.ndArray
+                let colorsG = preOutputs.remove("colors_g")?.ndArray
+                let colorsB = preOutputs.remove("colors_b")?.ndArray
+                
+                // 修正: 正しいカラー変数を割り当て
+                rstInputs["r0"] = colorsR; rstInputs["r1"] = colorsR; rstInputs["r2"] = colorsR
+                rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
+                rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
+                
+                rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
+                rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
+                rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
+                
+                // UV座標も同様に、本来は適切なUVデータを渡す必要がありますが、
+                // 現在はカラーデータをダミーとして使用しているため、このままとします。
+                rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
+                rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
+                rstInputs["u2"] = colorsR; rstInputs["v2"] = colorsR
+                
+                rstInputs["processed_texture"] = alignedTextureArray
         
         // STAGE 3
         let localLayerByteCount = self.layerByteCount
