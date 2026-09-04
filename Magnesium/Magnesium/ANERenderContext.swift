@@ -13,7 +13,6 @@ import MagnesiumKit
 class ANERenderContext {
     private var angle: Float = 0.0
     private(set) var mgDevice: MGDevice?
-    private let geometry = ANE3DGeometry()
     private(set) var commandQueue: MTLCommandQueue?
     private var mgCommandQueue: MGCommandQueue?
     private var renderPipelineState: MTLRenderPipelineState?
@@ -85,16 +84,17 @@ class ANERenderContext {
         self.isComputing = true
         self.angle += 0.0083
         
-        let radius: Float = 5.5
+        let radius: Float = 6.0
         let eyeX = radius * sin(self.angle)
         let eyeZ = radius * cos(self.angle)
         
         let cameraMatrix = mgDevice.createCameraMatrix(
-            eye: SIMD3<Float>(eyeX, 5.0, eyeZ),
+            eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
+        // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
             let wChannelOffset = 3 * 3 * 64
             for faceIdx in 0..<64 {
@@ -103,43 +103,25 @@ class ANERenderContext {
                 vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
             }
 
-            let pyramidFaces: [[[Float16]]] = [
-                [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
-                [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
-                [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
-                [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
-            ]
-            
-            let faceColors: [(Float16, Float16, Float16)] = [
-                (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 0.0)
-            ]
+            let faces = TorusGeometry.generateFaces()
 
-            for i in 0..<4 {
-                let slot = i
-                colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
+            for slot in 0..<min(faces.count, 64) {
+                let face = faces[slot]
+                
+                colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
+                colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
+                colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
+                
                 for v in 0..<3 {
                     for ch in 0..<4 {
                         let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                        var offsetValue = pyramidFaces[i][v][ch]
-                        if ch == 0 { offsetValue -= 2.0 }
-                        vertices[pIndex] = offsetValue
+                        vertices[pIndex] = face[v][ch]
                     }
                 }
-                for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
-            }
-
-            for i in 0..<4 {
-                let slot = 4 + i
-                colorsR[slot] = faceColors[i].0; colorsG[slot] = faceColors[i].1; colorsB[slot] = faceColors[i].2
-                for v in 0..<3 {
-                    for ch in 0..<4 {
-                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                        var offsetValue = pyramidFaces[i][v][ch]
-                        if ch == 0 { offsetValue += 2.0 }
-                        vertices[pIndex] = offsetValue
-                    }
+                
+                for m in 0..<16 {
+                    mvpWeights[m * 64 + slot] = cameraMatrix[m]
                 }
-                for m in 0..<16 { mvpWeights[m * 64 + slot] = cameraMatrix[m] }
             }
         }
         
@@ -148,6 +130,22 @@ class ANERenderContext {
               let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
             self.isComputing = false
             return
+        }
+        
+        // 2. Set Texture
+        mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
+            // 256x256 Dummy Texture
+            for y in 0..<256 {
+                for x in 0..<256 {
+                    let index = (y * 256 + x) * 3
+                    let u = Float16(x) / 255.0
+                    let v = Float16(y) / 255.0
+                    
+                    texturePointer[index + 0] = u       // R
+                    texturePointer[index + 1] = v       // G
+                    texturePointer[index + 2] = 1.0 - u // B
+                }
+            }
         }
         
         mgEncoder.endEncoding()
