@@ -69,8 +69,17 @@ class ANERayTracingCore(nn.Module):
         # 本来は動的なGridSampleが必要ですが、画面固定レイの性質から1対1の積で擬似表現
         object_hit = mask_xy * mask_xz * mask_yz
         
-        # 空間のバウンディングボックス（-1.0 〜 1.0）の外にはみ出たレイを落とす安全クランプ
-        box_check = (torch.abs(px) < 1.0).half() * (torch.abs(py) < 1.0).half() * (torch.abs(pz) < 1.0).half()
+        # 1.0 を超えた分（はみ出た量）を relu で抽出
+        out_x = torch.relu(torch.abs(px) - 1.0)
+        out_y = torch.relu(torch.abs(py) - 1.0)
+        out_z = torch.relu(torch.abs(pz) - 1.0)
+
+         # どこか1つでも 0.0 を超えていれば（＝はみ出ていれば）1.0 以上になるマスク
+        any_out = torch.clamp((out_x + out_y + out_z) * 1000.0, min=0.0, max=1.0)
+
+        # 内側（はみ出ていない）なら 1.0、外側なら 0.0 になる安全クランプ
+        box_check = self.ONES - any_out
+
         
         return object_hit * box_check
 
