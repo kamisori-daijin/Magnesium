@@ -50,7 +50,7 @@ uint bIndex = (componentStride * 2) + pixelIndex;
 ---
 
 ## Known Issues
-Memory consumption is still high at 200MB, and CPU usage is around 38%.
+Memory consumption is still high at 267MB, and CPU usage is around 38%.
 
 ---
 ## How to Use

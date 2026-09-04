@@ -17,7 +17,7 @@ class ANE3DRenderer64(nn.Module):
         self.register_buffer("x_grid_64ch", x_grid.expand(1, 64, self.internal_h, self.internal_w).contiguous())
         self.register_buffer("y_grid_64ch", y_grid.expand(1, 64, self.internal_h, self.internal_w).contiguous())
         
-        # カラーブレンド用の1x1 Conv2dカーネル
+        # Color blend 1x1 Conv2d Kernel
         rgb_kernel = torch.zeros(4, 64, 1, 1, dtype=torch.float16)
         rgb_kernel[0:3, :, 0, 0] = 1.0
         self.register_buffer("rgb_kernel", rgb_kernel)
@@ -41,7 +41,7 @@ class ANE3DRenderer64(nn.Module):
         A1, B1, C1 = A1.view(1, 64, 1, 1), B1.view(1, 64, 1, 1), C1.view(1, 64, 1, 1)
         A2, B2, C2 = A2.view(1, 64, 1, 1), B2.view(1, 64, 1, 1), C2.view(1, 64, 1, 1)
         
-        # 頂点カラーの reshape
+        # Vertex Color reshape
         R0, G0, B0_col = R0.view(1, 64, 1, 1), G0.view(1, 64, 1, 1), B0_col.view(1, 64, 1, 1)
         R1, G1, B1_col = R1.view(1, 64, 1, 1), G1.view(1, 64, 1, 1), B1_col.view(1, 64, 1, 1)
         R2, G2, B2_col = R2.view(1, 64, 1, 1), G2.view(1, 64, 1, 1), B2_col.view(1, 64, 1, 1)
@@ -69,7 +69,7 @@ class ANE3DRenderer64(nn.Module):
         u_gradient = (U0 * w0 + U1 * w1 + U2 * w2)
         v_gradient = (V0 * w0 + V1 * w1 + V2 * w2)
         
-        # ANEフレンドリーなカラーブレンド
+        # Color blend
         R_blend = (R0 * w0 + R1 * w1 + R2 * w2)
         G_blend = (G0 * w0 + G1 * w1 + G2 * w2)
         B_blend = (B0 * w0 + B1 * w1 + B2 * w2)
@@ -81,7 +81,7 @@ class ANE3DRenderer64(nn.Module):
         v_sampler = processed_texture * (v_gradient * inv_z_reciprocal)
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
-        # テクスチャと頂点カラーの乗算
+        # Texture and vertex color multiplication
         final_color = sampled_texture * (R_blend + G_blend + B_blend)
 
         max_inv_z, _ = torch.max(pixel_inv_z, dim=1, keepdim=True)

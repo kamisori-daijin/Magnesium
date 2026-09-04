@@ -10,8 +10,7 @@ class ANETextureProcessor(nn.Module):
         with torch.no_grad():
             weight = torch.zeros(64, 3, 1, 1)
             
-            # R, G, B をそれぞれ連続したブロックに配置する
-            # これにより、レンダラー側の R_blend, G_blend, B_blend との対応が正確になります
+            # R, G, B 
             for i in range(64):
                 if i % 3 == 0:
                     weight[i, 0, 0, 0] = 1.0  # Red

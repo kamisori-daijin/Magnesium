@@ -5,11 +5,6 @@
 //  Created by kamisori-daijin on 2026/07/14.
 //
 
-//
-//  Shader.metal
-//  Magnesium
-//
-
 #include <metal_stdlib>
 using namespace metal;
 

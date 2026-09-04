@@ -21,7 +21,7 @@ public protocol MGDevice: AnyObject {
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
     
-    // ポインタを直接渡してゼロコピーを実現するAPI
+    // Bridge Pointer
     func withFragmentTexturePointer(index: Int, _ body: (UnsafeMutablePointer<Float16>) -> Void)
     
     func drawPrimitives(vertexCount: Int)

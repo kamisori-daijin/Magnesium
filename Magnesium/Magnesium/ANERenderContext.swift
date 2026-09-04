@@ -94,7 +94,7 @@ class ANERenderContext {
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
-        // 1. ジオメトリデータの設定
+        // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
             let wChannelOffset = 3 * 3 * 64
             for faceIdx in 0..<64 {
@@ -132,9 +132,9 @@ class ANERenderContext {
             return
         }
         
-        // 2. テクスチャデータの設定（ゼロコピー）
+        // 2. Set Texture
         mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
-            // 256x256 のダミーテクスチャ（グラデーション）を生成
+            // 256x256 Dummy Texture
             for y in 0..<256 {
                 for x in 0..<256 {
                     let index = (y * 256 + x) * 3
