@@ -5,7 +5,7 @@ A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing t
 
 <p align="center">
 
-<video src="https://github.com/user-attachments/assets/e4bf2751-faa7-46b2-95be-f1df72df3421" width="512" height="512" autoplay loop muted playsinline></video>
+<video src="https://github.com/user-attachments/assets/c35d29ea-9191-423b-beba-88e668525357" width="512" height="512" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
