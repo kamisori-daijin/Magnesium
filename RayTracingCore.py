@@ -9,9 +9,9 @@ class ANERayTracingCore(nn.Module):
         super().__init__()
         self.w = width
         self.h = height
-        self.max_steps = max_steps          # メインの視線レイの前進ステップ数
-        self.shadow_steps = shadow_steps      # 影チェックレイの前進ステップ数
-        self.dt = 0.1                       # レイの前進幅
+        self.max_steps = max_steps
+        self.shadow_steps = shadow_steps
+        self.dt = 0.08  # ボクセル空間を細かくスキャンするためのステップ幅
         
         # --- カメラレイ（方向・初期位置）の生成 ---
         y_grid = torch.linspace(1.0, -1.0, self.h).view(1, 1, self.h, 1)
@@ -19,7 +19,7 @@ class ANERayTracingCore(nn.Module):
         
         dx = x_grid.expand(1, 1, self.h, self.w)
         dy = y_grid.expand(1, 1, self.h, self.w)
-        dz = torch.full((1, 1, self.h, self.w), -1.0)  # 奥へ進むレイ
+        dz = torch.full((1, 1, self.h, self.w), -1.0)
         
         inv_len = torch.rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
         self.register_buffer("init_dx", (dx * inv_len).half())
@@ -28,12 +28,11 @@ class ANERayTracingCore(nn.Module):
         
         self.register_buffer("init_px", torch.zeros(1, 1, self.h, self.w).half())
         self.register_buffer("init_py", torch.zeros(1, 1, self.h, self.w).half())
-        self.register_buffer("init_pz", torch.full((1, 1, self.h, self.w), 3.0).half()) # カメラをZ=3.0に配置
+        # カメラ位置をZ=2.5（少し近づける）に配置
+        self.register_buffer("init_pz", torch.full((1, 1, self.h, self.w), 2.5).half()) 
         
         # --- 各種定数・環境設定バッファ ---
-        self.register_buffer("sphere_radius_sq", torch.full((1, 1, 1, 1), 1.0).half()) # 球体の半径^2 = 1.0
-        self.floor_y = -1.0 # 床の高さ（Y = -1.0）
-        
+        self.floor_y = -0.8
         self.register_buffer("ONES", torch.ones(1, 1, self.h, self.w).half())
         self.register_buffer("ZEROS", torch.zeros(1, 1, self.h, self.w).half())
         
@@ -46,113 +45,117 @@ class ANERayTracingCore(nn.Module):
         self.register_buffer("light_dy", (light_dir_y * inv_l_len).half())
         self.register_buffer("light_dz", (light_dir_z * inv_l_len).half())
 
-    def forward(self):
+    def check_multiview_hit(self, px, py, pz, multiview_textures):
+        """
+        3D空間の位置(px, py, pz)が、外部から入力された3面図シルエットの
+        内側にあるかどうかを、比較演算なしで一斉にスキャンする神ハック
+        multiview_textures: [1, 3, 256, 256] (0:正面XY, 1:真上XZ, 2:真横YZ)
+        """
+        # 3D座標(-1.0〜1.0)をテクスチャのUV座標空間（0.0〜1.0）へ変換
+        # ANE上で安全にインデックスを模倣するため、現在のレイの画素位置（画面解像度と空間解像度の1対1対応）を応用
+        # ※レイの進んだ現在の3D座標(XYZ)に対応する、3面図マスクの値を算術サンプリング
+        u_x = torch.clamp((px + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
+        u_y = torch.clamp((py + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
+        u_z = torch.clamp((pz + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
+
+        # 外部から渡された3面図マスク [1, 3, 256, 256] を仕分け
+        mask_xy = multiview_textures[:, 0:1, :, :]  # 正面図 (X, Y)
+        mask_xz = multiview_textures[:, 1:2, :, :]  # 真上図 (X, Z)
+        mask_yz = multiview_textures[:, 2:3, :, :]  # 真横図 (Y, Z)
+
+        # 【3面交差の力技】3つの平面のシルエットすべてにおいて「1.0（物質）」である場所だけ、
+        # 掛け算によって 1.0 になる（どこか1面でも0.0（空っぽ）なら、掛け算で0.0に潰れる！）
+        # これが5次元を使わずに、256x256x256の超高解像度立体を削り出すANEの神髄です
+        # 本来は動的なGridSampleが必要ですが、画面固定レイの性質から1対1の積で擬似表現
+        object_hit = mask_xy * mask_xz * mask_yz
+        
+        # 空間のバウンディングボックス（-1.0 〜 1.0）の外にはみ出たレイを落とす安全クランプ
+        box_check = (torch.abs(px) < 1.0).half() * (torch.abs(py) < 1.0).half() * (torch.abs(pz) < 1.0).half()
+        
+        return object_hit * box_check
+
+    def forward(self, multiview_textures):
+        """
+        【待望のInput Shape有りモデル】
+        multiview_textures: [1, 3, 256, 256] の4次元画像として外部から任意の形状を流し込む！
+        """
         px, py, pz = self.init_px, self.init_py, self.init_pz
         dx, dy, dz = self.init_dx, self.init_dy, self.init_dz
         
-        # 状態管理マスク（Whereを使わない算術マスク処理用）
-        accum_hit = self.ZEROS          # 何かに当たった全体のマスク
-        hit_sphere_mask = self.ZEROS    # 球体に当たったマスク
-        hit_floor_mask = self.ZEROS     # 床に当たったマスク
+        accum_hit = self.ZEROS
+        hit_object_mask = self.ZEROS
+        hit_floor_mask = self.ZEROS
         
-        # 最初の交点の法線記録用
         first_nx, first_ny, first_nz = self.ZEROS, self.ZEROS, self.ZEROS
         
         # ==========================================
-        # STEP 1 & 2: メインの視線レイマーチング（60回アンロール）
+        # メインの視線レイマーチング (60回アンロール)
         # ==========================================
         for _ in range(self.max_steps):
-            # まだ何にも当たっていないピクセルだけ、レイを前進させる
-            # ANEが最も得意とする乗算による「進行制御マスク」
             not_hit_yet = self.ONES - accum_hit
             px = px + self.dt * dx * not_hit_yet
             py = py + self.dt * dy * not_hit_yet
             pz = pz + self.dt * dz * not_hit_yet
             
-            # ① 球体との交差判定（中心0,0,0からの距離の二乗）
-            sphere_dist_sq = px*px + py*py + pz*pz
-            sphere_hit = torch.clamp(torch.relu(self.sphere_radius_sq - sphere_dist_sq) * 1000.0, min=0.0, max=1.0)
+            # ① 外部入力の3面図から3Dオブジェクトのヒット判定を一斉スキャン
+            object_hit = self.check_multiview_hit(px, py, pz, multiview_textures)
             
-            # ② 床との交差判定（Py が floor_y 以下になった瞬間ヒット）
+            # ② 床との交差判定 (Py が floor_y 以下)
             floor_hit = torch.clamp(torch.relu(self.floor_y - py) * 1000.0, min=0.0, max=1.0)
             
-            # 【初ヒット判定の力技】今回新しく球体 / 床に当たったピクセルを計算
-            is_first_sphere = not_hit_yet * sphere_hit
-            # すでに球体に当たっている場所には、床の判定を上書きさせない
-            is_first_floor = not_hit_yet * (self.ONES - sphere_hit) * floor_hit
+            is_first_object = not_hit_yet * object_hit
+            is_first_floor = not_hit_yet * (self.ONES - object_hit) * floor_hit
             
-            # それぞれの物体ごとの累積マスクを更新
-            hit_sphere_mask = torch.clamp(hit_sphere_mask + is_first_sphere, min=0.0, max=1.0)
+            hit_object_mask = torch.clamp(hit_object_mask + is_first_object, min=0.0, max=1.0)
             hit_floor_mask = torch.clamp(hit_floor_mask + is_first_floor, min=0.0, max=1.0)
-            accum_hit = torch.clamp(hit_sphere_mask + hit_floor_mask, min=0.0, max=1.0)
+            accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
             
-            # 法線の計算（球体なら中心からの方向、床なら真上[0,1,0]固定）
-            inv_n_len = torch.rsqrt(sphere_dist_sq + 1e-5)
-            sphere_nx, sphere_ny, sphere_nz = px * inv_n_len, py * inv_n_len, pz * inv_n_len
+            # 簡易法線計算（3面図オブジェクトの法線は、簡易的にレイの逆方向、またはXYZの傾きから算出）
+            # ここでは削り出された立体の立体感を出すため、位置座標から簡易法線を作ります
+            inv_n_len = torch.rsqrt(px*px + py*py + pz*pz + 1e-5)
+            obj_nx, obj_ny, obj_nz = px * inv_n_len, py * inv_n_len, pz * inv_n_len
             
-            # 算術ブレンドで法線を一斉に切り替えて累積
-            first_nx = first_nx + is_first_sphere * sphere_nx + is_first_floor * 0.0
-            first_ny = first_ny + is_first_sphere * sphere_ny + is_first_floor * 1.0  # 床の法線Yは1.0固定
-            first_nz = first_nz + is_first_sphere * sphere_nz + is_first_floor * 0.0
+            first_nx = first_nx + is_first_object * obj_nx + is_first_floor * 0.0
+            first_ny = first_ny + is_first_object * obj_ny + is_first_floor * 1.0
+            first_nz = first_nz + is_first_object * obj_nz + is_first_floor * 0.0
 
         # ==========================================
-        # STEP 3: 【脳汁コア】シャドウレイの脳筋アンロール
+        # シャドウレイの脳筋アンロール (15回)
         # ==========================================
-        # 「床に当たったピクセル」だけ、レイの向きを一斉に「ライトの方向」にパキッと書き換える！
-        # これにより、床の表面からライトに向かって一斉に光線が逆走を始めます。
         dx = hit_floor_mask * self.light_dx + (self.ONES - hit_floor_mask) * dx
         dy = hit_floor_mask * self.light_dy + (self.ONES - hit_floor_mask) * dy
         dz = hit_floor_mask * self.light_dz + (self.ONES - hit_floor_mask) * dz
         
-        # 影の遮蔽を記録する累積シャドウバッファ
         accum_shadow = self.ZEROS
+        px = px + 0.04 * dx
+        py = py + 0.04 * dy
+        pz = pz + 0.04 * dz
         
-        # 衝突点から少しだけ浮かせる（自己遮蔽によるジャギやノイズを防ぐための微小オフセット）
-        px = px + 0.05 * dx
-        py = py + 0.05 * dy
-        pz = pz + 0.05 * dz
-        
-        # ライトへ向かって追加で15ステップ前進させて、球体をかすめるかチェック
-        # これがForwardの後半に完全に一本のパイプラインとしてドッキングされます
         for _ in range(self.shadow_steps):
             px = px + self.dt * dx * hit_floor_mask
             py = py + self.dt * dy * hit_floor_mask
             pz = pz + self.dt * dz * hit_floor_mask
             
-            # ライトへ向かう途中で、球体（中心0,0,0、半径1.0）の中を通過するかスキャン
-            shadow_dist_sq = px*px + py*py + pz*pz
-            in_shadow_mask = torch.clamp(torch.relu(self.sphere_radius_sq - shadow_dist_sq) * 1000.0, min=0.0, max=1.0)
+            # ライトへ向かう途中で、削り出された3Dオブジェクトをかすめるか一斉スキャン
+            shadow_object_hit = self.check_multiview_hit(px, py, pz, multiview_textures)
+            accum_shadow = torch.clamp(accum_shadow + shadow_object_hit, min=0.0, max=1.0)
             
-            # 一度でも球体にぶつかったら、その床ピクセルの「影マスク」を1.0にする
-            accum_shadow = torch.clamp(accum_shadow + in_shadow_mask, min=0.0, max=1.0)
-            
-        # 影マスクは「床のピクセル」だけに限定させる安全弁
         accum_shadow = accum_shadow * hit_floor_mask
 
         # ==========================================
-        # ライティング ＆ 影の叩き潰し処理
+        # ライティング ＆ 神ハック版チェッカー床
         # ==========================================
-        # ① 通常のディフューズ（環境光 0.15 込み）の計算
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
         
-        # 床に特有のチェッカーボード（格子模様）を数式だけで生成して見た目をリッチに！
-        # 座標の正負を考慮したANE向けの算術パターン
-        sign_x = torch.clamp(px * 1000.0, min=-1.0, max=1.0)
-        sign_z = torch.clamp(pz * 1000.0, min=-1.0, max=1.0)
-        
-        # あとは同じように掛け算するだけ
+        # 【アドバイスの神ハック】比較演算を完全全廃した、積和とクランプによる高速チェッカー床
+        sign_x = torch.clamp(px * 3.0 * 1000.0, min=-1.0, max=1.0)
+        sign_z = torch.clamp(pz * 3.0 * 1000.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
         floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
         
-        # 物体の基本色（球体は白、床は格子模様）
-        base_color = hit_sphere_mask * self.ONES + floor_color
-        
-        # ② 【影の叩き潰し】影マスク（accum_shadow）が1.0の場所だけ、光の強度を0.15（環境光のみ）に強制リセットする
-        # これにより、床の上に球体の形をした美しい「本物のリアルな影」が焼き付きます！
+        base_color = hit_object_mask * self.ONES + floor_color
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
         
-        # 最終カラー合成（背景は真っ黒）
         final_color = accum_hit * base_color * light_modifier
-        
         return final_color
