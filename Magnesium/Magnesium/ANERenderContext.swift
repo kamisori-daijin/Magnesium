@@ -79,81 +79,87 @@ class ANERenderContext {
     }
 
     func update() async {
-            guard let mgDevice = self.mgDevice, !self.isComputing else { return }
-            
-            self.isComputing = true
-            self.angle += 0.0083
-            
-            let radius: Float = 6.0
-            let eyeX = radius * sin(self.angle)
-            let eyeZ = radius * cos(self.angle)
-            
-            let cameraMatrix = mgDevice.createCameraMatrix(
-                eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
-                target: SIMD3<Float>(0.0, 0.0, 0.0),
-                up: SIMD3<Float>(0.0, 1.0, 0.0)
-            )
+        guard let mgDevice = self.mgDevice, !self.isComputing else { return }
+        
+        self.isComputing = true
+        self.angle += 0.0083
+        
+        let radius: Float = 6.0
+        let eyeX = radius * sin(self.angle)
+        let eyeZ = radius * cos(self.angle)
+        
+        let cameraMatrix = mgDevice.createCameraMatrix(
+            eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
+            target: SIMD3<Float>(0.0, 0.0, 0.0),
+            up: SIMD3<Float>(0.0, 1.0, 0.0)
+        )
 
-            mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
-                let wChannelOffset = 3 * 3 * 64
-                for faceIdx in 0..<64 {
-                    vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                    vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                    vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
-                }
+        // 1. ジオメトリデータの設定
+        mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
+            let wChannelOffset = 3 * 3 * 64
+            for faceIdx in 0..<64 {
+                vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
+                vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
+                vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
+            }
 
-                // 外部ファイルからトーラスのデータを取得
-                let faces = TorusGeometry.generateFaces()
+            let faces = TorusGeometry.generateFaces()
 
-                // 64ポリゴンをセット
-                for slot in 0..<min(faces.count, 64) {
-                    let face = faces[slot]
-                    
-                    // 適当な色を設定（リングごとに色を変える）
-                    colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
-                    colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
-                    colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
-                    
-                    for v in 0..<3 {
-                        for ch in 0..<4 {
-                            let pIndex = (ch * 3 * 64) + (v * 64) + slot
-                            vertices[pIndex] = face[v][ch]
-                        }
-                    }
-                    
-                    for m in 0..<16 {
-                        mvpWeights[m * 64 + slot] = cameraMatrix[m]
+            for slot in 0..<min(faces.count, 64) {
+                let face = faces[slot]
+                
+                colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
+                colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
+                colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
+                
+                for v in 0..<3 {
+                    for ch in 0..<4 {
+                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                        vertices[pIndex] = face[v][ch]
                     }
                 }
+                
+                for m in 0..<16 {
+                    mvpWeights[m * 64 + slot] = cameraMatrix[m]
+                }
             }
-            
-            guard let mgCommandQueue = self.mgCommandQueue,
-                  let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
-                  let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
-                self.isComputing = false
-                return
-            }
-            
-            mgEncoder.endEncoding()
-            
-            do {
-                try await mgCommandBuffer.commit()
-                self.currentEventValue += 1
-                self.sharedEvent?.signaledValue = self.currentEventValue
-            } catch {
-                print("Inference error: \(error)")
-            }
-            
+        }
+        
+        guard let mgCommandQueue = self.mgCommandQueue,
+              let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
+              let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
             self.isComputing = false
+            return
         }
-
-        // ヘルパー関数
-        private func getTorusPoint(_ theta: Float, _ phi: Float, _ R: Float, _ r: Float) -> [Float16] {
-            let x = (R + r * cos(phi)) * cos(theta)
-            let y = r * sin(phi)
-            let z = (R + r * cos(phi)) * sin(theta)
-            return [Float16(x), Float16(y), Float16(z), 1.0]
+        
+        // 2. テクスチャデータの設定（ゼロコピー）
+        mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
+            // 256x256 のダミーテクスチャ（グラデーション）を生成
+            for y in 0..<256 {
+                for x in 0..<256 {
+                    let index = (y * 256 + x) * 3
+                    let u = Float16(x) / 255.0
+                    let v = Float16(y) / 255.0
+                    
+                    texturePointer[index + 0] = u       // R
+                    texturePointer[index + 1] = v       // G
+                    texturePointer[index + 2] = 1.0 - u // B
+                }
+            }
         }
+        
+        mgEncoder.endEncoding()
+        
+        do {
+            try await mgCommandBuffer.commit()
+            self.currentEventValue += 1
+            self.sharedEvent?.signaledValue = self.currentEventValue
+        } catch {
+            print("Inference error: \(error)")
+        }
+        
+        self.isComputing = false
+    }
 
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm

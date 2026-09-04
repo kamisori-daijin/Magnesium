@@ -9,7 +9,6 @@ public protocol MGDevice: AnyObject {
     func getDisplayBuffer(index: Int) -> MTLBuffer?
     func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16]
     
-    // Pointer Acces
     func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void)
 }
 
@@ -21,7 +20,10 @@ public protocol MGDevice: AnyObject {
 
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
-    func setFragmentTexture(_ texture: [Float16], index: Int)
+    
+    // ポインタを直接渡してゼロコピーを実現するAPI
+    func withFragmentTexturePointer(index: Int, _ body: (UnsafeMutablePointer<Float16>) -> Void)
+    
     func drawPrimitives(vertexCount: Int)
     func endEncoding()
 }
@@ -36,7 +38,6 @@ internal final class MagnesiumDevice: MGDevice {
         do {
             guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
             self.renderer = try await ANERenderer(preURL: preURL, rastURL: rastURL, texURL: texURL, metalDevice: systemMetalDevice)
-            print("Success: Renderer initialized!")
         } catch {
             print("Error: \(error)")
         }
@@ -48,7 +49,6 @@ internal final class MagnesiumDevice: MGDevice {
         geometry.createCameraMatrix(eye: eye, target: target, up: up)
     }
     
-
     public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer else { return }
         
@@ -85,7 +85,6 @@ internal final class MagnesiumDevice: MGDevice {
     
     func commit() async throws {
         guard let renderer = device.renderer else { return }
-        // Run
         try await renderer.drawFrame()
     }
 }
@@ -95,9 +94,16 @@ internal final class MagnesiumDevice: MGDevice {
     
     init(device: MagnesiumDevice) { self.device = device }
     
- 
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {}
-    func setFragmentTexture(_ texture: [Float16], index: Int) {}
+    
+    func withFragmentTexturePointer(index: Int, _ body: (UnsafeMutablePointer<Float16>) -> Void) {
+        guard let renderer = device.renderer else { return }
+        
+        renderer.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { tPtr, _, _ in
+            body(tPtr)
+        }
+    }
+    
     func drawPrimitives(vertexCount: Int) {}
     func endEncoding() {}
 }
