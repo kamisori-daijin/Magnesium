@@ -69,8 +69,15 @@ class ANERayTracingCore(nn.Module):
         object_hit = mask_xy * mask_xz * mask_yz * box_check
         return object_hit
 
-    def forward(self, multiview_textures, inv_view_matrix):
-        inv_view = inv_view_matrix.half()
+    def forward(self, multiview_textures, inv_view_matrix_64d):
+        """
+        Input:
+          multiview_textures: [1, 3, 256, 256]
+          inv_view_matrix_64d: [1, 64, 1, 1] (ANEが大得意な64chアライメント)
+        """
+        # 🌟 先頭の16チャンネル（行列の16成分）だけを切り出して 4x4 に復元！
+        # 残りの48チャンネルはANEの空回し用として無視されます
+        inv_view = inv_view_matrix_64d[0, :16, 0, 0].view(4, 4).half()
         
         # --- 逆行列を使ってワールド空間へ一撃変換 ---
         r00, r01, r02 = inv_view[0, 0], inv_view[0, 1], inv_view[0, 2]

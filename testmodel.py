@@ -76,15 +76,21 @@ def main():
             cam_y = 1.5 * np.sin(angle * 0.5) # 上下にも少しゆらゆら動かす
             cam_z = 3.5 * np.cos(angle)
             
-            # カメラの逆行列を生成してデバイスに送る [4, 4]
-            inv_view = create_inverse_view_matrix(
+            inv_view_2d = create_inverse_view_matrix(
                 eye=[cam_x, cam_y, cam_z], 
                 target=[0.0, 0.0, 0.0], 
                 up=[0.0, 1.0, 0.0]
-            ).to(device).half()
+            ).flatten() # 1次元の16要素にする
+            
+            # 2. ANE専用に64要素のゼロ配列を用意し、先頭にカメラ行列をコピペする
+            inv_view_64 = torch.zeros(64, dtype=torch.float32)
+            inv_view_64[:16] = inv_view_2d
+            
+            # 3. 完璧な 4次元・64チャンネル形状にして転送！
+            inv_view_4d = inv_view_64.view(1, 64, 1, 1).to(device).half()
 
-            # 🌟 修正：モデルの forward に「3面図」と「カメラの逆行列」をセットで流し込む！
-            output_color = model(dummy_input, inv_view)
+            # モデルに流し込む
+            output_color = model(dummy_input, inv_view_4d)
 
             # 画像の保存
             output_image = output_color.float().cpu()
