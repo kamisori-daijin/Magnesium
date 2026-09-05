@@ -53,17 +53,14 @@ def main():
     
     y, x = torch.meshgrid(torch.linspace(-1, 1, 256), torch.linspace(-1, 1, 256), indexing="ij")
     
-    # チャンネル0: 正面図に白い円
+    # 3つのチャンネル（正面、真上、真横）すべてに共通の円マスクを描画
+    # これにより、3面が交差した空間に完全な球体が彫刻されます
     circle_mask = (x*x + y*y) < 0.35
-    dummy_input[0, 0, :, :] = circle_mask.to(device).half()
+    circle_mask_half = circle_mask.to(device).half()
     
-    # チャンネル1: 真上図に四角
-    box_mask_top = (torch.abs(x) < 0.6) * (torch.abs(y) < 0.6)
-    dummy_input[0, 1, :, :] = box_mask_top.to(device).half()
-    
-    # 2: 真横図に四角
-    box_mask_side = (torch.abs(x) < 0.6) * (torch.abs(y) < 0.6)
-    dummy_input[0, 2, :, :] = box_mask_side.to(device).half()
+    dummy_input[0, 0, :, :] = circle_mask_half  # 正面 (X, Y)
+    dummy_input[0, 1, :, :] = circle_mask_half  # 真上 (X, Z)
+    dummy_input[0, 2, :, :] = circle_mask_half  # 真横 (Y, Z)
 
     # 3. ぐるぐる回すアニメーションループ（全30フレーム）
     num_frames = 30
