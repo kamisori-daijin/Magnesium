@@ -2,7 +2,6 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.utils as vutils
 
 class ANERayTracingCore(nn.Module):
     def __init__(self, width=256, height=256, max_steps=60, shadow_steps=15):
@@ -11,7 +10,7 @@ class ANERayTracingCore(nn.Module):
         self.h = height
         self.max_steps = max_steps
         self.shadow_steps = shadow_steps
-        self.dt = 0.08  # ボクセル空間を細かくスキャンするためのステップ幅
+        self.dt = 0.08  # ステップ幅
         
         # --- カメラレイ（方向・初期位置）の生成 ---
         y_grid = torch.linspace(1.0, -1.0, self.h).view(1, 1, self.h, 1)
@@ -28,7 +27,6 @@ class ANERayTracingCore(nn.Module):
         
         self.register_buffer("init_px", torch.zeros(1, 1, self.h, self.w).half())
         self.register_buffer("init_py", torch.zeros(1, 1, self.h, self.w).half())
-        # カメラ位置をZ=2.5（少し近づける）に配置
         self.register_buffer("init_pz", torch.full((1, 1, self.h, self.w), 2.5).half()) 
         
         # --- 各種定数・環境設定バッファ ---
@@ -45,119 +43,115 @@ class ANERayTracingCore(nn.Module):
         self.register_buffer("light_dy", (light_dir_y * inv_l_len).half())
         self.register_buffer("light_dz", (light_dir_z * inv_l_len).half())
 
+        # モデル内部だけで使うステップ係数テーブルを事前登録 [Steps, 1, 1, 1]
+        step_ratios = torch.arange(self.max_steps).view(self.max_steps, 1, 1, 1) * self.dt
+        self.register_buffer("step_ratios", step_ratios.half())
+        
+        shadow_ratios = torch.arange(self.shadow_steps).view(self.shadow_steps, 1, 1, 1) * self.dt
+        self.register_buffer("shadow_ratios", shadow_ratios.half())
+
     def check_multiview_hit(self, px, py, pz, multiview_textures):
         """
-        3D空間の位置(px, py, pz)が、外部から入力された3面図シルエットの
-        内側にあるかどうかを、比較演算なしで一斉にスキャンする神ハック
-        multiview_textures: [1, 3, 256, 256] (0:正面XY, 1:真上XZ, 2:真横YZ)
+        [B, 1, H, W] に拡張された座標に対して一斉に判定を行う
         """
-        # 3D座標(-1.0〜1.0)をテクスチャのUV座標空間（0.0〜1.0）へ変換
-        # ANE上で安全にインデックスを模倣するため、現在のレイの画素位置（画面解像度と空間解像度の1対1対応）を応用
-        # ※レイの進んだ現在の3D座標(XYZ)に対応する、3面図マスクの値を算術サンプリング
-        u_x = torch.clamp((px + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
-        u_y = torch.clamp((py + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
-        u_z = torch.clamp((pz + 1.0) * 0.5 * 255.0, min=0.0, max=255.0)
-
-        # 外部から渡された3面図マスク [1, 3, 256, 256] を仕分け
+        # 外部から渡された3面図マスクをバラす
         mask_xy = multiview_textures[:, 0:1, :, :]  # 正面図 (X, Y)
         mask_xz = multiview_textures[:, 1:2, :, :]  # 真上図 (X, Z)
         mask_yz = multiview_textures[:, 2:3, :, :]  # 真横図 (Y, Z)
 
-        # 【3面交差の力技】3つの平面のシルエットすべてにおいて「1.0（物質）」である場所だけ、
-        # 掛け算によって 1.0 になる（どこか1面でも0.0（空っぽ）なら、掛け算で0.0に潰れる！）
-        # これが5次元を使わずに、256x256x256の超高解像度立体を削り出すANEの神髄です
-        # 本来は動的なGridSampleが必要ですが、画面固定レイの性質から1対1の積で擬似表現
+        # 3面交差判定
         object_hit = mask_xy * mask_xz * mask_yz
         
-        # 1.0 を超えた分（はみ出た量）を relu で抽出
+        # バウンディングボックス境界判定
         out_x = torch.relu(torch.abs(px) - 1.0)
         out_y = torch.relu(torch.abs(py) - 1.0)
         out_z = torch.relu(torch.abs(pz) - 1.0)
 
-         # どこか1つでも 0.0 を超えていれば（＝はみ出ていれば）1.0 以上になるマスク
         any_out = torch.clamp((out_x + out_y + out_z) * 1000.0, min=0.0, max=1.0)
-
-        # 内側（はみ出ていない）なら 1.0、外側なら 0.0 になる安全クランプ
-        box_check = self.ONES - any_out
-
+        box_check = 1.0 - any_out
         
         return object_hit * box_check
 
     def forward(self, multiview_textures):
         """
-        【待望のInput Shape有りモデル】
-        multiview_textures: [1, 3, 256, 256] の4次元画像として外部から任意の形状を流し込む！
+        Input multiview_textures: [1, 3, 256, 256] 固定
         """
-        px, py, pz = self.init_px, self.init_py, self.init_pz
-        dx, dy, dz = self.init_dx, self.init_dy, self.init_dz
-        
-        accum_hit = self.ZEROS
-        hit_object_mask = self.ZEROS
-        hit_floor_mask = self.ZEROS
-        
-        first_nx, first_ny, first_nz = self.ZEROS, self.ZEROS, self.ZEROS
-        
         # ==========================================
-        # メインの視線レイマーチング (60回アンロール)
+        # 1. メインの視線レイマーチング (内部バッチ = 60)
         # ==========================================
-        for _ in range(self.max_steps):
-            not_hit_yet = self.ONES - accum_hit
-            px = px + self.dt * dx * not_hit_yet
-            py = py + self.dt * dy * not_hit_yet
-            pz = pz + self.dt * dz * not_hit_yet
-            
-            # ① 外部入力の3面図から3Dオブジェクトのヒット判定を一斉スキャン
-            object_hit = self.check_multiview_hit(px, py, pz, multiview_textures)
-            
-            # ② 床との交差判定 (Py が floor_y 以下)
-            floor_hit = torch.clamp(torch.relu(self.floor_y - py) * 1000.0, min=0.0, max=1.0)
-            
-            is_first_object = not_hit_yet * object_hit
-            is_first_floor = not_hit_yet * (self.ONES - object_hit) * floor_hit
-            
-            hit_object_mask = torch.clamp(hit_object_mask + is_first_object, min=0.0, max=1.0)
-            hit_floor_mask = torch.clamp(hit_floor_mask + is_first_floor, min=0.0, max=1.0)
-            accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
-            
-            # 簡易法線計算（3面図オブジェクトの法線は、簡易的にレイの逆方向、またはXYZの傾きから算出）
-            # ここでは削り出された立体の立体感を出すため、位置座標から簡易法線を作ります
-            inv_n_len = torch.rsqrt(px*px + py*py + pz*pz + 1e-5)
-            obj_nx, obj_ny, obj_nz = px * inv_n_len, py * inv_n_len, pz * inv_n_len
-            
-            first_nx = first_nx + is_first_object * obj_nx + is_first_floor * 0.0
-            first_ny = first_ny + is_first_object * obj_ny + is_first_floor * 1.0
-            first_nz = first_nz + is_first_object * obj_nz + is_first_floor * 0.0
+        # [60, 1, H, W] の空間位置を一撃で展開して計算
+        px_all = self.init_px + self.init_dx * self.step_ratios
+        py_all = self.init_py + self.init_dy * self.step_ratios
+        pz_all = self.init_pz + self.init_dz * self.step_ratios
+
+        # 3面図を入力の [1, 3, H, W] から [60, 3, H, W] にブロードキャスト
+        textures_view = multiview_textures.expand(self.max_steps, -1, -1, -1)
+
+        # オブジェクトのヒット判定を一斉スキャン [60, 1, H, W]
+        object_hit_all = self.check_multiview_hit(px_all, py_all, pz_all, textures_view)
+        
+        # 床との交差判定 (Py が floor_y 以下)
+        floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 1000.0, min=0.0, max=1.0)
+        
+        # 「いずれかにヒットした」マスク
+        any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
+        
+        # 累積和（cumsum）を使って、過去のステップで既にヒットしているかフラグを再現
+        cum_hit = torch.cumsum(any_hit_all, dim=0)
+        prior_hit = torch.cat([torch.zeros_like(cum_hit[:1]), cum_hit[:-1]], dim=0)
+        not_hit_yet_all = torch.clamp(1.0 - prior_hit, min=0.0, max=1.0)
+
+        # 「そのステップで初めて」ヒットした箇所のマスク
+        is_first_object_all = not_hit_yet_all * object_hit_all
+        is_first_floor_all = not_hit_yet_all * (1.0 - object_hit_all) * floor_hit_all
+
+        # 全ステップを統合して元の [1, 1, H, W] に戻す
+        hit_object_mask = torch.sum(is_first_object_all, dim=0, keepdim=True).clamp(0.0, 1.0)
+        hit_floor_mask = torch.sum(is_first_floor_all, dim=0, keepdim=True).clamp(0.0, 1.0)
+        accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
+
+        # 最終衝突位置の抽出 [1, 1, H, W]
+        px = torch.sum(is_first_object_all * px_all + is_first_floor_all * px_all, dim=0, keepdim=True)
+        py = torch.sum(is_first_object_all * py_all + is_first_floor_all * py_all, dim=0, keepdim=True)
+        pz = torch.sum(is_first_object_all * pz_all + is_first_floor_all * pz_all, dim=0, keepdim=True)
+
+        # 簡易法線計算
+        inv_n_len = torch.rsqrt(px*px + py*py + pz*pz + 1e-5)
+        obj_nx, obj_ny, obj_nz = px * inv_n_len, py * inv_n_len, pz * inv_n_len
+        
+        first_nx = hit_object_mask * obj_nx
+        first_ny = hit_object_mask * obj_ny + hit_floor_mask * 1.0
+        first_nz = hit_object_mask * obj_nz
 
         # ==========================================
-        # シャドウレイの脳筋アンロール (15回)
+        # 2. シャドウレイの並列化 (内部バッチ = 15)
         # ==========================================
-        dx = hit_floor_mask * self.light_dx + (self.ONES - hit_floor_mask) * dx
-        dy = hit_floor_mask * self.light_dy + (self.ONES - hit_floor_mask) * dy
-        dz = hit_floor_mask * self.light_dz + (self.ONES - hit_floor_mask) * dz
+        # 床に当たったピクセルからのみ、ライト方向へ進むレイの座標を一斉生成
+        shadow_start_x = px + 0.04 * self.light_dx
+        shadow_start_y = py + 0.04 * self.light_dy
+        shadow_start_z = pz + 0.04 * self.light_dz
+
+        # ここでシャドウ用の内部バッチ [15, 1, H, W] を一斉計算
+        spx_all = shadow_start_x + self.light_dx * self.shadow_ratios
+        spy_all = shadow_start_y + self.light_dy * self.shadow_ratios
+        spz_all = shadow_start_z + self.light_dz * self.shadow_ratios
+
+        # 3面図を入力の [1, 3, H, W] から [15, 3, H, W] にブロードキャスト
+        textures_shadow_view = multiview_textures.expand(self.shadow_steps, -1, -1, -1)
+
+        # ライトへ向かう途中でオブジェクトをかすめるか一斉スキャン [15, 1, H, W]
+        shadow_hit_all = self.check_multiview_hit(spx_all, spy_all, spz_all, textures_shadow_view)
         
-        accum_shadow = self.ZEROS
-        px = px + 0.04 * dx
-        py = py + 0.04 * dy
-        pz = pz + 0.04 * dz
-        
-        for _ in range(self.shadow_steps):
-            px = px + self.dt * dx * hit_floor_mask
-            py = py + self.dt * dy * hit_floor_mask
-            pz = pz + self.dt * dz * hit_floor_mask
-            
-            # ライトへ向かう途中で、削り出された3Dオブジェクトをかすめるか一斉スキャン
-            shadow_object_hit = self.check_multiview_hit(px, py, pz, multiview_textures)
-            accum_shadow = torch.clamp(accum_shadow + shadow_object_hit, min=0.0, max=1.0)
-            
+        # 1度でも遮られたら影にする [1, 1, H, W] に戻す
+        accum_shadow = torch.sum(shadow_hit_all, dim=0, keepdim=True).clamp(0.0, 1.0)
         accum_shadow = accum_shadow * hit_floor_mask
 
         # ==========================================
-        # ライティング ＆ 神ハック版チェッカー床
+        # 3. ライティング ＆ チェッカー床
         # ==========================================
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
         
-        # 【アドバイスの神ハック】比較演算を完全全廃した、積和とクランプによる高速チェッカー床
         sign_x = torch.clamp(px * 3.0 * 1000.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(pz * 3.0 * 1000.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
