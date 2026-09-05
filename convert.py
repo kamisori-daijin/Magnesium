@@ -24,7 +24,7 @@ args = (multiview_input_shape,)
 # -------------------------------------------------------------------------
 # 3. CoreAIへの変換およびエクスポート実行
 # -------------------------------------------------------------------------
-print("🚀 [Input Shape: 1x3x256x256] でアンロールパイプラインを静的展開中...")
+print("Tracing...")
 converter = TorchConverter().add_pytorch_module(
     model,
     export_fn=lambda m: torch.export.export(
@@ -35,15 +35,13 @@ converter = TorchConverter().add_pytorch_module(
     ),
 )
 
-print("🪄 CoreAIプログラムへ変換し、NPU専用のハードウェア最適化を適用します...")
 coreai_program = converter.to_coreai()
 coreai_program.optimize()
 
-# 4. コンパイル済みアセットの保存
-output_path = Path("ane_multiview_raytracer.aimodel")
+# 4. Save
+output_path = Path("ane_raytracer.aimodel")
 coreai_program.save_asset(output_path)
 
-print("\n" + "="*50)
-print(f"✨ 変換に完全成功しました！！: `{output_path}`")
-print("5次元を回避し、かつすべての論理比較を全廃したため、ANEのシリコンを100%フル駆動させる神回路です。")
-print("="*50)
+
+print(f"Success: `{output_path}`")
+
