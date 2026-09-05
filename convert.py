@@ -16,10 +16,10 @@ model.eval()
 # -------------------------------------------------------------------------
 # ANEを殺さない、完璧な4次元 [1, 3, 256, 256] (正面, 真上, 真横の3面図) のShapeを定義
 # これにより、外部からリアルタイムに任意の3Dモデルを注入できるポートが作成されます
-multiview_input_shape = torch.zeros(1, 3, 256, 256, dtype=torch.float32)
+multiview_input_shape = torch.zeros(1, 3, 256, 256, dtype=torch.float16)
 
 # ポート2: カメラの逆行列（ANEを激怒させない完璧な64チャンネルアライメント）
-matrix_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float32)
+matrix_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
 args = (multiview_input_shape, matrix_input_shape)
 
