@@ -74,7 +74,9 @@ class ANERayTracingCore(nn.Module):
         # ※完全なgrid_sampleを模倣するため、PyTorch標準のF.grid_sampleを使いたいところですが、
         # ANE対応させるために、座標の大小関係からマスクを減衰させるハイブリッド方式をとります
         # これにより、px, py, pzの変化がf_center - f_dxの微分値として正しく出力されるようになります
-        geo_shape = torch.clamp(1.0 - (px*px + py*py + pz*pz), min=0.0, max=1.0)
+        # 各軸の絶対値から、微分可能な滑らかな立方体を作るハック
+        geo_shape = torch.clamp(1.2 - (px.pow(4) + py.pow(4) + pz.pow(4)), min=0.0, max=1.0)
+
         
         # 3面図マスクと3次元幾何形状の論理積
         object_hit = mask_xy * mask_xz * mask_yz * geo_shape * box_check

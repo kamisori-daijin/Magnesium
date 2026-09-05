@@ -1,46 +1,102 @@
 import os
 import torch
+import numpy as np
 import torchvision.utils as vutils
-# クラス名はあなたが提示した元の名前に合わせています
+# 🌟 修正：カメラ行列対応版のクラスからインポート
 from RayTracingCore import ANERayTracingCore
 
+def create_inverse_view_matrix(eye, target, up):
+    """
+    Python（CPU/MPS）側でカメラのビュー行列の【逆行列】を正確に計算する関数。
+    ANEに余計な inverse 演算をさせないための必須ハックです。
+    """
+    eye = np.array(eye, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
+    up = np.array(up, dtype=np.float32)
+    
+    z_axis = (eye - target) / (np.linalg.norm(eye - target) + 1e-5)
+    x_axis = np.cross(up, z_axis) / (np.linalg.norm(np.cross(up, z_axis)) + 1e-5)
+    y_axis = np.cross(z_axis, x_axis)
+    
+    # 通常のビュー行列 R
+    R = np.eye(4, dtype=np.float32)
+    R[0, :3] = x_axis
+    R[1, :3] = y_axis
+    R[2, :3] = z_axis
+    
+    # 通常の並進行列 T
+    T = np.eye(4, dtype=np.float32)
+    T[:3, 3] = -eye
+    
+    view_matrix = R @ T
+    
+    # レイトレーシングに必要なのは「逆行列」
+    inv_view = np.linalg.inv(view_matrix)
+    return torch.from_numpy(inv_view).float()
 
 def main():
-    print("🎬 ANE特化型（内部バッチ処理版）：マルチビュー3D削り出しレイトレーシングのテストを開始します...")
+    print("🎬 ANE特化型（数値微分＆4乗ハック）：カメラ旋回レイトレーシングを開始します...")
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"-> 使用デバイス: {device}")
 
-    # 1. モデルの初期化（ステップ数は内部で処理されるため変更なし）
+    # アニメーション保存用のディレクトリ作成
+    os.makedirs("anim_frames", exist_ok=True)
+
+    # 1. カメラ対応モデルの初期化
     max_steps = 64
     shadow_steps = 16
     model = ANERayTracingCore(max_steps=max_steps, shadow_steps=shadow_steps).to(device).half()
     model.eval()
 
-    # 2. 外部入力（ベース形状）のダミー3面図テクスチャを作成 [1, 3, 256, 256]
+    # 2. ベース形状（円柱）の3面図テクスチャを作成 [1, 3, 256, 256]
     dummy_input = torch.zeros(1, 3, 256, 256, dtype=torch.float16, device=device)
     
-    # チャンネル0: 正面図に白い円（丸）を描画
     y, x = torch.meshgrid(torch.linspace(-1, 1, 256), torch.linspace(-1, 1, 256), indexing="ij")
+    
+    # チャンネル0: 正面図に白い円
     circle_mask = (x*x + y*y) < 0.35
     dummy_input[0, 0, :, :] = circle_mask.to(device).half()
     
-    # チャンネル1: 真上図に四角（ボックス）を描画
+    # チャンネル1: 真上図に四角
     box_mask_top = (torch.abs(x) < 0.6) * (torch.abs(y) < 0.6)
     dummy_input[0, 1, :, :] = box_mask_top.to(device).half()
     
-    # チャンネル2: 真横図にも四角を描画
+    # 2: 真横図に四角
     box_mask_side = (torch.abs(x) < 0.6) * (torch.abs(y) < 0.6)
     dummy_input[0, 2, :, :] = box_mask_side.to(device).half()
 
-    # 3. 【神修正】無駄な expand を全廃し、[1, 3, 256, 256] のまま流し込む
+    # 3. ぐるぐる回すアニメーションループ（全30フレーム）
+    num_frames = 30
+    print(f"🚀 カメラを円軌道で回転させながら、{num_frames}フレームを一気に出力します...")
+    
     with torch.no_grad():
-        print("🚀 [1, 3, 256, 256] の最小テクスチャをそのまま流し込み、立体を削り出します...")
-        output_color = model(dummy_input)
+        for frame in range(num_frames):
+            # 時間（フレーム）の経過に合わせて角度を計算（1周 360度）
+            angle = (frame / num_frames) * 2.0 * np.pi
+            
+            # 半径 3.5 の円軌道上をカメラが移動
+            cam_x = 3.5 * np.sin(angle)
+            cam_y = 1.5 * np.sin(angle * 0.5) # 上下にも少しゆらゆら動かす
+            cam_z = 3.5 * np.cos(angle)
+            
+            # カメラの逆行列を生成してデバイスに送る [4, 4]
+            inv_view = create_inverse_view_matrix(
+                eye=[cam_x, cam_y, cam_z], 
+                target=[0.0, 0.0, 0.0], 
+                up=[0.0, 1.0, 0.0]
+            ).to(device).half()
 
-    output_image = output_color.float().cpu()
-    output_filename = "ray_trace_multiview_batch.png"
-    vutils.save_image(output_image, output_filename, normalize=False)
-    print(f"✨ 成功しました！ループなしで削り出された3Dオブジェクトの画像を保存しました: {os.path.abspath(output_filename)}")
+            # 🌟 修正：モデルの forward に「3面図」と「カメラの逆行列」をセットで流し込む！
+            output_color = model(dummy_input, inv_view)
+
+            # 画像の保存
+            output_image = output_color.float().cpu()
+            output_filename = f"anim_frames/frame_{frame:03d}.png"
+            vutils.save_image(output_image, output_filename, normalize=False)
+            print(f" 🟩 Frame {frame+1}/{num_frames} レンダー完了 -> {output_filename}")
+
+    print(f"\n✨ すべてのフレームが `anim_frames/` フォルダに保存されました！")
+    print("4乗ハックによる『バキッとしつつも影が超滑らかな円柱』がカメラワーク付きでヌルヌル動きます。")
 
 if __name__ == "__main__":
     main()
