@@ -11,9 +11,9 @@ class ANERayTracingCore(nn.Module):
         self.max_steps = max_steps
         self.shadow_steps = shadow_steps
         self.dt = 0.08
-        self.eps = 0.02  # 数値微分用のステップ
+        self.eps = 0.02  # step size for numerical differentiation
         
-        # --- カメラ空間での初期レイ（方向・位置）の生成 ---
+        # Ray direction and position in camera space
         y_grid = torch.linspace(1.0, -1.0, self.h).view(1, 1, self.h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.w).view(1, 1, 1, self.w)
         
@@ -25,7 +25,7 @@ class ANERayTracingCore(nn.Module):
         self.register_buffer("ONES", torch.ones(1, 1, self.h, self.w).half())
         self.register_buffer("ZEROS", torch.zeros(1, 1, self.h, self.w).half())
         
-        # 平行光源の方向（ワールド空間）
+        # World space light direction
         light_dir_x = torch.full((1, 1, 1, 1), 1.0)
         light_dir_y = torch.full((1, 1, 1, 1), 1.0)
         light_dir_z = torch.full((1, 1, 1, 1), 1.0)
@@ -38,34 +38,31 @@ class ANERayTracingCore(nn.Module):
         self.register_buffer("shadow_ratios", (torch.arange(self.shadow_steps).view(self.shadow_steps, 1, 1, 1) * self.dt).half())
 
     def check_multiview_hit(self, px, py, pz, multiview_textures):
-        """
-        [完全修正版] 3次元座標 px, py, pz から、3面図マスクの内部にあるかを「動的判定」します。
-        数式に頼らず、3面図のシルエットのみで形状を決定します。
-        """
-        # 1. 空間位置 px, py, pz から各プレーンへの投影座標（-1.0〜1.0）を取得
-        # ANEで動く高精度なシグモイド/ステップ関数ハックを使い、マスクの境界を座標依存で判定させます
-        # 3面図の解像度が256なので、微小な座標変化がマスクのヒット状態に直結するようにシャープなブレンドを施します
         
-        # バウンディングボックス境界判定
+        # 1. Obtain projection coordinates (-1.0 to 1.0) onto each plane from the spatial position (px, py, pz)
+
+        # Since the resolution of the three-view projection is 256, 
+        # sharp blending is applied so that even minute changes in coordinates 
+        # directly affect the mask hit state.
+        
+        # Box boundary check
         out_x = torch.relu(torch.abs(px) - 1.0)
         out_y = torch.relu(torch.abs(py) - 1.0)
         out_z = torch.relu(torch.abs(pz) - 1.0)
         any_out = torch.clamp((out_x + out_y + out_z) * 100.0, min=0.0, max=1.0)
         box_check = 1.0 - any_out
 
-        # 🌟 外部から渡された3面図（テクスチャ）を座標 px, py, pz の値によって、
-        # 3D空間上で動的に交差させるアナリティカル投影ルックアップ
-        # 3面図が「球（x*x + y*y < 0.35）」などの形状情報を、座標の2乗和とマスクの積で100%連動させます
+        # Lookup
         proj_xy = torch.clamp(1.1 - (px*px + py*py) / 0.35, min=0.0, max=1.0)
         proj_xz = torch.clamp(1.1 - (px*px + pz*pz) / 0.35, min=0.0, max=1.0)
         proj_yz = torch.clamp(1.1 - (py*py + pz*pz) / 0.35, min=0.0, max=1.0)
 
-        # 外部のマスクが「白(1.0)」の領域かつ、座標がその範囲内にいる時だけヒット
+        # Hit detection
         mask_xy = multiview_textures[:, 0:1, :, :] * proj_xy
         mask_xz = multiview_textures[:, 1:2, :, :] * proj_xz
         mask_yz = multiview_textures[:, 2:3, :, :] * proj_yz
 
-        # 3面すべてのシルエットの中にレイがいるか（完全なる3面交差）
+        # Hit detection
         object_hit = mask_xy * mask_xz * mask_yz * box_check
         return object_hit
 
@@ -73,13 +70,13 @@ class ANERayTracingCore(nn.Module):
         """
         Input:
           multiview_textures: [1, 3, 256, 256]
-          inv_view_matrix_64d: [1, 64, 1, 1] (ANEが大得意な64chアライメント)
+          inv_view_matrix_64d: [1, 64, 1, 1] 
         """
-        # 🌟 先頭の16チャンネル（行列の16成分）だけを切り出して 4x4 に復元！
-        # 残りの48チャンネルはANEの空回し用として無視されます
+        # Reconstruct 4x4 view matrix from the first 16 channels
+      
         inv_view = inv_view_matrix_64d[0, :16, 0, 0].view(4, 4).half()
         
-        # --- 逆行列を使ってワールド空間へ一撃変換 ---
+        # Inverse view matrix decomposition
         r00, r01, r02 = inv_view[0, 0], inv_view[0, 1], inv_view[0, 2]
         r10, r11, r12 = inv_view[1, 0], inv_view[1, 1], inv_view[1, 2]
         r20, r21, r22 = inv_view[2, 0], inv_view[2, 1], inv_view[2, 2]
@@ -98,7 +95,7 @@ class ANERayTracingCore(nn.Module):
         init_pz = inv_view[2, 3].view(1, 1, 1, 1)
 
         # ==========================================
-        # 1. メインの視線レイマーチング
+        # 1. Ray marching
         # ==========================================
         px_all = init_px + init_dx * self.step_ratios
         py_all = init_py + init_dy * self.step_ratios
@@ -110,7 +107,7 @@ class ANERayTracingCore(nn.Module):
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
         
-        # ANE特化型cumsum
+        # cumsum
         any_hit_permuted = any_hit_all.permute(1, 0, 2, 3)
         cum_hit_permuted = torch.cumsum(any_hit_permuted, dim=1)
         cum_hit = cum_hit_permuted.permute(1, 0, 2, 3)
@@ -129,9 +126,7 @@ class ANERayTracingCore(nn.Module):
         py = torch.sum(is_first_object_all * py_all + is_first_floor_all * py_all, dim=0, keepdim=True)
         pz = torch.sum(is_first_object_all * pz_all + is_first_floor_all * pz_all, dim=0, keepdim=True)
 
-        # ==========================================
-        # 🌟 数値微分による全自動・正確な法線計算 🌟
-        # ==========================================
+   
         f_center = self.check_multiview_hit(px, py, pz, multiview_textures)
         f_dx = self.check_multiview_hit(px + self.eps, py, pz, multiview_textures)
         f_dy = self.check_multiview_hit(px, py + self.eps, pz, multiview_textures)
@@ -148,7 +143,7 @@ class ANERayTracingCore(nn.Module):
         first_nz = hit_object_mask * (raw_nz * inv_true_n_len)
 
         # ==========================================
-        # 2. シャドウレイ
+        # 2. Shadow Ray
         # ==========================================
         shadow_start_x = px + 0.04 * self.light_dx
         shadow_start_y = py + 0.04 * self.light_dy
@@ -164,7 +159,7 @@ class ANERayTracingCore(nn.Module):
         accum_shadow = torch.sum(shadow_hit_all, dim=0, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
         # ==========================================
-        # 3. ライティング
+        # 3. Lighting
         # ==========================================
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
