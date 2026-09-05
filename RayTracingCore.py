@@ -62,12 +62,12 @@ class ANERayTracingCore(nn.Module):
         # 3面交差判定
         object_hit = mask_xy * mask_xz * mask_yz
         
-        # バウンディングボックス境界判定
+        # バウンディングボックス境界判定 (Float16安全対策として係数を100.0に調整)
         out_x = torch.relu(torch.abs(px) - 1.0)
         out_y = torch.relu(torch.abs(py) - 1.0)
         out_z = torch.relu(torch.abs(pz) - 1.0)
 
-        any_out = torch.clamp((out_x + out_y + out_z) * 1000.0, min=0.0, max=1.0)
+        any_out = torch.clamp((out_x + out_y + out_z) * 100.0, min=0.0, max=1.0)
         box_check = 1.0 - any_out
         
         return object_hit * box_check
@@ -90,14 +90,26 @@ class ANERayTracingCore(nn.Module):
         # オブジェクトのヒット判定を一斉スキャン [60, 1, H, W]
         object_hit_all = self.check_multiview_hit(px_all, py_all, pz_all, textures_view)
         
-        # 床との交差判定 (Py が floor_y 以下)
-        floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 1000.0, min=0.0, max=1.0)
+        # 床との交差判定 (Py が floor_y 以下) [60, 1, H, W]
+        floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         
-        # 「いずれかにヒットした」マスク
+        # 「いずれかにヒットした」マスク [60, 1, H, W]
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
         
-        # 累積和（cumsum）を使って、過去のステップで既にヒットしているかフラグを再現
-        cum_hit = torch.cumsum(any_hit_all, dim=0)
+        # ====================================================
+        # 【ANE最適化】Dim 0（バッチ）から Dim 1（チャンネル）へ入れ替えてcumsum
+        # ====================================================
+        # [max_steps, 1, H, W] -> [1, max_steps, H, W] に入れ替え
+        any_hit_permuted = any_hit_all.permute(1, 0, 2, 3)
+        
+        # ANEが得意な「Dim 1（チャンネル次元）」で累積和を計算
+        cum_hit_permuted = torch.cumsum(any_hit_permuted, dim=1)
+        
+        # 元のレイアウト [max_steps, 1, H, W] に戻す
+        cum_hit = cum_hit_permuted.permute(1, 0, 2, 3)
+        # ====================================================
+
+        # 過去のステップで既にヒットしているかフラグを再現
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:1]), cum_hit[:-1]], dim=0)
         not_hit_yet_all = torch.clamp(1.0 - prior_hit, min=0.0, max=1.0)
 
@@ -152,8 +164,8 @@ class ANERayTracingCore(nn.Module):
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
         
-        sign_x = torch.clamp(px * 3.0 * 1000.0, min=-1.0, max=1.0)
-        sign_z = torch.clamp(pz * 3.0 * 1000.0, min=-1.0, max=1.0)
+        sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0) # 1000.0から100.0へ安全のため修正
+        sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0) # 1000.0から100.0へ安全のため修正
         checker = (sign_x * sign_z + 1.0) * 0.5
         floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
         
