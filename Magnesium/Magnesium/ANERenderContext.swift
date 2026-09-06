@@ -30,6 +30,7 @@ class ANERenderContext {
     
     func setup(with device: MTLDevice) {
         self.activeDevice = device
+        // Bind to ComputeStream
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
         
@@ -49,7 +50,7 @@ class ANERenderContext {
             $0.pathExtension.lowercased() == "aimodel" &&
             $0.lastPathComponent.lowercased().contains("raytracer")
         }) else {
-            print("Faild to find raytracer")
+            print("Failed to find raytracer")
             return
         }
         
@@ -65,12 +66,14 @@ class ANERenderContext {
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
                 
-                await self.update()
+                
+                self.update()
             }
         }
     }
 
-    func update() async {
+
+    func update() {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
@@ -89,6 +92,7 @@ class ANERenderContext {
         let eyeY = radius * cosHalfAngle * 0.3 + 1.2
         let eyeZ = radius * cosAngle
         
+        // 16ch+16ch
         mgDevice.updateCamera(
             eye: SIMD3<Float>(eyeX, eyeY, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
@@ -102,19 +106,18 @@ class ANERenderContext {
             return
         }
         
-        do {
-            try await mgCommandBuffer.commit()
-            
-            self.currentEventValue += 1
-            self.sharedEvent?.signaledValue = self.currentEventValue
-        } catch {
-            print("ANE Inference Error: \(error)")
-        }
+
+       
+        
+        try? mgCommandBuffer.commit()
+        
+        self.currentEventValue += 1
+        self.sharedEvent?.signaledValue = self.currentEventValue
         
         self.isComputing = false
     }
 
-    /// Draw loop
+    /// Draw loop (Sync to MTKView)
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
@@ -127,6 +130,7 @@ class ANERenderContext {
         
         guard let commandBuffer = queue.makeCommandBuffer() else { return }
 
+    
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
@@ -143,10 +147,9 @@ class ANERenderContext {
         
         commandBuffer.present(drawable)
         
-        // Sync to Metal
         commandBuffer.addCompletedHandler { _ in
-            Task { @MainActor in
-                await self.update()
+            DispatchQueue.main.async { [weak self = self] in
+                self?.update()
             }
         }
         

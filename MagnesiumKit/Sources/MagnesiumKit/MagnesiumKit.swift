@@ -15,9 +15,11 @@ public protocol MGDevice: AnyObject {
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
+
 @MainActor public protocol MGCommandBuffer: AnyObject {
     func makeRenderCommandEncoder() -> MGRenderCommandEncoder?
-    func commit() async throws
+    
+    func commit() throws
 }
 
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
@@ -47,7 +49,6 @@ internal final class MagnesiumDevice: MGDevice {
         renderer?.updateCamera(eye: eye, target: target, up: up, time: time)
     }
     
-
     public func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer else { return }
         
@@ -74,9 +75,15 @@ internal final class MagnesiumDevice: MGDevice {
         return enc
     }
     
-    func commit() async throws {
+
+    func commit() throws {
         guard let renderer = device.renderer else { return }
-        try await renderer.drawFrame()
+        
+
+        let computeStream = ComputeStream()
+        
+
+        try renderer.drawFrame(onto: computeStream)
     }
 }
 
