@@ -18,7 +18,6 @@ public protocol MGDevice: AnyObject {
 
 @MainActor public protocol MGCommandBuffer: AnyObject {
     func makeRenderCommandEncoder() -> MGRenderCommandEncoder?
-    
     func commit() throws
 }
 
@@ -49,12 +48,13 @@ internal final class MagnesiumDevice: MGDevice {
         renderer?.updateCamera(eye: eye, target: target, up: up, time: time)
     }
     
+
     public func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
-        guard let renderer = renderer else { return }
+        guard let renderer = renderer,
+              let texBuf = renderer.multiviewTextureBuffer else { return }
         
-        renderer.multiviewTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { tPtr, _, _ in
-            body(tPtr)
-        }
+        let rawPointer = texBuf.contents().assumingMemoryBound(to: Float16.self)
+        body(rawPointer)
     }
 }
 
@@ -75,11 +75,9 @@ internal final class MagnesiumDevice: MGDevice {
         return enc
     }
     
-
     func commit() throws {
         guard device.renderer != nil else { return }
         
-
         guard let renderer = device.renderer,
               let stream = renderer.sharedComputeStream else {
             return
