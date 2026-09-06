@@ -75,47 +75,27 @@ class ANERenderContext {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
-        // Camera angle
+        
+        // Camera Angle
         self.angle += 0.015
+        let currentAngle = self.angle
+        let halfAngle = currentAngle * 0.5
         
-        // 1. Camera Calucluration
+        let sinAngle = sin(currentAngle)
+        let cosAngle = cos(currentAngle)
+        let cosHalfAngle = cos(halfAngle)
+        
         let radius: Float = 3.5
-        let eyeX = radius * sin(self.angle)
-        let eyeY = radius * cos(self.angle * 0.5) * 0.3 + 1.2
-        let eyeZ = radius * cos(self.angle)
+        let eyeX = radius * sinAngle
+        let eyeY = radius * cosHalfAngle * 0.3 + 1.2
+        let eyeZ = radius * cosAngle
         
-       
         mgDevice.updateCamera(
             eye: SIMD3<Float>(eyeX, eyeY, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
-            up: SIMD3<Float>(0.0, 1.0, 0.0)
+            up: SIMD3<Float>(0.0, 1.0, 0.0),
+            time: currentAngle
         )
-
-    
-        mgDevice.withMultiviewTexturePointer { texturePointer in
-            // 1 * 3 * 256 * 256
-            for ch in 0..<3 {
-                let chOffset = ch * 256 * 256
-                
-                for y in 0..<256 {
-                    let yOffset = y * 256
-                    // -1.0 〜 1.0
-                    let normY = (Float(y) / 255.0) * 2.0 - 1.0
-                    
-                    for x in 0..<256 {
-                        let normX = (Float(x) / 255.0) * 2.0 - 1.0
-                        let index = chOffset + yOffset + x
-                        
-                        // 0.8（-0.4 〜 0.4）
-                        let isInsideCube = (abs(normX) <= 0.4) && (abs(normY) <= 0.4)
-                        
-                        // Mask:1.0 another:black
-                        texturePointer[index] = isInsideCube ? 1.0 : 0.0
-                    }
-                }
-            }
-        }
-        
 
         guard let mgCommandQueue = self.mgCommandQueue,
               let mgCommandBuffer = mgCommandQueue.makeCommandBuffer() else {
@@ -124,14 +104,12 @@ class ANERenderContext {
         }
         
         do {
-          
             try await mgCommandBuffer.commit()
             
-         
             self.currentEventValue += 1
             self.sharedEvent?.signaledValue = self.currentEventValue
         } catch {
-            print("❌ ANE Inference Error: \(error)")
+            print("ANE Inference Error: \(error)")
         }
         
         self.isComputing = false

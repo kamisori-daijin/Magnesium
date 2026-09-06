@@ -60,7 +60,8 @@ class ANERenderer {
     }
 
    
-    func updateCamera(eye: simd_float3, target: simd_float3, up: simd_float3) {
+    func updateCamera(eye: simd_float3, target: simd_float3, up: simd_float3, time: Float) {
+    
         let zAxis = normalize(eye - target)
         let xAxis = normalize(cross(up, zAxis))
         let yAxis = cross(zAxis, xAxis)
@@ -76,8 +77,27 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = simdfMatrixInverse(viewMatrix)
         
+        // Inverse caluclation
+        let rotationAngle = time * 1.5
+        let scaleY = 1.0 + sin(time * 3.0) * 0.3 // Y Axis Compression
+        
+        var modelRot = matrix_identity_float4x4
+        modelRot.columns.0 = simd_float4(cos(rotationAngle), 0.0, -sin(rotationAngle), 0.0)
+        modelRot.columns.2 = simd_float4(sin(rotationAngle), 0.0, cos(rotationAngle), 0.0)
+        
+        var modelScale = matrix_identity_float4x4
+        modelScale.columns.1 = simd_float4(0.0, scaleY, 0.0, 0.0)
+        
+        var modelTrans = matrix_identity_float4x4
+        modelTrans.columns.3 = simd_float4(0.0, 0.1, 0.0, 1.0)
+        
+        let modelMatrix = matrix_multiply(modelTrans, matrix_multiply(modelRot, modelScale))
+        let invModel = simdfMatrixInverse(modelMatrix)
+        
+        // Write Pointer
         cameraMatrix64ChArray.mutableView(as: Float16.self).withUnsafeMutablePointer { pointer, _, _ in
 
+            // [0〜15ch]: Camera Inverce matrix
             pointer[0]  = Float16(invView.columns.0.x)
             pointer[1]  = Float16(invView.columns.1.x)
             pointer[2]  = Float16(invView.columns.2.x)
@@ -95,9 +115,27 @@ class ANERenderer {
             pointer[14] = Float16(invView.columns.2.w)
             pointer[15] = Float16(invView.columns.3.w)
             
-            // Padding
-            let zeroPointer = pointer.advanced(by: 16)
-            zeroPointer.initialize(repeating: 0, count: 48)
+            // [16〜31ch] Write
+            pointer[16] = Float16(invModel.columns.0.x)
+            pointer[17] = Float16(invModel.columns.1.x)
+            pointer[18] = Float16(invModel.columns.2.x)
+            pointer[19] = Float16(invModel.columns.3.x)
+            pointer[20] = Float16(invModel.columns.0.y)
+            pointer[21] = Float16(invModel.columns.1.y)
+            pointer[22] = Float16(invModel.columns.2.y)
+            pointer[23] = Float16(invModel.columns.3.y)
+            pointer[24] = Float16(invModel.columns.0.z)
+            pointer[25] = Float16(invModel.columns.1.z)
+            pointer[26] = Float16(invModel.columns.2.z)
+            pointer[27] = Float16(invModel.columns.3.z)
+            pointer[28] = Float16(invModel.columns.0.w)
+            pointer[29] = Float16(invModel.columns.1.w)
+            pointer[30] = Float16(invModel.columns.2.w)
+            pointer[31] = Float16(invModel.columns.3.w)
+            
+            // Zero Padding
+            let zeroPointer = pointer.advanced(by: 32)
+            zeroPointer.initialize(repeating: 0, count: 32)
         }
     }
 
