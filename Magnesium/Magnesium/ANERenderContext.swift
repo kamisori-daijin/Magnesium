@@ -106,9 +106,6 @@ class ANERenderContext {
             return
         }
         
-
-       
-        
         try? mgCommandBuffer.commit()
         
         self.currentEventValue += 1

@@ -77,13 +77,15 @@ internal final class MagnesiumDevice: MGDevice {
     
 
     func commit() throws {
-        guard let renderer = device.renderer else { return }
+        guard device.renderer != nil else { return }
         
 
-        let computeStream = ComputeStream()
-        
-
-        try renderer.drawFrame(onto: computeStream)
+        guard let renderer = device.renderer,
+              let stream = renderer.sharedComputeStream else {
+            return
+        }
+       
+        try renderer.drawFrame(onto: stream)
     }
 }
 

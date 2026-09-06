@@ -16,6 +16,7 @@ class ANERenderer {
     // Input
     internal var multiviewTextureArray: NDArray
     internal var cameraMatrix64ChArray: NDArray
+    var sharedComputeStream: ComputeStream!
     
     private var metalHeap: MTLHeap?
     private(set) var displayBuffer: MTLBuffer?
@@ -28,6 +29,9 @@ class ANERenderer {
     init(raytracerURL: URL, metalDevice: MTLDevice) async throws {
         self.metalDevice = metalDevice
         let option = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
+        let mainMetalQueue = metalDevice.makeCommandQueue()!
+        
+        self.sharedComputeStream = ComputeStream(commandQueue: mainMetalQueue)
         
         // 1. Load
         self.raytracerModel = try await AIModel(contentsOf: raytracerURL, options: option)
