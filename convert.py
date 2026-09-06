@@ -4,7 +4,6 @@ import torch
 from RayTracingCore import ANERayTracingCore
 from pathlib import Path
 
-print("📦 【Input Shape対応版】CoreAIへの変換準備を開始します...")
 
 # 1. Instance
 model = ANERayTracingCore().to(dtype=torch.float16)
