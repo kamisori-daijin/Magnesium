@@ -61,7 +61,6 @@ class ANERenderer {
 
    
     func updateCamera(eye: simd_float3, target: simd_float3, up: simd_float3) {
-      
         let zAxis = normalize(eye - target)
         let xAxis = normalize(cross(up, zAxis))
         let yAxis = cross(zAxis, xAxis)
@@ -75,40 +74,33 @@ class ANERenderer {
         T.columns.3 = simd_float4(-eye.x, -eye.y, -eye.z, 1.0)
         
         let viewMatrix = matrix_multiply(R, T)
-   
         let invView = simdfMatrixInverse(viewMatrix)
         
-
         cameraMatrix64ChArray.mutableView(as: Float16.self).withUnsafeMutablePointer { pointer, _, _ in
-          
-            for i in 0..<64 { pointer[i] = 0 }
-        
+
+            pointer[0]  = Float16(invView.columns.0.x)
+            pointer[1]  = Float16(invView.columns.1.x)
+            pointer[2]  = Float16(invView.columns.2.x)
+            pointer[3]  = Float16(invView.columns.3.x)
+            pointer[4]  = Float16(invView.columns.0.y)
+            pointer[5]  = Float16(invView.columns.1.y)
+            pointer[6]  = Float16(invView.columns.2.y)
+            pointer[7]  = Float16(invView.columns.3.y)
+            pointer[8]  = Float16(invView.columns.0.z)
+            pointer[9]  = Float16(invView.columns.1.z)
+            pointer[10] = Float16(invView.columns.2.z)
+            pointer[11] = Float16(invView.columns.3.z)
+            pointer[12] = Float16(invView.columns.0.w)
+            pointer[13] = Float16(invView.columns.1.w)
+            pointer[14] = Float16(invView.columns.2.w)
+            pointer[15] = Float16(invView.columns.3.w)
             
-            // Row 0
-            pointer[0]  = Float16(invView.columns.0.x) // [0,0]
-            pointer[1]  = Float16(invView.columns.1.x) // [0,1]
-            pointer[2]  = Float16(invView.columns.2.x) // [0,2]
-            pointer[3]  = Float16(invView.columns.3.x) // [0,3]
-            
-            // Row 1
-            pointer[4]  = Float16(invView.columns.0.y) // [1,0]
-            pointer[5]  = Float16(invView.columns.1.y) // [1,1]
-            pointer[6]  = Float16(invView.columns.2.y) // [1,2]
-            pointer[7]  = Float16(invView.columns.3.y) // [1,3]
-            
-            // Row 2
-            pointer[8]  = Float16(invView.columns.0.z) // [2,0]
-            pointer[9]  = Float16(invView.columns.1.z) // [2,1]
-            pointer[10] = Float16(invView.columns.2.z) // [2,2]
-            pointer[11] = Float16(invView.columns.3.z) // [2,3]
-            
-            //Row 3
-            pointer[12] = Float16(invView.columns.0.w) // [3,0]
-            pointer[13] = Float16(invView.columns.1.w) // [3,1]
-            pointer[14] = Float16(invView.columns.2.w) // [3,2]
-            pointer[15] = Float16(invView.columns.3.w) // [3,3]
+            // Padding
+            let zeroPointer = pointer.advanced(by: 16)
+            zeroPointer.initialize(repeating: 0, count: 48)
         }
     }
+
 
 
     func drawFrame() async throws {
