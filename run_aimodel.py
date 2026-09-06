@@ -9,27 +9,20 @@ from coreai.runtime import InferenceFunction, NDArray
 
 def create_cube_multiview_textures():
     """
-    Cube
+    ベース形状テクスチャの生成（モデル内で内蔵化したため、実際はダミーでもOKですが互換性のために残します）
     """
     tex = np.zeros((1, 3, 256, 256), dtype=np.float16)
-    
-    # 256x256 Pixel（-1.0 〜 1.0）
     grid = np.linspace(-1.0, 1.0, 256)
     x, y = np.meshgrid(grid, grid)
-    
-    # 0.8（-0.4 〜 0.4）
     cube_mask = ((x >= -0.4) & (x <= 0.4) & (y >= -0.4) & (y <= 0.4)).astype(np.float16)
-    
-    # 3 channels
-    tex[0, 0, :, :] = cube_mask  # Center (X, Y)
+    tex[0, 0, :, :] = cube_mask  # Front (X, Y)
     tex[0, 1, :, :] = cube_mask  # Top (X, Z)
     tex[0, 2, :, :] = cube_mask  # Side (Y, Z)
-    
     return tex
 
 def create_inverse_view_matrix(eye, target, up):
     """
-    Inverse view matrix
+    カメラの逆行列を生成
     """
     eye = np.array(eye, dtype=np.float32)
     target = np.array(target, dtype=np.float32)
@@ -51,6 +44,32 @@ def create_inverse_view_matrix(eye, target, up):
     inv_view = np.linalg.inv(view_matrix)
     return inv_view.astype(np.float16)
 
+def create_inverse_model_matrix(angle, scale_y):
+    """
+    🌟 RTコア化ハック：オブジェクトの動きを制御するためのモデル逆行列を生成
+    """
+    # 1. Y軸回転行列
+    rot_y = np.eye(4, dtype=np.float32)
+    rot_y[0, 0] = np.cos(angle)
+    rot_y[0, 2] = -np.sin(angle)
+    rot_y[2, 0] = np.sin(angle)
+    rot_y[2, 2] = np.cos(angle)
+    
+    # 2. スケール行列 (Y軸方向へのリアルタイム伸縮)
+    scale = np.eye(4, dtype=np.float32)
+    scale[1, 1] = scale_y
+    
+    # 3. 平行移動行列 (少し上に浮かせる)
+    trans = np.eye(4, dtype=np.float32)
+    trans[1, 3] = 0.1
+    
+    # 合成モデル行列 (Scale -> Rotate -> Translate)
+    model_matrix = trans @ rot_y @ scale
+    
+    # レイ空間を逆ワープさせるための逆行列
+    inv_model = np.linalg.inv(model_matrix)
+    return inv_model.astype(np.float16)
+
 async def main():
     raytracer_path = Path("./ane_raytracer.aimodel")
     
@@ -58,57 +77,73 @@ async def main():
         print(f"Error: {raytracer_path} not found. Please run convert.py first.")
         return
 
-    print("Loading...")
+    print("Loading AIModelAsset entirely onto ANE...")
     raytracer_asset = AIModelAsset.load(raytracer_path)
     
-  
+    # 保存用ディレクトリ
     os.makedirs("ane_anim_frames", exist_ok=True)
     
     async with raytracer_asset.executable() as raytracer_model:
         raytracer_function: InferenceFunction = raytracer_model.load_function("main")
         
-        print("Creating Mask...")
+        print("Creating Base Mask...")
         multiview_inputs_np = create_cube_multiview_textures()
         
-        # Get input port names
+        # 入出力ポート名の自動取得
         input_tex_name = raytracer_function.desc.input_names[0]
         input_mat_name = raytracer_function.desc.input_names[1]
         output_port_name = raytracer_function.desc.output_names[0]
         
         num_frames = 30
-        print(f"Drawing...")
+        print(f"Drawing {num_frames} frames via ANE-Native Pipeline...")
         
         for frame in range(num_frames):
-            
+            # アニメーション同期用の角度パラメータ
             angle = (frame / num_frames) * 2.0 * np.pi
+            
+            # --- 📷 1. カメラの円軌道位置の計算 ---
             cam_x = 3.5 * np.sin(angle)
             cam_y = 1.2 * np.cos(angle * 0.5) 
             cam_z = 3.5 * np.cos(angle)
             
-            # 1. 4x4 inverse view matrix
             inv_view_16 = create_inverse_view_matrix(
                 eye=[cam_x, cam_y, cam_z],
                 target=[0.0, 0.0, 0.0],
                 up=[0.0, 1.0, 0.0]
             ).flatten()
             
-           
+            # --- 📦 2. 立方体オブジェクトのアニメーション逆行列の計算 ---
+            # カメラの軌道とは別に、オブジェクト自体を回転・伸縮させます
+            obj_rot_angle = angle * 1.5
+            obj_scale_y = 1.0 + np.sin(angle * 3.0) * 0.3 # 0.7倍 〜 1.3倍に伸縮
+            
+            inv_model_16 = create_inverse_model_matrix(
+                angle=obj_rot_angle,
+                scale_y=obj_scale_y
+            ).flatten()
+            
+            # --- 🛠️ 3. 64chのANE直撃入力バッファのパッキング ---
             inv_view_64 = np.zeros(64, dtype=np.float16)
+            
+            # [0〜15ch]: カメラ逆行列
             inv_view_64[:16] = inv_view_16
             
-            # Reshape [1, 64, 1, 1] for ANE input
+            # [16〜31ch]: 🌟オブジェクトのトランスフォーム逆行列を完全バインド！
+            inv_view_64[16:32] = inv_model_16
+            
+            # ANE仕様の [1, 64, 1, 1] 形状にリシェイプ
             inv_view_4d_np = inv_view_64.reshape(1, 64, 1, 1)
             
-          
+            # 推論入力の設定
             inputs = {
                 input_tex_name: NDArray(multiview_inputs_np),
                 input_mat_name: NDArray(inv_view_4d_np)
             }
             
-            # RUn
+            # 🚀 ANE（NPUハードウェア）へ処理を一撃コミット
             outputs = await raytracer_function(inputs)
             
-            # Save
+            # レンダリング結果の回収と保存
             rendered_output_np = outputs[output_port_name].numpy()
             gray_img_2d = rendered_output_np[0, 0, :, :]
             
@@ -120,7 +155,7 @@ async def main():
             print(f" Frame {frame+1}/{num_frames} -> {output_filename}")
             
         print("\n" + "="*50)
-        print(f"Saved!: `ane_anim_frames/`")
+        print(f"🎉 Success! Beautifully morphing frames saved in: `ane_anim_frames/`")
         print("="*50)
 
 if __name__ == "__main__":
