@@ -45,7 +45,6 @@ class ANERenderContext {
     }
     
     func handleSelectedURLs(_ urls: [URL]) {
-
         guard let raytracerURL = urls.first(where: {
             $0.pathExtension.lowercased() == "aimodel" &&
             $0.lastPathComponent.lowercased().contains("raytracer")
@@ -58,7 +57,6 @@ class ANERenderContext {
         
         self.isLoading = true
         Task {
-          
             self.mgDevice = await MGCreateSystemDefaultDevice(raytracerURL: raytracerURL)
             self.isLoading = false
             
@@ -66,10 +64,11 @@ class ANERenderContext {
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
+                
+                await self.update()
             }
         }
     }
-
 
     func update() async {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
@@ -127,7 +126,6 @@ class ANERenderContext {
               let drawable = view.currentDrawable else { return }
         
         guard let commandBuffer = queue.makeCommandBuffer() else { return }
-        
 
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
@@ -138,14 +136,20 @@ class ANERenderContext {
 
             if let singleDisplayBuffer = mgDevice.getDisplayBuffer() {
                 renderEncoder.setFragmentBuffer(singleDisplayBuffer, offset: 0, index: 0)
-                
-         
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }
             renderEncoder.endEncoding()
         }
         
         commandBuffer.present(drawable)
+        
+        // Sync to Metal
+        commandBuffer.addCompletedHandler { _ in
+            Task { @MainActor in
+                await self.update()
+            }
+        }
+        
         commandBuffer.commit()
     }
 }
