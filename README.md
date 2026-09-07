@@ -1,11 +1,11 @@
 # Magnesium
-ANE-powered 3D software rasterizer
+ANE-powered 3D software RayTracer
 
 A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing the latest **Core AI framework (WWDC26)**, **Metal 4**, and **Swift 6**.
 
 <p align="center">
 
-<video src="https://github.com/user-attachments/assets/f4efdfd5-847f-490f-b3bb-95bd1856aec3" width="512" height="512" autoplay loop muted playsinline></video>
+<video src="https://github.com/user-attachments/assets/8eab8f4e-14c3-4927-a5fd-afa231d96fbe" width="512" height="512" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
