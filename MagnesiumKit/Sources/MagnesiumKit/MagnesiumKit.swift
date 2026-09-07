@@ -8,19 +8,18 @@ public protocol MGDevice: AnyObject {
     func makeCommandQueue() -> MGCommandQueue?
     func getDisplayBuffer() -> MTLBuffer?
     
-    // Func
-    func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>)
+    func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float)
     
-    // Pointer
+    // Texture Pointer
     func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
+
 @MainActor public protocol MGCommandBuffer: AnyObject {
     func makeRenderCommandEncoder() -> MGRenderCommandEncoder?
-    func commit() async throws
+    func commit() throws
 }
-
 
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
     func endEncoding()
@@ -31,7 +30,6 @@ internal final class MagnesiumDevice: MGDevice {
     public let name = "MagnesiumKit"
     internal var renderer: ANERenderer?
     
-
     public init(raytracerURL: URL) async {
         do {
             guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
@@ -43,22 +41,20 @@ internal final class MagnesiumDevice: MGDevice {
     
     public func makeCommandQueue() -> MGCommandQueue? { MagnesiumCommandQueue(device: self) }
     
-
     public func getDisplayBuffer() -> MTLBuffer? { renderer?.displayBuffer }
     
- 
-    public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) {
-        renderer?.updateCamera(eye: eye, target: target, up: up)
+    // Update Animation
+    public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float) {
+        renderer?.updateCamera(eye: eye, target: target, up: up, time: time)
     }
     
 
     public func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
-        guard let renderer = renderer else { return }
+        guard let renderer = renderer,
+              let texBuf = renderer.multiviewTextureBuffer else { return }
         
-
-        renderer.multiviewTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { tPtr, _, _ in
-            body(tPtr)
-        }
+        let rawPointer = texBuf.contents().assumingMemoryBound(to: Float16.self)
+        body(rawPointer)
     }
 }
 
@@ -79,20 +75,23 @@ internal final class MagnesiumDevice: MGDevice {
         return enc
     }
     
-    func commit() async throws {
-        guard let renderer = device.renderer else { return }
-        //RUn rendering
-        try await renderer.drawFrame()
+    func commit() throws {
+        guard device.renderer != nil else { return }
+        
+        guard let renderer = device.renderer,
+              let stream = renderer.sharedComputeStream else {
+            return
+        }
+       
+        try renderer.drawFrame(onto: stream)
     }
 }
-
 
 @MainActor private final class MagnesiumRenderCommandEncoder: MGRenderCommandEncoder {
     let device: MagnesiumDevice
     init(device: MagnesiumDevice) { self.device = device }
     func endEncoding() {}
 }
-
 
 @MainActor public func MGCreateSystemDefaultDevice(raytracerURL: URL) async -> MGDevice? {
     return await MagnesiumDevice(raytracerURL: raytracerURL)

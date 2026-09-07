@@ -1,11 +1,11 @@
 # Magnesium
-ANE-powered 3D software rasterizer
+ANE-powered 3D software RayTracer
 
 A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing the latest **Core AI framework (WWDC26)**, **Metal 4**, and **Swift 6**.
 
 <p align="center">
 
-<video src="https://github.com/user-attachments/assets/de394641-edd3-47c0-baef-c1a5f306357d" width="512" height="512" autoplay loop muted playsinline></video>
+<video src="https://github.com/user-attachments/assets/8eab8f4e-14c3-4927-a5fd-afa231d96fbe" width="512" height="512" autoplay loop muted playsinline></video>
 </p>
 
 ## Features
@@ -47,6 +47,10 @@ uint bIndex = (componentStride * 2) + pixelIndex;
 
 ```
 
+### 4. Ray-Space Warping
+To circumvent constraints regarding dynamic loops and runtime indexing within the NPU, Magnesium implements an inverse spatial coordinate warp. The engine ingests a 16-element inverse model matrix via aligned channel slices (ch 16–31). Input ray warping: All ray coordinates (px, py, pz) entering the viewport are transformed using the inverse model matrix within the ANE forward graph, remapping world-space rays into the object's local pose space.
+**Analytic Shading**: High-precision surface normal vectors are extracted natively using numerical differentiation via the central difference method; by re-projecting these vectors into world space, the system enables view-independent dynamic lighting and shadow ray casting.
+
 ---
 
 ## Known Issues
@@ -58,12 +62,10 @@ Memory consumption is still high at 267MB, and CPU usage is around 38%.
 ```bash
 pip install coreai-torch
 ```
-2. Convert Shader Models
+2. Convert Ray Tracing Models
 ```bash
 python convert.py
-python convert_prepro.py
-python convert_texture.py
 ```
 3. Open `Magnesium.xcodeproj`
 4. Build and Run
-5. Use the Model Picker to select the three generated `.aimodel` files (to select multiple assets, hold down the Command key while selecting).
+5. Use the Model Picker to select the generated `.aimodel` files.

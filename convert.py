@@ -4,7 +4,6 @@ import torch
 from RayTracingCore import ANERayTracingCore
 from pathlib import Path
 
-
 # 1. Instance
 model = ANERayTracingCore().to(dtype=torch.float16)
 model.eval()

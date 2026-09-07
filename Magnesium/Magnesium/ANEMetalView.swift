@@ -64,7 +64,7 @@ struct ANEMetalView: NSViewRepresentable {
         
         func draw(in view: MTKView) {
             Task { @MainActor in
-                await manager.update()
+                manager.update()
                 manager.renderFrame(in: view)
             }
         }
