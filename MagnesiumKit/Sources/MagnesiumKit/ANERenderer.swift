@@ -154,7 +154,7 @@ class ANERenderer {
             interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_138")
+        outputViews.insert(&asyncOutputValue, for: "mul_192")
         
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
