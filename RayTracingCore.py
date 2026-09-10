@@ -88,20 +88,25 @@ class ANERayTracingCore(nn.Module):
 
         object_hit = mask_xy * mask_xz * mask_yz * box_check
         return object_hit
+
+        
     def forward(self, multiview_textures, inv_view_matrix_64d):
         """
         Input:
-              multiview_textures: [1, 3, 256, 256] (※内蔵バッファ化したためダミー入力でOK)
-              inv_view_matrix_64d: [1, 64, 1, 1] (Swift側から一撃で届く統合バッファ)
+              multiview_textures: [1, 3, 256, 256] (ダミー)
+              inv_view_matrix_64d: [1, 64, 1, 1] (Swift側から届く統合マトリクス)
         """
         # ==========================================
-        # 🗺️ 1. カメラ逆行列 & オブジェクト逆モデル行列の展開
+        # 🗺️ 1. カメラ逆行列 & オブジェクト逆モデル行列(2個分)の固定展開
         # ==========================================
         # 最初の16chからカメラの逆行列を復元
         inv_view = inv_view_matrix_64d[0, :16, 0, 0].view(4, 4).half()
 
-        # 次の16ch（16〜31）からオブジェクトの「モデル逆行列」を復元
-        inv_model = inv_view_matrix_64d[0, 16:32, 0, 0].view(4, 4).half()
+        # 16〜31chからオブジェクト1の「モデル逆行列」を復元
+        inv_model1 = inv_view_matrix_64d[0, 16:32, 0, 0].view(4, 4).half()
+
+        # 32〜47chからオブジェクト2の「モデル逆行列」を復元 🌟固定Shape拡張！
+        inv_model2 = inv_view_matrix_64d[0, 32:48, 0, 0].view(4, 4).half()
 
         # カメラ行列の分解によるレイ方向の算出
         r00, r01, r02 = inv_view[0, 0], inv_view[0, 1], inv_view[0, 2]
@@ -129,23 +134,36 @@ class ANERayTracingCore(nn.Module):
         py_all = init_py + init_dy * self.step_ratios
         pz_all = init_pz + init_dz * self.step_ratios
 
-        # GPUのRTコアを模倣した「レイ座標のオブジェクト逆空間ワープ」
-        m00, m01, m02, m03 = inv_model[0, 0], inv_model[0, 1], inv_model[0, 2], inv_model[0, 3]
-        m10, m11, m12, m13 = inv_model[1, 0], inv_model[1, 1], inv_model[1, 2], inv_model[1, 3]
-        m20, m21, m22, m23 = inv_model[2, 0], inv_model[2, 1], inv_model[2, 2], inv_model[2, 3]
+        # --- オブジェクト1の空間ワープ ---
+        m1_00, m1_01, m1_02, m1_03 = inv_model1[0, 0], inv_model1[0, 1], inv_model1[0, 2], inv_model1[0, 3]
+        m1_10, m1_11, m1_12, m1_13 = inv_model1[1, 0], inv_model1[1, 1], inv_model1[1, 2], inv_model1[1, 3]
+        m1_20, m1_21, m1_22, m1_23 = inv_model1[2, 0], inv_model1[2, 1], inv_model1[2, 2], inv_model1[2, 3]
 
-        local_px_all = m00 * px_all + m01 * py_all + m02 * pz_all + m03
-        local_py_all = m10 * px_all + m11 * py_all + m12 * pz_all + m13
-        local_pz_all = m20 * px_all + m21 * py_all + m22 * pz_all + m23
+        local1_px_all = m1_00 * px_all + m1_01 * py_all + m1_02 * pz_all + m1_03
+        local1_py_all = m1_10 * px_all + m1_11 * py_all + m1_12 * pz_all + m1_13
+        local1_pz_all = m1_20 * px_all + m1_21 * py_all + m1_22 * pz_all + m1_23
 
-        # 変形されたローカル空間の座標を使って、新・ソリッド金型シルエットと交差判定！
-        object_hit_all = self.check_multiview_hit(local_px_all, local_py_all, local_pz_all)
+        # --- オブジェクト2の空間ワープ 🌟固定並列化 ---
+        m2_00, m2_01, m2_02, m2_03 = inv_model2[0, 0], inv_model2[0, 1], inv_model2[0, 2], inv_model2[0, 3]
+        m2_10, m2_11, m2_12, m2_13 = inv_model2[1, 0], inv_model2[1, 1], inv_model2[1, 2], inv_model2[1, 3]
+        m2_20, m2_21, m2_22, m2_23 = inv_model2[2, 0], inv_model2[2, 1], inv_model2[2, 2], inv_model2[2, 3]
 
-        # 床はワールド空間の元の高さ（py_all）で不変判定
+        local2_px_all = m2_00 * px_all + m2_01 * py_all + m2_02 * pz_all + m2_03
+        local2_py_all = m2_10 * px_all + m2_11 * py_all + m2_12 * pz_all + m2_13
+        local2_pz_all = m2_20 * px_all + m2_21 * py_all + m2_22 * pz_all + m2_23
+
+        # それぞれの金型シルエットと交差判定
+        hit1_all = self.check_multiview_hit(local1_px_all, local1_py_all, local1_pz_all)
+        hit2_all = self.check_multiview_hit(local2_px_all, local2_py_all, local2_pz_all)
+
+        # 🌟 ANEゴリ押し最大値合成（1つの空間の論理和として結合！）
+        object_hit_all = torch.max(hit1_all, hit2_all)
+
+        # 床の不変判定と合算
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
-        # 🌟 🛠️ ANE最適化：非対応の torch.cumsum を 1x1 Conv で完全置き換え
+        # 🛠️ 1x1 Conv による完全ANEネイティブ累積和
         cum_hit = self.ane_cumsum_conv(any_hit_all)
 
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
@@ -154,63 +172,90 @@ class ANERayTracingCore(nn.Module):
         is_first_object_all = not_hit_yet_all * object_hit_all
         is_first_floor_all = not_hit_yet_all * (1.0 - object_hit_all) * floor_hit_all
 
-        # 各ステップのフラグをDim 1（Channel）で総和して縮約 [1, 1, H, W] へ戻す
+        # 各ステップのフラグを総和して縮約
         hit_object_mask = torch.sum(is_first_object_all, dim=1, keepdim=True).clamp(0.0, 1.0)
         hit_floor_mask = torch.sum(is_first_floor_all, dim=1, keepdim=True).clamp(0.0, 1.0)
         accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
 
-        # 最終衝突した『ワールド空間』の3D座標を確定
+        # 最終衝突したワールド3D座標
         px = torch.sum(is_first_object_all * px_all + is_first_floor_all * px_all, dim=1, keepdim=True)
         py = torch.sum(is_first_object_all * py_all + is_first_floor_all * py_all, dim=1, keepdim=True)
         pz = torch.sum(is_first_object_all * pz_all + is_first_floor_all * pz_all, dim=1, keepdim=True)
 
         # ==========================================
-        # 📐 3. 全自動・数値微分による法線計算
+        # 📐 3. 全自動・数値微分による法線計算（当たった方を微分）
         # ==========================================
-        # 微分用のサンプリング点も、一度オブジェクトのローカル空間に射影
-        local_px = m00 * px + m01 * py + m02 * pz + m03
-        local_py = m10 * px + m11 * py + m12 * pz + m13
-        local_pz = m20 * px + m21 * py + m22 * pz + m23
+        local1_px = m1_00 * px + m1_01 * py + m1_02 * pz + m1_03
+        local1_py = m1_10 * px + m1_11 * py + m1_12 * pz + m1_13
+        local1_pz = m1_20 * px + m1_21 * py + m1_22 * pz + m1_23
 
-        # 新しい check_multiview_hit を通してローカル空間での正確な法線勾配を中央差分で抽出
-        f_center = self.check_multiview_hit(local_px, local_py, local_pz)
-        f_dx = self.check_multiview_hit(local_px + self.eps, local_py, local_pz)
-        f_dy = self.check_multiview_hit(local_px, local_py + self.eps, local_pz)
-        f_dz = self.check_multiview_hit(local_px, local_py, local_pz + self.eps)
+        local2_px = m2_00 * px + m2_01 * py + m2_02 * pz + m2_03
+        local2_py = m2_10 * px + m2_11 * py + m2_12 * pz + m2_13
+        local2_pz = m2_20 * px + m2_21 * py + m2_22 * pz + m2_23
 
-        raw_nx = f_center - f_dx
-        raw_ny = f_center - f_dy
-        raw_nz = f_center - f_dz
+        # 2つのオブジェクトそれぞれのローカル勾配を抽出
+        f1_c = self.check_multiview_hit(local1_px, local1_py, local1_pz)
+        f1_x = self.check_multiview_hit(local1_px + self.eps, local1_py, local1_pz)
+        f1_y = self.check_multiview_hit(local1_px, local1_py + self.eps, local1_pz)
+        f1_z = self.check_multiview_hit(local1_px, local1_py, local1_pz + self.eps)
 
-        # グラフィックスハック: ローカル空間の法線をモデル行列の回転成分でワールド空間に戻す
-        world_nx = m00 * raw_nx + m10 * raw_ny + m20 * raw_nz
-        world_ny = m01 * raw_nx + m11 * raw_ny + m21 * raw_nz
-        world_nz = m02 * raw_nx + m12 * raw_ny + m22 * raw_nz
+        f2_c = self.check_multiview_hit(local2_px, local2_py, local2_pz)
+        f2_x = self.check_multiview_hit(local2_px + self.eps, local2_py, local2_pz)
+        f2_y = self.check_multiview_hit(local2_px, local2_py + self.eps, local2_pz)
+        f2_z = self.check_multiview_hit(local2_px, local2_py, local2_pz + self.eps)
+
+        # 🌟 どちらのオブジェクトに衝突したか判定マスクを作り、法線計算をブレンド
+        # (if文を排除し、両方計算してマスクで乗算するANEゴリ押しスタイル)
+        obj1_mask = torch.sum(is_first_object_all * hit1_all, dim=1, keepdim=True).clamp(0.0, 1.0)
+        obj2_mask = torch.sum(is_first_object_all * (1.0 - hit1_all) * hit2_all, dim=1, keepdim=True).clamp(0.0, 1.0)
+
+        raw_nx = obj1_mask * (f1_c - f1_x) + obj2_mask * (f2_c - f2_x)
+        raw_ny = obj1_mask * (f1_c - f1_y) + obj2_mask * (f2_c - f2_y)
+        raw_nz = obj1_mask * (f1_c - f1_z) + obj2_mask * (f2_c - f2_z)
+
+        # ワールド空間に戻す（回転成分の適用もブレンド）
+        w_nx1 = m1_00 * (f1_c - f1_x) + m1_10 * (f1_c - f1_y) + m1_20 * (f1_c - f1_z)
+        w_ny1 = m1_01 * (f1_c - f1_x) + m1_11 * (f1_c - f1_y) + m1_21 * (f1_c - f1_z)
+        w_nz1 = m1_02 * (f1_c - f1_x) + m1_12 * (f1_c - f1_y) + m1_22 * (f1_c - f1_z)
+
+        w_nx2 = m2_00 * (f2_c - f2_x) + m2_10 * (f2_c - f2_y) + m2_20 * (f2_c - f2_z)
+        w_ny2 = m2_01 * (f2_c - f2_x) + m2_11 * (f2_c - f2_y) + m2_21 * (f2_c - f2_z)
+        w_nz2 = m2_02 * (f2_c - f2_x) + m2_12 * (f2_c - f2_y) + m2_22 * (f2_c - f2_z)
+
+        world_nx = obj1_mask * w_nx1 + obj2_mask * w_nx2
+        world_ny = obj1_mask * w_ny1 + obj2_mask * w_ny2
+        world_nz = obj1_mask * w_nz1 + obj2_mask * w_nz2
 
         inv_true_n_len = torch.rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
-        # 物体表面ならワールド法線、床なら真上(1.0)にする
+        
         first_nx = hit_object_mask * (world_nx * inv_true_n_len)
         first_ny = hit_object_mask * (world_ny * inv_true_n_len) + hit_floor_mask * 1.0
         first_nz = hit_object_mask * (world_nz * inv_true_n_len)
 
         # ==========================================
-        # 👤 4. シャドウレイ (🌟こちらも完全にChannel並列)
+        # 👤 4. シャドウレイ (🌟オブジェクト2個対応)
         # ==========================================
         shadow_start_x = px + 0.04 * self.light_dx
         shadow_start_y = py + 0.04 * self.light_dy
         shadow_start_z = pz + 0.04 * self.light_dz
 
-        # [1, shadow_steps, H, W] に一撃ブロードキャスト展開
         spx_all = shadow_start_x + self.light_dx * self.shadow_ratios
         spy_all = shadow_start_y + self.light_dy * self.shadow_ratios
         spz_all = shadow_start_z + self.light_dz * self.shadow_ratios
 
-        # シャドウの衝突判定も、同様にレイの座標をオブジェクトのローカル空間にワープさせて判定
-        local_spx_all = m00 * spx_all + m01 * spy_all + m02 * spz_all + m03
-        local_spy_all = m10 * spx_all + m11 * spy_all + m12 * spz_all + m13
-        local_spz_all = m20 * spx_all + m21 * spy_all + m22 * spz_all + m23
+        # 両方のオブジェクトの影を並列判定
+        l1_spx_all = m1_00 * spx_all + m1_01 * spy_all + m1_02 * spz_all + m1_03
+        l1_spy_all = m1_10 * spx_all + m1_11 * spy_all + m1_12 * spz_all + m1_13
+        l1_spz_all = m1_20 * spx_all + m1_21 * spy_all + m1_22 * spz_all + m1_23
 
-        shadow_hit_all = self.check_multiview_hit(local_spx_all, local_spy_all, local_spz_all)
+        l2_spx_all = m2_00 * spx_all + m2_01 * spy_all + m2_02 * spz_all + m2_03
+        l2_spy_all = m2_10 * spx_all + m2_11 * spy_all + m2_12 * spz_all + m2_13
+        l2_spz_all = m2_20 * spx_all + m2_21 * spy_all + m2_22 * spz_all + m2_23
+
+        s_hit1 = self.check_multiview_hit(l1_spx_all, l1_spy_all, l1_spz_all)
+        s_hit2 = self.check_multiview_hit(l2_spx_all, l2_spy_all, l2_spz_all)
+        shadow_hit_all = torch.max(s_hit1, s_hit2)
+
         accum_shadow = torch.sum(shadow_hit_all, dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
         # ==========================================
@@ -224,7 +269,17 @@ class ANERayTracingCore(nn.Module):
         checker = (sign_x * sign_z + 1.0) * 0.5
         floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
 
-        base_color = hit_object_mask * self.ONES + floor_color
+        # 🌟 おまけハック: オブジェクト1は白(ONES)、オブジェクト2はほんのり青(0.7, 0.8, 1.0)に塗り分け！
+        obj1_color = obj1_mask * self.ONES
+        obj2_color_r = obj2_mask * 0.7
+        obj2_color_g = obj2_mask * 0.8
+        obj2_color_b = obj2_mask * 1.0
+        
+        # カラーバッファの合成 [1, 3, H, W] に対応できるよう拡張
+        rgb_object_color = torch.cat([obj1_color + obj2_color_r, obj1_color + obj2_color_g, obj1_color + obj2_color_b], dim=1)
+        rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
+
+        base_color = rgb_object_color + rgb_floor_color
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
         return accum_hit * base_color * light_modifier

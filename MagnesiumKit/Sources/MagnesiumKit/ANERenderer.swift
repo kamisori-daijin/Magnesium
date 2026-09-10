@@ -2,7 +2,6 @@
 //  ANERenderer.swift
 //  Magnesium
 //
-
 import Foundation
 import CoreAI
 import Metal
@@ -23,7 +22,7 @@ class ANERenderer {
     
     private let matrixByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes
     private let textureByteCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
-    private let outputImageByteCount = 256 * 256 * MemoryLayout<Float16>.stride // 131,072 Bytes
+    private let outputImageByteCount = 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
     
     // Stream
     let sharedComputeStream: ComputeStream!
@@ -71,28 +70,44 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = viewMatrix.inverse
         
-        // Inverse calculation
-        let rotationAngle = time * 1.5
-        let scaleY = 1.0 + sin(time * 3.0) * 0.3 // Y Axis Compression
+        // ==========================================
+        // 📦 オブジェクト1の行列計算 (左側に配置、Y軸を伸縮させて回転)
+        // ==========================================
+        let rotAngle1 = time * 1.5
+        let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
         
-        var modelRot = matrix_identity_float4x4
-        modelRot.columns.0 = simd_float4(cos(rotationAngle), 0.0, -sin(rotationAngle), 0.0)
-        modelRot.columns.2 = simd_float4(sin(rotationAngle), 0.0, cos(rotationAngle), 0.0)
+        var modelRot1 = matrix_identity_float4x4
+        modelRot1.columns.0 = simd_float4(cos(rotAngle1), 0.0, -sin(rotAngle1), 0.0)
+        modelRot1.columns.2 = simd_float4(sin(rotAngle1), 0.0, cos(rotAngle1), 0.0)
         
-        var modelScale = matrix_identity_float4x4
-        modelScale.columns.1 = simd_float4(0.0, scaleY, 0.0, 0.0)
+        var modelScale1 = matrix_identity_float4x4
+        modelScale1.columns.1 = simd_float4(0.0, scaleY1, 0.0, 0.0)
         
-        var modelTrans = matrix_identity_float4x4
-        modelTrans.columns.3 = simd_float4(0.0, 0.1, 0.0, 1.0)
+        var modelTrans1 = matrix_identity_float4x4
+        modelTrans1.columns.3 = simd_float4(-0.6, 0.1, 0.0, 1.0) // 🌟左側に -0.6 ずらす
         
-        let modelMatrix = matrix_multiply(modelTrans, matrix_multiply(modelRot, modelScale))
-        let invModel = modelMatrix.inverse
+        let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
+        let invModel1 = modelMatrix1.inverse
         
-     
+        // ==========================================
+        // 📦 オブジェクト2の行列計算 (右側に配置、逆回転、上下に弾む)
+        // ==========================================
+        let rotAngle2 = -time * 2.0 // 🌟逆回転
+        let posY2 = 0.1 + abs(sin(time * 4.0)) * 0.4 // 🌟上下にバウンド
+        
+        var modelRot2 = matrix_identity_float4x4
+        modelRot2.columns.0 = simd_float4(cos(rotAngle2), 0.0, -sin(rotAngle2), 0.0)
+        modelRot2.columns.2 = simd_float4(sin(rotAngle2), 0.0, cos(rotAngle2), 0.0)
+        
+        var modelTrans2 = matrix_identity_float4x4
+        modelTrans2.columns.3 = simd_float4(0.6, posY2, 0.0, 1.0) // 🌟右側に 0.6 ずらす
+        
+        let modelMatrix2 = matrix_multiply(modelTrans2, modelRot2)
+        let invModel2 = modelMatrix2.inverse
+        
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-
-        // [0〜15ch]: Camera Inverse matrix
+        // [0〜15ch]: カメラの逆行列
         pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
         pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
         pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
@@ -102,20 +117,31 @@ class ANERenderer {
         pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
         pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
         
-        // [16〜31ch]
-        pointer[16] = Float16(invModel.columns.0.x); pointer[17] = Float16(invModel.columns.1.x)
-        pointer[18] = Float16(invModel.columns.2.x); pointer[19] = Float16(invModel.columns.3.x)
-        pointer[20] = Float16(invModel.columns.0.y); pointer[21] = Float16(invModel.columns.1.y)
-        pointer[22] = Float16(invModel.columns.2.y); pointer[23] = Float16(invModel.columns.3.y)
-        pointer[24] = Float16(invModel.columns.0.z); pointer[25] = Float16(invModel.columns.1.z)
-        pointer[26] = Float16(invModel.columns.2.z); pointer[27] = Float16(invModel.columns.3.z)
-        pointer[28] = Float16(invModel.columns.0.w); pointer[29] = Float16(invModel.columns.1.w)
-        pointer[30] = Float16(invModel.columns.2.w); pointer[31] = Float16(invModel.columns.3.w)
+        // [16〜31ch]: オブジェクト1の逆行列
+        pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x)
+        pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
+        pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y)
+        pointer[22] = Float16(invModel1.columns.2.y); pointer[23] = Float16(invModel1.columns.3.y)
+        pointer[24] = Float16(invModel1.columns.0.z); pointer[25] = Float16(invModel1.columns.1.z)
+        pointer[26] = Float16(invModel1.columns.2.z); pointer[27] = Float16(invModel1.columns.3.z)
+        pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w)
+        pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
         
-        // 0 Padding
-        let zeroPointer = pointer.advanced(by: 32)
-        zeroPointer.initialize(repeating: 0, count: 32)
+        // 🌟 [32〜47ch]: オブジェクト2の逆行列を書き込み！
+        pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x)
+        pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
+        pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y)
+        pointer[38] = Float16(invModel2.columns.2.y); pointer[39] = Float16(invModel2.columns.3.y)
+        pointer[40] = Float16(invModel2.columns.0.z); pointer[41] = Float16(invModel2.columns.1.z)
+        pointer[42] = Float16(invModel2.columns.2.z); pointer[43] = Float16(invModel2.columns.3.z)
+        pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w)
+        pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
+        
+        // 残りの空き領域 [48〜63ch] のみを0で埋める
+        let zeroPointer = pointer.advanced(by: 48)
+        zeroPointer.initialize(repeating: 0, count: 16)
     }
+
 
 
  
@@ -144,7 +170,7 @@ class ANERenderer {
         ]
         
         var outputViews = InferenceFunction.AsyncMutableViews()
-        let shape: [Int] = [1, 1, 256, 256]
+        let shape: [Int] = [1, 3, 256, 256]
         var asyncOutputValue = InferenceFunction.AsyncMutableValue(
             unsafeBuffer: canvasBuf,
             byteOffset: 0,
@@ -154,7 +180,7 @@ class ANERenderer {
             interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_192")
+        outputViews.insert(&asyncOutputValue, for: "mul_342")
         
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)

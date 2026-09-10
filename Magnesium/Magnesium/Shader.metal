@@ -40,15 +40,21 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint width = 256;
     uint height = 256;
     
-    
+    // UV座標からピクセル位置（XY）を計算
     uint2 coord = uint2(in.uv.x * (width - 1), in.uv.y * (height - 1));
+    
+    // 1つのチャンネル（平面）の中でのピクセルインデックス
     uint pixelIndex = coord.y * width + coord.x;
     
-   
-    half intensity = currentBuffer[pixelIndex];
+    // 🌟 Planarフォーマット（R -> G -> B の順に並んでいるバッファ）からそれぞれの色をロード
+    uint planeSize = width * height; // 256 * 256 = 65,536
     
-
-    half3 rgbColor = clamp(half3(intensity), 0.0h, 1.0h);
+    half r = currentBuffer[pixelIndex + 0 * planeSize]; // Rチャンネル面
+    half g = currentBuffer[pixelIndex + 1 * planeSize]; // Gチャンネル面
+    half b = currentBuffer[pixelIndex + 2 * planeSize]; // Bチャンネル面
+    
+    // RGBカラーをクランプして合成
+    half3 rgbColor = clamp(half3(r, g, b), 0.0h, 1.0h);
     half4 finalColor = half4(rgbColor, 1.0h);
     
     return float4(finalColor);
