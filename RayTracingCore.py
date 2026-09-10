@@ -48,6 +48,18 @@ class ANERayTracingCore(nn.Module):
         # XY, XZ, YZ としてモデル内部にバッファ登録
         self.register_buffer("base_multiview_textures", torch.cat([cube_2d_mask, cube_2d_mask, cube_2d_mask], dim=1))
 
+        # 🌟 🛠️ ANE専用：torch.cumsum を駆逐する 1x1 畳み込みフィルターの定義
+        # [max_steps -> max_steps] への 1x1 Conv を累積和（下三角行列）の重みで初期化
+        self.ane_cumsum_conv = nn.Conv2d(
+            in_channels=self.max_steps, 
+            out_channels=self.max_steps, 
+            kernel_size=1, 
+            bias=False
+        )
+        weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
+        self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
+        self.ane_cumsum_conv.weight.requires_grad = False
+
     def check_multiview_hit(self, px, py, pz):
         """
         px, py, pz: warp coordinates
@@ -59,10 +71,7 @@ class ANERayTracingCore(nn.Module):
         any_out = torch.clamp((out_x + out_y + out_z) * 100.0, min=0.0, max=1.0)
         box_check = 1.0 - any_out
 
-        # 🌟 完璧な穴塞ぎ修正：
-        # 空間ワープの歪みで中心が負の数に反転してくり抜かれていた `pow(4) / 0.35` 判定を完全撤廃。
-        # 代わりに、CPUで行っていた「abs(軸) <= 0.4」をReLUと一斉クランプの数式だけでANE上に完全シミュレート！
-        # 傾き勾配（法線用）を残すために係数「10.0」で少しマイルドに減衰させ、中心の詰まった完璧な1枚岩を削り出します。
+        # CPUで行っていた「abs(軸) <= 0.4」をReLUと一斉クランプの数式だけでANE上に完全シミュレート！
         proj_xy = torch.clamp(1.0 - torch.relu(torch.abs(px) - 0.4) * 10.0, 0.0, 1.0) * \
                   torch.clamp(1.0 - torch.relu(torch.abs(py) - 0.4) * 10.0, 0.0, 1.0)
                   
@@ -79,12 +88,11 @@ class ANERayTracingCore(nn.Module):
 
         object_hit = mask_xy * mask_xz * mask_yz * box_check
         return object_hit
-
     def forward(self, multiview_textures, inv_view_matrix_64d):
         """
         Input:
-          multiview_textures: [1, 3, 256, 256] (※内蔵バッファ化したためダミー入力でOK)
-          inv_view_matrix_64d: [1, 64, 1, 1] (Swift側から一撃で届く統合バッファ)
+              multiview_textures: [1, 3, 256, 256] (※内蔵バッファ化したためダミー入力でOK)
+              inv_view_matrix_64d: [1, 64, 1, 1] (Swift側から一撃で届く統合バッファ)
         """
         # ==========================================
         # 🗺️ 1. カメラ逆行列 & オブジェクト逆モデル行列の展開
@@ -137,8 +145,8 @@ class ANERayTracingCore(nn.Module):
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
-        # ANE最適化: permuteを全滅させているため、そのままDim 1（Channel）で直撃cumsum
-        cum_hit = torch.cumsum(any_hit_all, dim=1)
+        # 🌟 🛠️ ANE最適化：非対応の torch.cumsum を 1x1 Conv で完全置き換え
+        cum_hit = self.ane_cumsum_conv(any_hit_all)
 
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
         not_hit_yet_all = torch.clamp(1.0 - prior_hit, min=0.0, max=1.0)
@@ -210,7 +218,7 @@ class ANERayTracingCore(nn.Module):
         # ==========================================
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
-        
+
         sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
