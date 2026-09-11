@@ -10,6 +10,7 @@ class ANERayTracingCore(nn.Module):
         self.shadow_steps = shadow_steps
         self.dt = 0.08
         
+        # ANEに優しい4次元テンソルとして定数を登録
         self.register_buffer("eps", torch.tensor([[[[0.02]]]]).half())
         self.register_buffer("floor_y", torch.tensor([[[[-0.8]]]]).half())
         
@@ -38,17 +39,11 @@ class ANERayTracingCore(nn.Module):
 
         self.register_buffer("base_multiview_textures", torch.cat([cube_2d_mask, cube_2d_mask, cube_2d_mask], dim=1))
 
-        # 🌟 1. 累積和用 Conv2d
+        # 🌟 Conv2d の定義: 累積和をANEで高速計算するため
         self.ane_cumsum_conv = nn.Conv2d(self.max_steps, self.max_steps, kernel_size=1, bias=False)
         weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
         self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
         self.ane_cumsum_conv.weight.requires_grad = False
-
-        # 🌟 2. マスク結合用 Conv2d (入力3 -> 出力1)
-        self.mask_combine_conv = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, bias=False)
-        nn.init.constant_(self.mask_combine_conv.weight, 1.0)
-        self.mask_combine_conv.weight.data = self.mask_combine_conv.weight.data.half()
-        self.mask_combine_conv.weight.requires_grad = False
 
     def check_multiview_hit(self, px, py, pz):
         out_x = torch.relu(torch.abs(px) - 1.0)
@@ -68,20 +63,7 @@ class ANERayTracingCore(nn.Module):
         mask_xz = self.base_multiview_textures[:, 1:2, :, :] * proj_xz
         mask_yz = self.base_multiview_textures[:, 2:3, :, :] * proj_yz
 
-        steps = px.size(1)
-
-        # 🌟 ステップ数をバッチ次元に逃がして結合
-        combined_masks = torch.cat([
-            mask_xy.view(steps, 1, self.h, self.w),
-            mask_xz.view(steps, 1, self.h, self.w),
-            mask_yz.view(steps, 1, self.h, self.w)
-        ], dim=1)
-
-        object_hit_raw = self.mask_combine_conv(combined_masks)
-        object_hit_raw = object_hit_raw.view(1, steps, self.h, self.w)
-        
-        object_hit = torch.clamp(object_hit_raw - 2.0, min=0.0, max=1.0) * box_check
-        return object_hit
+        return mask_xy * mask_xz * mask_yz * box_check
 
     def forward(self, multiview_textures, inv_view_matrix_64d):
         def get_mat_val(mat, idx):
@@ -127,6 +109,7 @@ class ANERayTracingCore(nn.Module):
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
+        # 🌟 Conv2d の実行箇所
         cum_hit = self.ane_cumsum_conv(any_hit_all)
 
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
