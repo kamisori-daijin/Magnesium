@@ -64,6 +64,18 @@ class ANERayTracingCore(nn.Module):
         mask_yz = self.base_multiview_textures[:, 2:3, :, :] * proj_yz
 
         return mask_xy * mask_xz * mask_yz * box_check
+        
+    def fast_rsqrt(self, x):
+        # 初期値の推定（適当な定数、または 1.0 など）
+        # ここでは x が 1.0 付近であると仮定しています
+        y = 1.0
+
+        # ニュートン法のステップを2〜3回繰り返す
+        # y_new = y * (1.5 - 0.5 * x * y * y)
+        y = y * (1.5 - 0.5 * x * y * y)
+        y = y * (1.5 - 0.5 * x * y * y)
+
+        return y
 
     def forward(self, multiview_textures, inv_view_matrix_64d):
         def get_mat_val(mat, idx):
@@ -77,7 +89,7 @@ class ANERayTracingCore(nn.Module):
         dy = r10 * self.cam_dx + r11 * self.cam_dy + r12 * self.cam_dz
         dz = r20 * self.cam_dx + r21 * self.cam_dy + r22 * self.cam_dz
 
-        inv_len = torch.rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
+        inv_len = self.fast_rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
         init_dx, init_dy, init_dz = dx * inv_len, dy * inv_len, dz * inv_len
 
         init_px, init_py, init_pz = get_mat_val(inv_view_matrix_64d, 3), get_mat_val(inv_view_matrix_64d, 7), get_mat_val(inv_view_matrix_64d, 11)
@@ -149,7 +161,7 @@ class ANERayTracingCore(nn.Module):
         world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_11 * raw_ny2 + m2_21 * raw_nz2)
         world_nz = obj1_mask * (m1_02 * raw_nx1 + m1_12 * raw_ny1 + m1_22 * raw_nz1) + obj2_mask * (m2_02 * raw_nx2 + m2_12 * raw_ny2 + m2_22 * raw_nz2)
 
-        inv_true_n_len = torch.rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
+        inv_true_n_len = self.fast_rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
         
         first_nx = hit_object_mask * (world_nx * inv_true_n_len)
         first_ny = hit_object_mask * (world_ny * inv_true_n_len) + hit_floor_mask * 1.0
