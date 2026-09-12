@@ -6,11 +6,11 @@ import Metal
 public protocol MGDevice: AnyObject {
     var name: String { get }
     func makeCommandQueue() -> MGCommandQueue?
-    func getDisplayBuffer() -> MTLBuffer?
+    
+    // Double Buffering
+    func getCurrentDisplayBuffer() -> MTLBuffer?
     
     func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float)
-    
-    // Texture Pointer
     func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
 }
 
@@ -41,13 +41,14 @@ internal final class MagnesiumDevice: MGDevice {
     
     public func makeCommandQueue() -> MGCommandQueue? { MagnesiumCommandQueue(device: self) }
     
-    public func getDisplayBuffer() -> MTLBuffer? { renderer?.displayBuffer }
+
+    public func getCurrentDisplayBuffer() -> MTLBuffer? {
+        renderer?.getCurrentDisplayBuffer()
+    }
     
-    // Update Animation
     public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float) {
         renderer?.updateCamera(eye: eye, target: target, up: up, time: time)
     }
-    
 
     public func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer,

@@ -30,7 +30,6 @@ class ANERenderContext {
     
     func setup(with device: MTLDevice) {
         self.activeDevice = device
-        // Bind to ComputeStream
         self.commandQueue = device.makeCommandQueue()
         self.sharedEvent = device.makeSharedEvent()
         
@@ -65,20 +64,16 @@ class ANERenderContext {
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
-                
-                
                 self.update()
             }
         }
     }
-
 
     func update() {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
         
-        // Camera Angle
         self.angle += 0.015
         let currentAngle = self.angle
         let halfAngle = currentAngle * 0.5
@@ -92,7 +87,6 @@ class ANERenderContext {
         let eyeY = radius * cosHalfAngle * 0.3 + 1.2
         let eyeZ = radius * cosAngle
         
-        // 16ch+16ch
         mgDevice.updateCamera(
             eye: SIMD3<Float>(eyeX, eyeY, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
@@ -114,7 +108,6 @@ class ANERenderContext {
         self.isComputing = false
     }
 
-    /// Draw loop (Sync to MTKView)
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm
         
@@ -127,7 +120,6 @@ class ANERenderContext {
         
         guard let commandBuffer = queue.makeCommandBuffer() else { return }
 
-    
         if self.currentEventValue > 0 {
             commandBuffer.encodeWaitForEvent(sharedEvent, value: self.currentEventValue)
         }
@@ -135,7 +127,8 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
 
-            if let singleDisplayBuffer = mgDevice.getDisplayBuffer() {
+            // Get Current Buffer
+            if let singleDisplayBuffer = mgDevice.getCurrentDisplayBuffer() {
                 renderEncoder.setFragmentBuffer(singleDisplayBuffer, offset: 0, index: 0)
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }

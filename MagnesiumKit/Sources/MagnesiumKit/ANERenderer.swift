@@ -2,7 +2,6 @@
 //  ANERenderer.swift
 //  Magnesium
 //
-
 import Foundation
 import CoreAI
 import Metal
@@ -13,19 +12,20 @@ class ANERenderer {
     private var raytracerModel: AIModel?
     private var raytracerFunction: InferenceFunction?
     
-
     internal var cameraMatrixBuffer: MTLBuffer?
     internal var multiviewTextureBuffer: MTLBuffer?
-    private(set) var displayBuffer: MTLBuffer?
+    
+    // Double Buffering
+    private(set) var displayBuffers: [MTLBuffer] = []
+    private var currentBufferIndex = 0
     
     private var metalHeap: MTLHeap?
     private let metalDevice: MTLDevice
     
     private let matrixByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes
     private let textureByteCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
-    private let outputImageByteCount = 256 * 256 * MemoryLayout<Float16>.stride // 131,072 Bytes
+    private let outputImageByteCount = 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
     
-    // Stream
     let sharedComputeStream: ComputeStream!
     
     init(raytracerURL: URL, metalDevice: MTLDevice) async throws {
@@ -35,7 +35,6 @@ class ANERenderer {
         
         self.sharedComputeStream = ComputeStream(commandQueue: mainMetalQueue)
         
-        // 1. Load
         self.raytracerModel = try await AIModel(contentsOf: raytracerURL, options: option)
         self.raytracerFunction = try raytracerModel?.loadFunction(named: "main")
     
@@ -43,12 +42,17 @@ class ANERenderer {
     }
 
     private func setupMetalBuffers() {
- 
         self.cameraMatrixBuffer = metalDevice.makeBuffer(length: matrixByteCount, options: .storageModeShared)
         self.multiviewTextureBuffer = metalDevice.makeBuffer(length: textureByteCount, options: .storageModeShared)
-        self.displayBuffer = metalDevice.makeBuffer(length: outputImageByteCount, options: .storageModeShared)
         
-        // White
+        // two Buffer
+        self.displayBuffers = []
+        for _ in 0..<2 {
+            if let buffer = metalDevice.makeBuffer(length: outputImageByteCount, options: .storageModeShared) {
+                self.displayBuffers.append(buffer)
+            }
+        }
+        
         if let tPtr = multiviewTextureBuffer?.contents().assumingMemoryBound(to: Float16.self) {
             let count = 1 * 3 * 256 * 256
             for i in 0..<count { tPtr[i] = 1.0 }
@@ -71,28 +75,33 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = viewMatrix.inverse
         
-        // Inverse calculation
-        let rotationAngle = time * 1.5
-        let scaleY = 1.0 + sin(time * 3.0) * 0.3 // Y Axis Compression
+        // Object 1
+        let rotAngle1 = time * 1.5
+        let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
+        var modelRot1 = matrix_identity_float4x4
+        modelRot1.columns.0 = simd_float4(cos(rotAngle1), 0.0, -sin(rotAngle1), 0.0)
+        modelRot1.columns.2 = simd_float4(sin(rotAngle1), 0.0, cos(rotAngle1), 0.0)
+        var modelScale1 = matrix_identity_float4x4
+        modelScale1.columns.1 = simd_float4(0.0, scaleY1, 0.0, 0.0)
+        var modelTrans1 = matrix_identity_float4x4
+        modelTrans1.columns.3 = simd_float4(-0.6, 0.1, 0.0, 1.0)
+        let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
+        let invModel1 = modelMatrix1.inverse
         
-        var modelRot = matrix_identity_float4x4
-        modelRot.columns.0 = simd_float4(cos(rotationAngle), 0.0, -sin(rotationAngle), 0.0)
-        modelRot.columns.2 = simd_float4(sin(rotationAngle), 0.0, cos(rotationAngle), 0.0)
+        // Object 2
+        let rotAngle2 = -time * 2.0
+        let posY2 = 0.1 + abs(sin(time * 4.0)) * 0.4
+        var modelRot2 = matrix_identity_float4x4
+        modelRot2.columns.0 = simd_float4(cos(rotAngle2), 0.0, -sin(rotAngle2), 0.0)
+        modelRot2.columns.2 = simd_float4(sin(rotAngle2), 0.0, cos(rotAngle2), 0.0)
+        var modelTrans2 = matrix_identity_float4x4
+        modelTrans2.columns.3 = simd_float4(0.6, posY2, 0.0, 1.0)
+        let modelMatrix2 = matrix_multiply(modelTrans2, modelRot2)
+        let invModel2 = modelMatrix2.inverse
         
-        var modelScale = matrix_identity_float4x4
-        modelScale.columns.1 = simd_float4(0.0, scaleY, 0.0, 0.0)
-        
-        var modelTrans = matrix_identity_float4x4
-        modelTrans.columns.3 = simd_float4(0.0, 0.1, 0.0, 1.0)
-        
-        let modelMatrix = matrix_multiply(modelTrans, matrix_multiply(modelRot, modelScale))
-        let invModel = modelMatrix.inverse
-        
-     
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-
-        // [0〜15ch]: Camera Inverse matrix
+        // Write Row Data
         pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
         pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
         pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
@@ -102,41 +111,45 @@ class ANERenderer {
         pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
         pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
         
-        // [16〜31ch]
-        pointer[16] = Float16(invModel.columns.0.x); pointer[17] = Float16(invModel.columns.1.x)
-        pointer[18] = Float16(invModel.columns.2.x); pointer[19] = Float16(invModel.columns.3.x)
-        pointer[20] = Float16(invModel.columns.0.y); pointer[21] = Float16(invModel.columns.1.y)
-        pointer[22] = Float16(invModel.columns.2.y); pointer[23] = Float16(invModel.columns.3.y)
-        pointer[24] = Float16(invModel.columns.0.z); pointer[25] = Float16(invModel.columns.1.z)
-        pointer[26] = Float16(invModel.columns.2.z); pointer[27] = Float16(invModel.columns.3.z)
-        pointer[28] = Float16(invModel.columns.0.w); pointer[29] = Float16(invModel.columns.1.w)
-        pointer[30] = Float16(invModel.columns.2.w); pointer[31] = Float16(invModel.columns.3.w)
+        pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x)
+        pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
+        pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y)
+        pointer[22] = Float16(invModel1.columns.2.y); pointer[23] = Float16(invModel1.columns.3.y)
+        pointer[24] = Float16(invModel1.columns.0.z); pointer[25] = Float16(invModel1.columns.1.z)
+        pointer[26] = Float16(invModel1.columns.2.z); pointer[27] = Float16(invModel1.columns.3.z)
+        pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w)
+        pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
         
-        // 0 Padding
-        let zeroPointer = pointer.advanced(by: 32)
-        zeroPointer.initialize(repeating: 0, count: 32)
+        pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x)
+        pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
+        pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y)
+        pointer[38] = Float16(invModel2.columns.2.y); pointer[39] = Float16(invModel2.columns.3.y)
+        pointer[40] = Float16(invModel2.columns.0.z); pointer[41] = Float16(invModel2.columns.1.z)
+        pointer[42] = Float16(invModel2.columns.2.z); pointer[43] = Float16(invModel2.columns.3.z)
+        pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w)
+        pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
+        
+        let zeroPointer = pointer.advanced(by: 48)
+        zeroPointer.initialize(repeating: 0, count: 16)
     }
 
+    // Get Current Buffer
+    func getCurrentDisplayBuffer() -> MTLBuffer? {
+        guard !displayBuffers.isEmpty else { return nil }
+        return displayBuffers[currentBufferIndex]
+    }
 
- 
     func drawFrame(onto stream: ComputeStream) throws {
         guard let raytracer = raytracerFunction,
               let matrixBuf = self.cameraMatrixBuffer,
               let texBuf = self.multiviewTextureBuffer,
-              let canvasBuf = self.displayBuffer else { return }
+              !displayBuffers.isEmpty else { return }
         
- 
+        // Set for Write destination buffer
+        let canvasBuf = displayBuffers[currentBufferIndex]
 
-        let asyncTex = InferenceFunction.AsyncValue(
-            unsafeBuffer: texBuf,
-            scalarType: .float16,
-            shape:[1,3,256,256]
-        )
-        let asyncMat = InferenceFunction.AsyncValue(
-            unsafeBuffer: matrixBuf,
-            scalarType: .float16,
-            shape:[1,64,1,1]
-        )
+        let asyncTex = InferenceFunction.AsyncValue(unsafeBuffer: texBuf, scalarType: .float16, shape:[1,3,256,256])
+        let asyncMat = InferenceFunction.AsyncValue(unsafeBuffer: matrixBuf, scalarType: .float16, shape:[1,64,1,1])
         
         let inputs: [String: InferenceFunction.AsyncValue] = [
             "multiview_textures": asyncTex,
@@ -144,19 +157,16 @@ class ANERenderer {
         ]
         
         var outputViews = InferenceFunction.AsyncMutableViews()
-        let shape: [Int] = [1, 1, 256, 256]
+        let shape: [Int] = [1, 3, 256, 256]
         var asyncOutputValue = InferenceFunction.AsyncMutableValue(
-            unsafeBuffer: canvasBuf,
-            byteOffset: 0,
-            scalarType: .float16,
-            shape: shape,
-            strides: [],
-            interleaveLayout: nil
+            unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_138")
-        
+        outputViews.insert(&asyncOutputValue, for: "mul_352")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
+        
+        // Set Next Bufffer
+        currentBufferIndex = (currentBufferIndex + 1) % displayBuffers.count
     }
 }
