@@ -7,7 +7,7 @@ public protocol MGDevice: AnyObject {
     var name: String { get }
     func makeCommandQueue() -> MGCommandQueue?
     
-    // 🌟 変更: ダブルバッファリング対応
+    // Double Buffering
     func getCurrentDisplayBuffer() -> MTLBuffer?
     
     func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float)
@@ -41,7 +41,7 @@ internal final class MagnesiumDevice: MGDevice {
     
     public func makeCommandQueue() -> MGCommandQueue? { MagnesiumCommandQueue(device: self) }
     
-    // 🌟 変更: ANERendererの新しいメソッドを呼び出す
+
     public func getCurrentDisplayBuffer() -> MTLBuffer? {
         renderer?.getCurrentDisplayBuffer()
     }

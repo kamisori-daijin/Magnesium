@@ -127,7 +127,7 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
 
-            // 🌟 変更: getCurrentDisplayBuffer() を使用して現在のバッファを取得
+            // Get Current Buffer
             if let singleDisplayBuffer = mgDevice.getCurrentDisplayBuffer() {
                 renderEncoder.setFragmentBuffer(singleDisplayBuffer, offset: 0, index: 0)
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)

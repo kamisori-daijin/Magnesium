@@ -15,7 +15,7 @@ class ANERenderer {
     internal var cameraMatrixBuffer: MTLBuffer?
     internal var multiviewTextureBuffer: MTLBuffer?
     
-    // ダブルバッファリング用の配列
+    // Double Buffering
     private(set) var displayBuffers: [MTLBuffer] = []
     private var currentBufferIndex = 0
     
@@ -45,7 +45,7 @@ class ANERenderer {
         self.cameraMatrixBuffer = metalDevice.makeBuffer(length: matrixByteCount, options: .storageModeShared)
         self.multiviewTextureBuffer = metalDevice.makeBuffer(length: textureByteCount, options: .storageModeShared)
         
-        // 🌟 ダブルバッファリング用に2つのバッファを作成
+        // two Buffer
         self.displayBuffers = []
         for _ in 0..<2 {
             if let buffer = metalDevice.makeBuffer(length: outputImageByteCount, options: .storageModeShared) {
@@ -75,7 +75,7 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = viewMatrix.inverse
         
-        // オブジェクト1
+        // Object 1
         let rotAngle1 = time * 1.5
         let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
         var modelRot1 = matrix_identity_float4x4
@@ -88,7 +88,7 @@ class ANERenderer {
         let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
         let invModel1 = modelMatrix1.inverse
         
-        // オブジェクト2
+        // Object 2
         let rotAngle2 = -time * 2.0
         let posY2 = 0.1 + abs(sin(time * 4.0)) * 0.4
         var modelRot2 = matrix_identity_float4x4
@@ -101,7 +101,7 @@ class ANERenderer {
         
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-        // 行列データの書き込み（省略なし）
+        // Write Row Data
         pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
         pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
         pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
@@ -133,7 +133,7 @@ class ANERenderer {
         zeroPointer.initialize(repeating: 0, count: 16)
     }
 
-    // 🌟 現在のバッファを取得するヘルパー
+    // Get Current Buffer
     func getCurrentDisplayBuffer() -> MTLBuffer? {
         guard !displayBuffers.isEmpty else { return nil }
         return displayBuffers[currentBufferIndex]
@@ -145,7 +145,7 @@ class ANERenderer {
               let texBuf = self.multiviewTextureBuffer,
               !displayBuffers.isEmpty else { return }
         
-        // 🌟 書き込み先のバッファを決定
+        // Set for Write destination buffer
         let canvasBuf = displayBuffers[currentBufferIndex]
 
         let asyncTex = InferenceFunction.AsyncValue(unsafeBuffer: texBuf, scalarType: .float16, shape:[1,3,256,256])
@@ -166,7 +166,7 @@ class ANERenderer {
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         
-        // 🌟 次のフレームのためにインデックスを進める
+        // Set Next Bufffer
         currentBufferIndex = (currentBufferIndex + 1) % displayBuffers.count
     }
 }

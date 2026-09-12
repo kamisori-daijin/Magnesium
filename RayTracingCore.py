@@ -10,7 +10,7 @@ class ANERayTracingCore(nn.Module):
         self.shadow_steps = shadow_steps
         self.dt = 0.08
         
-        # ANEに優しい4次元テンソルとして定数を登録
+        # 4D Tensor
         self.register_buffer("eps", torch.tensor([[[[0.02]]]]).half())
         self.register_buffer("floor_y", torch.tensor([[[[-0.8]]]]).half())
         
@@ -39,7 +39,7 @@ class ANERayTracingCore(nn.Module):
 
         self.register_buffer("base_multiview_textures", torch.cat([cube_2d_mask, cube_2d_mask, cube_2d_mask], dim=1))
 
-        # 🌟 Conv2d の定義: 累積和をANEで高速計算するため
+        # Define Conv2d for ANE cumsum
         self.ane_cumsum_conv = nn.Conv2d(self.max_steps, self.max_steps, kernel_size=1, bias=False)
         weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
         self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
@@ -66,11 +66,10 @@ class ANERayTracingCore(nn.Module):
         return mask_xy * mask_xz * mask_yz * box_check
         
     def fast_rsqrt(self, x):
-        # 初期値の推定（適当な定数、または 1.0 など）
-        # ここでは x が 1.0 付近であると仮定しています
+        # Initial guess for inverse square root
         y = 1.0
 
-        # ニュートン法のステップを2〜3回繰り返す
+        # Newton's method step repeated 2-3 times
         # y_new = y * (1.5 - 0.5 * x * y * y)
         y = y * (1.5 - 0.5 * x * y * y)
         y = y * (1.5 - 0.5 * x * y * y)
@@ -121,7 +120,7 @@ class ANERayTracingCore(nn.Module):
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
-        # 🌟 Conv2d の実行箇所
+        # Run Conv2d for ANE cumsum
         cum_hit = self.ane_cumsum_conv(any_hit_all)
 
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
