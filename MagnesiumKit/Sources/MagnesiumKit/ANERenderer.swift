@@ -75,7 +75,7 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = viewMatrix.inverse
         
-        // Object 1
+        // Object 1 (左側の白キューブ)
         let rotAngle1 = time * 1.5
         let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
         var modelRot1 = matrix_identity_float4x4
@@ -88,7 +88,7 @@ class ANERenderer {
         let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
         let invModel1 = modelMatrix1.inverse
         
-        // Object 2
+        // Object 2 (右側の青ポヨンポヨンキューブ)
         let rotAngle2 = -time * 2.0
         let posY2 = 0.1 + abs(sin(time * 4.0)) * 0.4
         var modelRot2 = matrix_identity_float4x4
@@ -102,6 +102,7 @@ class ANERenderer {
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
         // Write Row Data
+        // [0〜15ch]: カメラの逆行列
         pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
         pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
         pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
@@ -111,6 +112,7 @@ class ANERenderer {
         pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
         pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
         
+        // [16〜31ch]: 物体1のモデル逆行列
         pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x)
         pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
         pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y)
@@ -120,6 +122,7 @@ class ANERenderer {
         pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w)
         pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
         
+        // [32〜47ch]: 物体2のモデル逆行列
         pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x)
         pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
         pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y)
@@ -129,9 +132,24 @@ class ANERenderer {
         pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w)
         pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
         
-        let zeroPointer = pointer.advanced(by: 48)
-        zeroPointer.initialize(repeating: 0, count: 16)
+        // ==========================================
+        // 🌟【完全修復】[48〜53ch] マテリアル特性数値をインデックス指定で正しく書き込み
+        // ==========================================
+        // 物体1 (白)：完全な鏡面の鉄 (IOR=1.0, Roughness=0.0, Metallic=1.0)
+        pointer[48] = Float16(1.0) // IOR (屈折なし)
+        pointer[49] = Float16(0.0) // Roughness
+        pointer[50] = Float16(1.0) // Metallic (1.0 = 鉄の光沢鏡面)
+        
+        // 物体2 (青)：透明なガラス (IOR=1.5, Roughness=0.0, Metallic=0.0)
+        pointer[51] = Float16(1.5) // IOR (1.5 = ガラスのリアルな屈折率！)
+        pointer[52] = Float16(0.0) // Roughness
+        pointer[53] = Float16(0.0) // Metallic (0.0 = 非金属・完全透過ガラス)
+        
+        // 🌟残りの空き領域 [54〜63ch] のみを0でパディング (オフセットを54、カウントを10に修正)
+        let zeroPointer = pointer.advanced(by: 54)
+        zeroPointer.initialize(repeating: 0, count: 10)
     }
+
 
     // Get Current Buffer
     func getCurrentDisplayBuffer() -> MTLBuffer? {
