@@ -276,28 +276,39 @@ class ANERayTracingCore(nn.Module):
         pixel_ior = obj1_mask * mat1_ior + obj2_mask * mat2_ior
         pixel_metallic = obj1_mask * mat1_metallic + obj2_mask * mat2_metallic
 
-# ==========================================
-        # 🎨 5. ライティング ＆ チェッカー床 ＆ ガラス屈折ハック
         # ==========================================
+        # 🎨 5. ライティング ＆ 物理ベース・ガラスシェーディング（ANE完全最適化・ユニバーサル版）
+        # ==========================================
+        # 🌟 5.0 視線ベクトル（I）を確実に正規化（ユニバーサル対応の必須処理）
+        inv_I_len = self.fast_rsqrt(init_dx * init_dx + init_dy * init_dy + init_dz * init_dz + 1e-5)
+        norm_idx = init_dx * inv_I_len
+        norm_idy = init_dy * inv_I_len
+        norm_idz = init_dz * inv_I_len
+
+        # 5.1 視線ベクトルと法線の内積（正規化済みベクトルを使用、絶対値で表裏破綻を防ぐ）
+        dot_I_N = torch.abs(norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz)
+        
+        # 5.2 疑似フレネル反射率（Schlickの近似をANEネイティブなpowでシミュレート）
+        # 正面は 0.04（ガラス）、エッジは 1.0 に近づく
+        fresnel = 0.04 + 0.96 * torch.pow(torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0), 5.0)
+        # メタリックの時はフレネルを1.0（完全反射）にする
+        fresnel = pixel_metallic * self.ONES + (1.0 - pixel_metallic) * fresnel
+
+        # 5.3 拡散光 (Diffuse) と シャドウの計算
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
+        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
-        refract_offset_x = (pixel_ior - 1.0) * first_nx * 0.4
-        refract_offset_z = (pixel_ior - 1.0) * first_nz * 0.4
+        # 🌟 5.4 【超重要】レイの屈折方向ベクトル（T）の疑似計算（正規化視線を使用）
+        refract_strength = torch.clamp(pixel_ior - 1.0, min=0.0, max=1.0) * 0.4
+        refract_dx = norm_idx + first_nx * refract_strength
+        refract_dy = norm_idy + first_ny * refract_strength
+        refract_dz = norm_idz * first_nz * refract_strength
 
-        floor_px = px - refract_offset_x
-        floor_pz = pz - refract_offset_z
-
-        sign_x = torch.clamp(floor_px * 3.0 * 100.0, min=-1.0, max=1.0)
-        sign_z = torch.clamp(floor_pz * 3.0 * 100.0, min=-1.0, max=1.0)
-        checker = (sign_x * sign_z + 1.0) * 0.5
-        floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
-
-        # 🌟 バッファから色を取得 (54〜59ch)
+        # 5.5 マテリアルの基本色 (Base Color) 展開
         c1_r = get_mat_val(inv_view_matrix_64d, 54)
         c1_g = get_mat_val(inv_view_matrix_64d, 55)
         c1_b = get_mat_val(inv_view_matrix_64d, 56)
-
         c2_r = get_mat_val(inv_view_matrix_64d, 57)
         c2_g = get_mat_val(inv_view_matrix_64d, 58)
         c2_b = get_mat_val(inv_view_matrix_64d, 59)
@@ -307,27 +318,56 @@ class ANERayTracingCore(nn.Module):
         base_b = obj1_mask * c1_b + obj2_mask * c2_b
         base_color = torch.cat([base_r, base_g, base_b], dim=1)
 
-        # 🌟 マテリアルに応じた透過度（アルファ）の計算
-        glass_factor = (pixel_ior - 1.0) * (1.0 - pixel_metallic)
-        alpha = 1.0 - (glass_factor * 0.6)
+        # 🌟 5.6 屈折したレイが「床」に衝突する位置の再計算（ユニバーサルセーフ版）
+        # レイが「下（床方向）」を向いている時だけ有効な分母を作る（上向きなら 1e-4 に固定して破綻を防ぐ）
+        is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) # 下向きなら 1.0
+        safe_denom = refract_dy * is_heading_down + (-1e-4) * (1.0 - is_heading_down)
+        
+        dist_to_floor = (self.floor_y - py) / safe_denom
+        
+        # 屈折レイが床に当たったワールド座標
+        r_floor_px = px + refract_dx * dist_to_floor
+        r_floor_pz = pz + refract_dz * dist_to_floor
 
-        # 🌟 オブジェクトと床の色を分離して計算
-        rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
+        # 5.7 チェッカー床の生成（通常用と、ガラス透過で見える用の2系統を並列計算）
+        # 通常の床
+        sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
+        sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
+        checker = (sign_x * sign_z + 1.0) * 0.5
         
-        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
-        
-        # オブジェクトの描画（背景を透過させる）
-        obj_color = base_color * light_modifier * alpha + self.bg_color * (1.0 - alpha)
-        
-        # 床の描画（透過させない）
-        ground_color = rgb_floor_color * light_modifier
+        # ガラス越しに見える床（座標が屈折している）
+        r_sign_x = torch.clamp(r_floor_px * 3.0 * 100.0, min=-1.0, max=1.0)
+        r_sign_z = torch.clamp(r_floor_pz * 3.0 * 100.0, min=-1.0, max=1.0)
+        r_checker = (r_sign_x * r_sign_z + 1.0) * 0.5
 
-        # 🌟 ハイライト
+        # 床の色をRGBテンソル化
+        floor_raw_color = (0.3 + 0.2 * checker)
+        rgb_floor_color = torch.cat([floor_raw_color, floor_raw_color, floor_raw_color], dim=1) * light_modifier
+
+        r_floor_raw_color = (0.3 + 0.2 * r_checker)
+        rgb_refracted_floor_color = torch.cat([r_floor_raw_color, r_floor_raw_color, r_floor_raw_color], dim=1) * 0.9 # 内部減衰で少し暗くする
+
+        # 🌟 5.8 ガラスの「透過光（Refraction）」と「反射光（Reflection）」の合成
+        # 透過光：屈折レイが実際に床の範囲かつ下を向いていれば床の色、そうでなければ背景色
+        is_refract_hit_floor = torch.clamp(r_floor_raw_color * 100.0, min=0.0, max=1.0) * is_heading_down
+        transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
+        
+        # ガラス独自のフィルター色を乗算（base_color をフィルターとして使用）
+        transmitted_color = transmitted_color * base_color
+
+        # 反射光：簡易的に背景色とベース色のブレンド（または金属光沢）
+        reflected_color = self.bg_color * (1.0 - pixel_metallic) + base_color * pixel_metallic
+
+        # フレネル（fresnel）で反射と透過をブレンド！
+        # 正面は transmitted_color（透ける）、輪郭は reflected_color（鏡面反射）
+        glass_shading_color = fresnel * reflected_color + (1.0 - fresnel) * transmitted_color
+
+        # 🌟 5.9 ハイライト (Specular)
         specular_color = base_color * pixel_metallic + (1.0 - pixel_metallic)
-        specular = torch.relu(diffuse)
-        specular = torch.pow(specular, 32.0) * specular_color * hit_object_mask
+        specular = torch.pow(torch.relu(diffuse), 32.0) * specular_color * hit_object_mask
 
-        # 🌟 最終合成
-        final_scene_color = hit_object_mask * (obj_color + specular) + hit_floor_mask * ground_color
+        # 🌟 5.10 最終シーン合成
+        # オブジェクト領域にはガラス/メタルシェーディング＋ハイライト、床領域には通常の床
+        final_scene_color = hit_object_mask * (glass_shading_color + specular) + hit_floor_mask * rgb_floor_color
         
         return final_scene_color + (1.0 - accum_hit) * self.bg_color
