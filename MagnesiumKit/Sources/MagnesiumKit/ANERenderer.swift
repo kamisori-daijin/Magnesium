@@ -133,21 +133,34 @@ class ANERenderer {
         pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
         
         // ==========================================
-        // 🌟【完全修復】[48〜53ch] マテリアル特性数値をインデックス指定で正しく書き込み
-        // ==========================================
-        // 物体1 (白)：完全な鏡面の鉄 (IOR=1.0, Roughness=0.0, Metallic=1.0)
-        pointer[48] = Float16(1.0) // IOR (屈折なし)
-        pointer[49] = Float16(0.0) // Roughness
-        pointer[50] = Float16(1.0) // Metallic (1.0 = 鉄の光沢鏡面)
-        
-        // 物体2 (青)：透明なガラス (IOR=1.5, Roughness=0.0, Metallic=0.0)
-        pointer[51] = Float16(1.5) // IOR (1.5 = ガラスのリアルな屈折率！)
-        pointer[52] = Float16(0.0) // Roughness
-        pointer[53] = Float16(0.0) // Metallic (0.0 = 非金属・完全透過ガラス)
-        
-        // 🌟残りの空き領域 [54〜63ch] のみを0でパディング (オフセットを54、カウントを10に修正)
-        let zeroPointer = pointer.advanced(by: 54)
-        zeroPointer.initialize(repeating: 0, count: 10)
+                // 🌟【完全修復】[48〜53ch] マテリアル特性数値をインデックス指定で正しく書き込み
+                // ==========================================
+                // 物体1 (白)：完全な鏡面の鉄 (IOR=1.0, Roughness=0.0, Metallic=1.0)
+                pointer[48] = Float16(1.0) // IOR
+                pointer[49] = Float16(0.0) // Roughness
+                pointer[50] = Float16(1.0) // Metallic
+                
+                // 物体2 (青)：透明なガラス (IOR=1.5, Roughness=0.0, Metallic=0.0)
+                pointer[51] = Float16(1.5) // IOR
+                pointer[52] = Float16(0.0) // Roughness
+                pointer[53] = Float16(0.0) // Metallic
+                
+                // ==========================================
+                // 🌟【追加】[54〜59ch] オブジェクトのベースカラーを書き込み
+                // ==========================================
+                // 物体1の色 (白)
+                pointer[54] = Float16(1.0) // R
+                pointer[55] = Float16(1.0) // G
+                pointer[56] = Float16(1.0) // B
+                
+                // 物体2の色 (青)
+                pointer[57] = Float16(0.3) // R
+                pointer[58] = Float16(0.6) // G
+                pointer[59] = Float16(1.0) // B
+                
+                // 🌟 残りの空き領域 [60〜63ch] を0でパディング
+                let zeroPointer = pointer.advanced(by: 60)
+                zeroPointer.initialize(repeating: 0, count: 4)
     }
 
 
@@ -180,7 +193,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_378")
+        outputViews.insert(&asyncOutputValue, for: "mul_374")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         

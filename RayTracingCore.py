@@ -272,46 +272,49 @@ class ANERayTracingCore(nn.Module):
         pixel_ior = obj1_mask * mat1_ior + obj2_mask * mat2_ior
         pixel_metallic = obj1_mask * mat1_metallic + obj2_mask * mat2_metallic
 
-        # ==========================================
-        # 🎨 5. ライティング ＆ チェッカー床 ＆ ガラス屈折ハック (🌟ガラス存在感爆上げ版)
+# ==========================================
+        # 🎨 5. ライティング ＆ チェッカー床 ＆ ガラス屈折ハック
         # ==========================================
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
 
-        # 🌟ガラス屈折トリック：
-        # 歪みの係数を 0.2 ➡️ 0.4 に倍増させて、床の模様をよりダイナミックに「グニャリ」と曲げます！
         refract_offset_x = (pixel_ior - 1.0) * first_nx * 0.4
         refract_offset_z = (pixel_ior - 1.0) * first_nz * 0.4
 
         floor_px = px - refract_offset_x
         floor_pz = pz - refract_offset_z
 
-        # 歪んだ座標で床を再計算
         sign_x = torch.clamp(floor_px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(floor_pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
         floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
 
-        # 🌟ここが最大の修正ポイント！
-        # ガラス（非金属）の透過光自体に「オブジェクト本来の色」を掛け算します。
-        # これにより、ただ透けるだけでなく「青いガラスを通して奥の床を見ている」状態を完全再現します。
-        obj1_base = obj1_mask * self.ONES
-        
-        # 物体2のベースカラー（RGB）
-        obj2_r = obj2_mask * 0.3  # 赤を抑える
-        obj2_g = obj2_mask * 0.6  # 緑をそこそこ
-        obj2_base_b = obj2_mask * 1.0  # 青を最強に
-        
-        # 透過光にオブジェクトの色をブレンド（1.0で完全透過、値を下げてガラスに色を付ける）
-        glass_r = hit_object_mask * (0.2 + 0.5 * checker) * 0.4
-        glass_g = hit_object_mask * (0.3 + 0.5 * checker) * 0.7
-        glass_b = hit_object_mask * (0.4 + 0.5 * checker) * 1.0 # 青いステンドグラス風
+        # 🌟 バッファから色を取得 (54〜59ch)
+        c1_r = get_mat_val(inv_view_matrix_64d, 54)
+        c1_g = get_mat_val(inv_view_matrix_64d, 55)
+        c1_b = get_mat_val(inv_view_matrix_64d, 56)
 
-        # 🌟 Metallic のブレンド式を「不透明な金属」と「色付き透明なガラス」で完璧に分離
-        # 非金属(0.0)の時は glass_x（色付き透過ガラス）、金属(1.0)の時は obj1_base（鏡面金属光沢）
-        obj_r = (1.0 - pixel_metallic) * glass_r + pixel_metallic * obj1_base + obj2_r * pixel_metallic
-        obj_g = (1.0 - pixel_metallic) * glass_g + pixel_metallic * obj1_base + obj2_g * pixel_metallic
-        obj_b = (1.0 - pixel_metallic) * glass_b + pixel_metallic * obj1_base + obj2_base_b * pixel_metallic
+        c2_r = get_mat_val(inv_view_matrix_64d, 57)
+        c2_g = get_mat_val(inv_view_matrix_64d, 58)
+        c2_b = get_mat_val(inv_view_matrix_64d, 59)
+
+        # 🌟 マスクを使って現在のピクセルのベースカラーを決定
+        base_r = obj1_mask * c1_r + obj2_mask * c2_r
+        base_g = obj1_mask * c1_g + obj2_mask * c2_g
+        base_b = obj1_mask * c1_b + obj2_mask * c2_b
+
+        #glass_r = hit_object_mask * (0.2 + 0.5 * checker)
+        #glass_g = hit_object_mask * (0.3 + 0.5 * checker)
+        #glass_b = hit_object_mask * (0.4 + 0.5 * checker)
+        
+        glass_r = hit_object_mask * 0.7
+        glass_g = hit_object_mask * 0.7
+        glass_b = hit_object_mask * 0.7
+
+        # 🌟 ユニバーサルな最終合成
+        obj_r = (1.0 - pixel_metallic) * (glass_r * base_r) + pixel_metallic * base_r
+        obj_g = (1.0 - pixel_metallic) * (glass_g * base_g) + pixel_metallic * base_g
+        obj_b = (1.0 - pixel_metallic) * (glass_b * base_b) + pixel_metallic * base_b
 
         rgb_object_color = torch.cat([obj_r, obj_g, obj_b], dim=1)
         rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
