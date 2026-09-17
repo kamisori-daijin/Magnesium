@@ -262,58 +262,49 @@ class ANERayTracingCore(nn.Module):
         s_hit2 = self.check_multiview_hit(l2_spx, l2_spy, l2_spz)
         accum_shadow = torch.sum(torch.max(s_hit1, s_hit2), dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
-        # ==========================================
-        # 🎨 5. ライティング ＆ 物理ベース・シェーディング（マテリアル完全分離・最終版）
-        # ==========================================
-        # 🌟 Swift/CoreMLバッファからマテリアル数値を直接その場でバインド
-        raw_mat1_ior      = get_mat_val(inv_view_matrix_64d, 48)
-        raw_mat1_metallic = get_mat_val(inv_view_matrix_64d, 50)
-        raw_mat2_ior      = get_mat_val(inv_view_matrix_64d, 51)
-        raw_mat2_metallic = get_mat_val(inv_view_matrix_64d, 53)
+    # ==========================================
+    # 🎨 4.5 マテリアル数値の取得とブレンド (🌟新設・固定レイアウト拡張)
+    # ==========================================
+    # 統合バッファの空きch（48〜53）から直接マテリアル数値を抽出
+        mat1_ior = get_mat_val(inv_view_matrix_64d, 48)
+        mat1_metallic = get_mat_val(inv_view_matrix_64d, 50)
+
+        mat2_ior = get_mat_val(inv_view_matrix_64d, 51)
+        mat2_metallic = get_mat_val(inv_view_matrix_64d, 53)
 
         # 衝突した画素に応じて IOR と Metallic をブレンド合成
-        pixel_ior      = obj1_mask * raw_mat1_ior + obj2_mask * raw_mat2_ior
-        pixel_metallic = obj1_mask * raw_mat1_metallic + obj2_mask * raw_mat2_metallic
+        pixel_ior = obj1_mask * mat1_ior + obj2_mask * mat2_ior
+        pixel_metallic = obj1_mask * mat1_metallic + obj2_mask * mat2_metallic
 
-        # 5.0 視線ベクトル（I）を確実に正規化
+        # ==========================================
+        # 🎨 5. ライティング ＆ 物理ベース・マテリアルシェーディング（ユニバーサル＆メタル/ガラス両対応版）
+        # ==========================================
+        # 🌟 5.0 視線ベクトル（I）を確実に正規化（ユニバーサル対応・FOV破綻防止）
         inv_I_len = self.fast_rsqrt(init_dx * init_dx + init_dy * init_dy + init_dz * init_dz + 1e-5)
         norm_idx = init_dx * inv_I_len
         norm_idy = init_dy * inv_I_len
         norm_idz = init_dz * inv_I_len
 
-        # 5.1 視線ベクトルと法線の内積
-        raw_dot_I_N = norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz
-        dot_I_N = torch.abs(raw_dot_I_N)
+        # 5.1 視線ベクトルと法線の内積（絶対値でマテリアル裏表の破綻を防止）
+        dot_I_N = torch.abs(norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz)
         
-        # 法線スタビライザー（ノイズによる跳ね返りをミュート）
-        normal_sanity = torch.clamp(dot_I_N * 3.0, min=0.0, max=1.0)
-        
-        # 🌟 5.2 オブジェクトごとに独立したフレネル計算（相互侵食を完全防止）
-        # 純粋なガラス用のフレネル
-        glass_fresnel = 0.04 + 0.96 * torch.pow(torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0), 5.0)
-        glass_fresnel = glass_fresnel * normal_sanity + 0.04 * (1.0 - normal_sanity)
-        
-        # 各オブジェクトの固有フレネル（メタルなら1.0固定、ガラスなら上記計算値）
-        fresnel1 = raw_mat1_metallic * self.ONES + (1.0 - raw_mat1_metallic) * glass_fresnel
-        fresnel2 = raw_mat2_metallic * self.ONES + (1.0 - raw_mat2_metallic) * glass_fresnel
-        
-        # 最終的な衝突画素のフレネル反射率
-        fresnel = obj1_mask * fresnel1 + obj2_mask * fresnel2
+        # 5.2 疑似フレネル反射率（Schlickの近似をANE高速powでシミュレート）
+        # 正面は 0.04（ガラス）、エッジは 1.0 に近づく
+        fresnel = 0.04 + 0.96 * torch.pow(torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0), 5.0)
+        # 🌟 メタリック(pixel_metallic=1.0)の時はフレネルを1.0（100%完全反射の金属）に上書きする
+        fresnel = pixel_metallic * self.ONES + (1.0 - pixel_metallic) * fresnel
 
         # 5.3 拡散光 (Diffuse) と シャドウの計算
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
-        # 5.4 レイの屈折方向ベクトル（T）の疑似計算
-        refract_strength = torch.clamp(pixel_ior - 1.0, min=0.0, max=1.0) * 0.3
-        stable_nx = first_nx * normal_sanity
-        stable_ny = first_ny * normal_sanity
-        stable_nz = first_nz * normal_sanity
-        
-        refract_dx = norm_idx + stable_nx * refract_strength
-        refract_dy = norm_idy + stable_ny * refract_strength
-        refract_dz = norm_idz * stable_nz * refract_strength
+        # 5.4 レイの屈折方向ベクトル（T）の疑似計算（正規化視線を使用）
+        # 屈折率（IOR）に基づいて、視線方向を法線方向に少しだけ「曲げる」
+        refract_strength = torch.clamp(pixel_ior - 1.0, min=0.0, max=1.0) * 0.4
+        refract_dx = norm_idx + first_nx * refract_strength
+        refract_dy = norm_idy + first_ny * refract_strength
+        refract_dz = norm_idz * first_nz * refract_strength
 
         # 5.5 マテリアルの基本色 (Base Color) 展開
         c1_r = get_mat_val(inv_view_matrix_64d, 54)
@@ -328,54 +319,55 @@ class ANERayTracingCore(nn.Module):
         base_b = obj1_mask * c1_b + obj2_mask * c2_b
         base_color = torch.cat([base_r, base_g, base_b], dim=1)
 
-        # ==========================================
-        # 🌟 5.6 屈折したレイが「床」に衝突する位置の再計算（斜め上アングル完全対応版）
-        # ==========================================
-        # 屈折レイのY方向の向き（下向きを安全に確保）
-        # 斜め上からの視線（負のY）で分母がバグるのを防ぐため、下を向いている成分だけを抽出
-        is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0)
+        # 5.6 屈折したレイが「床」に衝突する位置の再計算（🌟ゼロ除算完全防御のユニバーサルセーフ版）
+        # レイが「下（床方向）」を向いている時だけ有効な分母を作る（上向きなら -1e-4 に固定して無限遠へ飛ばさない）
+        is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) 
         safe_denom = refract_dy * is_heading_down + (-1e-4) * (1.0 - is_heading_down)
         
-        # 🌟【重要】レイの現在地(py)から床面(floor_y)までの正しい物理的な前進距離(t)の計算
-        # どんなカメラ角度でも「前進するプラスの距離」として正しくサンプリングさせるための絶対値化
-        dist_to_floor = torch.abs(self.floor_y - py) / torch.abs(safe_denom)
+        dist_to_floor = (self.floor_y - py) / safe_denom
         
-        # 屈折レイの進む先にある床のワールド座標
+        # 屈折レイが床に当たったワールド座標
         r_floor_px = px + refract_dx * dist_to_floor
         r_floor_pz = pz + refract_dz * dist_to_floor
 
-        # 5.7 チェッカー床の生成
+        # 5.7 チェッカー床の生成（通常用と、ガラス透過で見える用の2系統を並列計算）
+        # 通常の床
         sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
         
+        # ガラス越しに見える床（座標が屈折している）
         r_sign_x = torch.clamp(r_floor_px * 3.0 * 100.0, min=-1.0, max=1.0)
         r_sign_z = torch.clamp(r_floor_pz * 3.0 * 100.0, min=-1.0, max=1.0)
         r_checker = (r_sign_x * r_sign_z + 1.0) * 0.5
 
+        # 床の色をRGBテンソル化
         floor_raw_color = (0.3 + 0.2 * checker)
         rgb_floor_color = torch.cat([floor_raw_color, floor_raw_color, floor_raw_color], dim=1) * light_modifier
 
         r_floor_raw_color = (0.3 + 0.2 * r_checker)
         rgb_refracted_floor_color = torch.cat([r_floor_raw_color, r_floor_raw_color, r_floor_raw_color], dim=1) * light_modifier
 
-        # 🌟 5.8 ガラスの「透過光」と「反射光」の合成
-        # 屈折したレイが下を向いており、かつ有効な床の範囲にあれば床を透かし、それ以外は背景(空)を透かす
-        is_refract_hit_floor = torch.clamp(r_floor_raw_color * 5.0, min=0.0, max=1.0) * is_heading_down
+        # 🌟 5.8 ガラスの「透過光（Refraction）」と「反射光（Reflection）」の合成
+        # 透過光：屈折レイが床の範囲かつ下を向いていれば床の色、そうでなければ背景色
+        is_refract_hit_floor = torch.clamp(r_floor_raw_color * 100.0, min=0.0, max=1.0) * is_heading_down
         transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
-
         
-        # 厚みによる減衰（エッジのモヤを美しいガラスの影に変換）
-        glass_tint = torch.tensor([[[[0.85]], [[0.92]], [[0.95]]]]).half()
+        # 💎 【透けすぎ防止】ガラス内部の厚みによる光の減衰をシミュレート
+        # 正面（dot_I_N=1.0）はクリアに透け、輪郭（0.0に近い）ほどガラス自体の厚みで透過光が暗く沈む
+        glass_tint = torch.tensor([[[[0.85]], [[0.92]], [[0.95]]]]).half() # ほんのり高級感の出る青みガラスの波長フィルター
         effective_glass_color = base_color * glass_tint
-        thickness_attenuation = torch.clamp(dot_I_N, min=0.3, max=1.0) * normal_sanity + 0.4 * (1.0 - normal_sanity)
+        thickness_attenuation = torch.clamp(dot_I_N, min=0.3, max=1.0)
         transmitted_color = transmitted_color * effective_glass_color * thickness_attenuation
 
-        # 反射光
+        # 反射光：背景色（空）とベースマテリアル色のハイブリッド
         reflected_color = self.bg_color * (1.0 - pixel_metallic) + base_color * pixel_metallic
+        # 輪郭の鏡面反射にわずかに輝きを足して、金属・ガラスのエッジを際立たせる
         reflected_color = torch.clamp(reflected_color + 0.1, 0.0, 1.0)
 
-        # フレネルでブレンド
+        # フレネル（fresnel）で反射と透過をブレンド
+        # ガラス(metallic=0)の場合：正面は透過、エッジは鏡面反射
+        # メタル(metallic=1)の場合：fresnelが1に固定されるため、100%反射光になる
         glass_shading_color = fresnel * reflected_color + (1.0 - fresnel) * transmitted_color
 
         # 5.9 ハイライト (Specular)
