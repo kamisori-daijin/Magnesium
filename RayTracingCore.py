@@ -48,6 +48,10 @@ class ANERayTracingCore(nn.Module):
         weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
         self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
         self.ane_cumsum_conv.weight.requires_grad = False
+        
+        bg_r, bg_g, bg_b = 0.8, 0.85, 0.9
+        bg_tensor = torch.tensor([[[[bg_r]], [[bg_g]], [[bg_b]]]]).half()
+        self.register_buffer("bg_color", bg_tensor)
 
     def fast_rsqrt(self, x):
         """
@@ -303,13 +307,14 @@ class ANERayTracingCore(nn.Module):
         base_g = obj1_mask * c1_g + obj2_mask * c2_g
         base_b = obj1_mask * c1_b + obj2_mask * c2_b
 
-        #glass_r = hit_object_mask * (0.2 + 0.5 * checker)
-        #glass_g = hit_object_mask * (0.3 + 0.5 * checker)
-        #glass_b = hit_object_mask * (0.4 + 0.5 * checker)
-        
-        glass_r = hit_object_mask * 0.7
-        glass_g = hit_object_mask * 0.7
-        glass_b = hit_object_mask * 0.7
+        # 屈折した座標のチェッカー模様を計算
+        refract_checker = (sign_x * sign_z + 1.0) * 0.5
+        refract_floor_color = 0.3 + 0.2 * refract_checker
+
+        # ガラスの色に、屈折した背景（床）の色をブレンドする
+        glass_r = hit_object_mask * (base_r * 0.2 + refract_floor_color * 0.8)
+        glass_g = hit_object_mask * (base_g * 0.2 + refract_floor_color * 0.8)
+        glass_b = hit_object_mask * (base_b * 0.2 + refract_floor_color * 0.8)
 
         # 🌟 ユニバーサルな最終合成
         obj_r = (1.0 - pixel_metallic) * (glass_r * base_r) + pixel_metallic * base_r
@@ -319,7 +324,12 @@ class ANERayTracingCore(nn.Module):
         rgb_object_color = torch.cat([obj_r, obj_g, obj_b], dim=1)
         rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
 
+
         base_color = rgb_object_color + rgb_floor_color
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
-        return accum_hit * base_color * light_modifier
+        # 🌟 ここから書き換え
+        final_scene_color = accum_hit * base_color * light_modifier
+        
+        # Catを使わず、算術演算だけで背景色と合成
+        return final_scene_color + (1.0 - accum_hit) * self.bg_color
