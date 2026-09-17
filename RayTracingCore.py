@@ -263,9 +263,9 @@ class ANERayTracingCore(nn.Module):
         accum_shadow = torch.sum(torch.max(s_hit1, s_hit2), dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
         # ==========================================
-        # 🎨 5. ライティング ＆ 物理ベース・シェーディング（エクスポート安全保証版）
+        # 🎨 5. ライティング ＆ 物理ベース・シェーディング（マテリアル完全分離・最終版）
         # ==========================================
-        # 🌟【強制解決】Swift/CoreMLバッファからマテリアル数値を直接その場でバインド
+        # 🌟 Swift/CoreMLバッファからマテリアル数値を直接その場でバインド
         raw_mat1_ior      = get_mat_val(inv_view_matrix_64d, 48)
         raw_mat1_metallic = get_mat_val(inv_view_matrix_64d, 50)
         raw_mat2_ior      = get_mat_val(inv_view_matrix_64d, 51)
@@ -285,13 +285,20 @@ class ANERayTracingCore(nn.Module):
         raw_dot_I_N = norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz
         dot_I_N = torch.abs(raw_dot_I_N)
         
-        # 🌟 法線スタビライザー（斜めから見たときの白いモヤ・右物体のシマシマを解消）
+        # 法線スタビライザー（ノイズによる跳ね返りをミュート）
         normal_sanity = torch.clamp(dot_I_N * 3.0, min=0.0, max=1.0)
         
-        # 5.2 疑似フレネル反射率
-        fresnel = 0.04 + 0.96 * torch.pow(torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0), 5.0)
-        fresnel = fresnel * normal_sanity + 0.04 * (1.0 - normal_sanity)
-        fresnel = pixel_metallic * self.ONES + (1.0 - pixel_metallic) * fresnel
+        # 🌟 5.2 オブジェクトごとに独立したフレネル計算（相互侵食を完全防止）
+        # 純粋なガラス用のフレネル
+        glass_fresnel = 0.04 + 0.96 * torch.pow(torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0), 5.0)
+        glass_fresnel = glass_fresnel * normal_sanity + 0.04 * (1.0 - normal_sanity)
+        
+        # 各オブジェクトの固有フレネル（メタルなら1.0固定、ガラスなら上記計算値）
+        fresnel1 = raw_mat1_metallic * self.ONES + (1.0 - raw_mat1_metallic) * glass_fresnel
+        fresnel2 = raw_mat2_metallic * self.ONES + (1.0 - raw_mat2_metallic) * glass_fresnel
+        
+        # 最終的な衝突画素のフレネル反射率
+        fresnel = obj1_mask * fresnel1 + obj2_mask * fresnel2
 
         # 5.3 拡散光 (Diffuse) と シャドウの計算
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
@@ -321,12 +328,19 @@ class ANERayTracingCore(nn.Module):
         base_b = obj1_mask * c1_b + obj2_mask * c2_b
         base_color = torch.cat([base_r, base_g, base_b], dim=1)
 
-        # 5.6 屈折したレイが「床」に衝突する位置の再計算
-        is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) 
+        # ==========================================
+        # 🌟 5.6 屈折したレイが「床」に衝突する位置の再計算（斜め上アングル完全対応版）
+        # ==========================================
+        # 屈折レイのY方向の向き（下向きを安全に確保）
+        # 斜め上からの視線（負のY）で分母がバグるのを防ぐため、下を向いている成分だけを抽出
+        is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0)
         safe_denom = refract_dy * is_heading_down + (-1e-4) * (1.0 - is_heading_down)
         
-        dist_to_floor = (self.floor_y - py) / safe_denom
+        # 🌟【重要】レイの現在地(py)から床面(floor_y)までの正しい物理的な前進距離(t)の計算
+        # どんなカメラ角度でも「前進するプラスの距離」として正しくサンプリングさせるための絶対値化
+        dist_to_floor = torch.abs(self.floor_y - py) / torch.abs(safe_denom)
         
+        # 屈折レイの進む先にある床のワールド座標
         r_floor_px = px + refract_dx * dist_to_floor
         r_floor_pz = pz + refract_dz * dist_to_floor
 
@@ -345,11 +359,13 @@ class ANERayTracingCore(nn.Module):
         r_floor_raw_color = (0.3 + 0.2 * r_checker)
         rgb_refracted_floor_color = torch.cat([r_floor_raw_color, r_floor_raw_color, r_floor_raw_color], dim=1) * light_modifier
 
-        # 5.8 ガラスの「透過光」と「反射光」の合成
+        # 🌟 5.8 ガラスの「透過光」と「反射光」の合成
+        # 屈折したレイが下を向いており、かつ有効な床の範囲にあれば床を透かし、それ以外は背景(空)を透かす
         is_refract_hit_floor = torch.clamp(r_floor_raw_color * 5.0, min=0.0, max=1.0) * is_heading_down
         transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
+
         
-        # 厚みによる減衰（スカスカ感をなくし塊感を出す）
+        # 厚みによる減衰（エッジのモヤを美しいガラスの影に変換）
         glass_tint = torch.tensor([[[[0.85]], [[0.92]], [[0.95]]]]).half()
         effective_glass_color = base_color * glass_tint
         thickness_attenuation = torch.clamp(dot_I_N, min=0.3, max=1.0) * normal_sanity + 0.4 * (1.0 - normal_sanity)
