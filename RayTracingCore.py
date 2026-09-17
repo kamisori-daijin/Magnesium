@@ -302,34 +302,32 @@ class ANERayTracingCore(nn.Module):
         c2_g = get_mat_val(inv_view_matrix_64d, 58)
         c2_b = get_mat_val(inv_view_matrix_64d, 59)
 
-        # 🌟 マスクを使って現在のピクセルのベースカラーを決定
         base_r = obj1_mask * c1_r + obj2_mask * c2_r
         base_g = obj1_mask * c1_g + obj2_mask * c2_g
         base_b = obj1_mask * c1_b + obj2_mask * c2_b
+        base_color = torch.cat([base_r, base_g, base_b], dim=1)
 
-        # 屈折した座標のチェッカー模様を計算
-        refract_checker = (sign_x * sign_z + 1.0) * 0.5
-        refract_floor_color = 0.3 + 0.2 * refract_checker
+        # 🌟 マテリアルに応じた透過度（アルファ）の計算
+        glass_factor = (pixel_ior - 1.0) * (1.0 - pixel_metallic)
+        alpha = 1.0 - (glass_factor * 0.6)
 
-        # ガラスの色に、屈折した背景（床）の色をブレンドする
-        glass_r = hit_object_mask * (base_r * 0.2 + refract_floor_color * 0.8)
-        glass_g = hit_object_mask * (base_g * 0.2 + refract_floor_color * 0.8)
-        glass_b = hit_object_mask * (base_b * 0.2 + refract_floor_color * 0.8)
-
-        # 🌟 ユニバーサルな最終合成
-        obj_r = (1.0 - pixel_metallic) * (glass_r * base_r) + pixel_metallic * base_r
-        obj_g = (1.0 - pixel_metallic) * (glass_g * base_g) + pixel_metallic * base_g
-        obj_b = (1.0 - pixel_metallic) * (glass_b * base_b) + pixel_metallic * base_b
-
-        rgb_object_color = torch.cat([obj_r, obj_g, obj_b], dim=1)
+        # 🌟 オブジェクトと床の色を分離して計算
         rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
-
-
-        base_color = rgb_object_color + rgb_floor_color
-        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
-
-        # 🌟 ここから書き換え
-        final_scene_color = accum_hit * base_color * light_modifier
         
-        # Catを使わず、算術演算だけで背景色と合成
+        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
+        
+        # オブジェクトの描画（背景を透過させる）
+        obj_color = base_color * light_modifier * alpha + self.bg_color * (1.0 - alpha)
+        
+        # 床の描画（透過させない）
+        ground_color = rgb_floor_color * light_modifier
+
+        # 🌟 ハイライト
+        specular_color = base_color * pixel_metallic + (1.0 - pixel_metallic)
+        specular = torch.relu(diffuse)
+        specular = torch.pow(specular, 32.0) * specular_color * hit_object_mask
+
+        # 🌟 最終合成
+        final_scene_color = hit_object_mask * (obj_color + specular) + hit_floor_mask * ground_color
+        
         return final_scene_color + (1.0 - accum_hit) * self.bg_color
