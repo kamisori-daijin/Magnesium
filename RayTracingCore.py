@@ -272,42 +272,51 @@ class ANERayTracingCore(nn.Module):
         pixel_ior = obj1_mask * mat1_ior + obj2_mask * mat2_ior
         pixel_metallic = obj1_mask * mat1_metallic + obj2_mask * mat2_metallic
 
-    # ==========================================
-    # 🎨 5. ライティング ＆ チェッカー床 ＆ ガラス屈折ハック
-    # ==========================================
+        # ==========================================
+        # 🎨 5. ライティング ＆ チェッカー床 ＆ ガラス屈折ハック (🌟ガラス存在感爆上げ版)
+        # ==========================================
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
 
-    # 🌟 ガラス屈折トリック（法線方向と屈折比率によるUV座標ブレ）
-        refract_offset_x = (pixel_ior - 1.0) * first_nx * 0.2
-        refract_offset_z = (pixel_ior - 1.0) * first_nz * 0.2
+        # 🌟ガラス屈折トリック：
+        # 歪みの係数を 0.2 ➡️ 0.4 に倍増させて、床の模様をよりダイナミックに「グニャリ」と曲げます！
+        refract_offset_x = (pixel_ior - 1.0) * first_nx * 0.4
+        refract_offset_z = (pixel_ior - 1.0) * first_nz * 0.4
 
         floor_px = px - refract_offset_x
         floor_pz = pz - refract_offset_z
 
+        # 歪んだ座標で床を再計算
         sign_x = torch.clamp(floor_px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(floor_pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
         floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
 
-        # ガラス（非金属）のときの透過色
-        glass_transparency_color = hit_object_mask * (0.4 + 0.3 * checker)
-
-        # オブジェクト本来の色（物体1：白、物体2：ほんのり青）
+        # 🌟ここが最大の修正ポイント！
+        # ガラス（非金属）の透過光自体に「オブジェクト本来の色」を掛け算します。
+        # これにより、ただ透けるだけでなく「青いガラスを通して奥の床を見ている」状態を完全再現します。
         obj1_base = obj1_mask * self.ONES
-        obj2_base_r = obj2_mask * 0.7
-        obj2_base_g = obj2_mask * 0.8
-        obj2_base_b = obj2_mask * 1.0
+        
+        # 物体2のベースカラー（RGB）
+        obj2_r = obj2_mask * 0.3  # 赤を抑える
+        obj2_g = obj2_mask * 0.6  # 緑をそこそこ
+        obj2_base_b = obj2_mask * 1.0  # 青を最強に
+        
+        # 透過光にオブジェクトの色をブレンド（1.0で完全透過、値を下げてガラスに色を付ける）
+        glass_r = hit_object_mask * (0.2 + 0.5 * checker) * 0.4
+        glass_g = hit_object_mask * (0.3 + 0.5 * checker) * 0.7
+        glass_b = hit_object_mask * (0.4 + 0.5 * checker) * 1.0 # 青いステンドグラス風
 
-        # Metallicパラメータに基づくカラーの物理ベース切り替え
-        obj_r = (1.0 - pixel_metallic) * glass_transparency_color + pixel_metallic * obj1_base + obj2_base_r * pixel_metallic
-        obj_g = (1.0 - pixel_metallic) * glass_transparency_color + pixel_metallic * obj1_base + obj2_base_g * pixel_metallic
-        obj_b = (1.0 - pixel_metallic) * glass_transparency_color + pixel_metallic * obj1_base + obj2_base_b * pixel_metallic
+        # 🌟 Metallic のブレンド式を「不透明な金属」と「色付き透明なガラス」で完璧に分離
+        # 非金属(0.0)の時は glass_x（色付き透過ガラス）、金属(1.0)の時は obj1_base（鏡面金属光沢）
+        obj_r = (1.0 - pixel_metallic) * glass_r + pixel_metallic * obj1_base + obj2_r * pixel_metallic
+        obj_g = (1.0 - pixel_metallic) * glass_g + pixel_metallic * obj1_base + obj2_g * pixel_metallic
+        obj_b = (1.0 - pixel_metallic) * glass_b + pixel_metallic * obj1_base + obj2_base_b * pixel_metallic
+
         rgb_object_color = torch.cat([obj_r, obj_g, obj_b], dim=1)
         rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
-        base_color = rgb_object_color + rgb_floor_color
 
-        # ライトモデリング
+        base_color = rgb_object_color + rgb_floor_color
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
         return accum_hit * base_color * light_modifier
