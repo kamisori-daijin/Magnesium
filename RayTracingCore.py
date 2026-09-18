@@ -221,12 +221,12 @@ class ANERayTracingCore(nn.Module):
         obj1_mask = torch.sum(is_first_object_all * hit1_all, dim=1, keepdim=True).clamp(0.0, 1.0)
         obj2_mask = torch.sum(is_first_object_all * (1.0 - hit1_all) * hit2_all, dim=1, keepdim=True).clamp(0.0, 1.0)
 
-        raw_nx1 = f1_c - f1_x
-        raw_ny1 = f1_c - f1_y
-        raw_nz1 = f1_c - f1_z
-        raw_nx2 = f2_c - f2_x
-        raw_ny2 = f2_c - f2_y
-        raw_nz2 = f2_c - f2_z
+        raw_nx1 = f1_x - f1_c
+        raw_ny1 = f1_y - f1_c
+        raw_nz1 = f1_z - f1_c
+        raw_nx2 = f2_x - f2_c
+        raw_ny2 = f2_y - f2_c
+        raw_nz2 = f2_z - f2_c
 
         # メモリコピーを挟まず積和だけで一撃ワールド法線合成（Reshapeゼロ）
         world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_10 * raw_ny1 + m1_20 * raw_nz1) + obj2_mask * (m2_00 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
@@ -299,20 +299,20 @@ class ANERayTracingCore(nn.Module):
         norm_idy = init_dy * inv_I_len
         norm_idz = init_dz * inv_I_len
 
-        # 🌟【重要：カメラ角度破綻を防ぐ法線方向の自動補正】
-        # 視線ベクトルと生の法線（first_nx等）の内積を計算
+        # --- 5.1 視線ベクトルの正規化の直後 ---
         raw_dot_I_N = norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz
-        
-        # 内積がプラス（法線がオブジェクトの裏側に突き抜けている画素）を検出するマスク
-        is_flipped = torch.clamp(raw_dot_I_N * 1000.0, min=0.0, max=1.0)
-        
-        # 裏返っている画素だけ符号を反転（-1を乗算）し、常にカメラ側を向く安全な法線を作る
+
+        # 内積が0以上（同じ方向を向いている不自然な法線）を検出
+        is_flipped = torch.clamp(raw_dot_I_N * 100.0, min=0.0, max=1.0)
+
+        # 裏返っている場合のみフリップして、常にカメラと「対面する」法線を作る
         safe_nx = first_nx * (1.0 - 2.0 * is_flipped)
         safe_ny = first_ny * (1.0 - 2.0 * is_flipped)
         safe_nz = first_nz * (1.0 - 2.0 * is_flipped)
 
-        # 補正後の正しい法線を使って内積を再計算（0.0〜1.0）
+        # 確実に正面を向いたので、内積は単純に - (I · N) で 0.0〜1.0 に収まります
         dot_I_N = torch.clamp(-(norm_idx * safe_nx + norm_idy * safe_ny + norm_idz * safe_nz), min=0.0, max=1.0)
+
         
         # 輪郭度 (0.0で正面、1.0で完全なフチ)
         edge_mask = torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0)
@@ -325,9 +325,9 @@ class ANERayTracingCore(nn.Module):
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
         # 5.4 パラメーター「歪み強度」を使った屈折方向の疑似計算 (補正後の safe_n を使用)
-        refract_dx = norm_idx + safe_nx * p_distort * normal_sanity
-        refract_dy = norm_idy + safe_ny * p_distort * normal_sanity
-        refract_dz = norm_idz * safe_nz * p_distort * normal_sanity
+        refract_dx = norm_idx - safe_nx * p_distort * normal_sanity
+        refract_dy = norm_idy - safe_ny * p_distort * normal_sanity
+        refract_dz = norm_idz - safe_nz * p_distort * normal_sanity
 
         # 5.6 屈折レイの床衝突座標（斜め上アングル完全対応・絶対値ガード）
         is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) 
