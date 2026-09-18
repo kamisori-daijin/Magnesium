@@ -229,9 +229,18 @@ class ANERayTracingCore(nn.Module):
         raw_nz2 = f2_z - f2_c
 
         # メモリコピーを挟まず積和だけで一撃ワールド法線合成（Reshapeゼロ）
-        world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_10 * raw_ny1 + m1_20 * raw_nz1) + obj2_mask * (m2_00 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
-        world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_11 * raw_ny2 + m2_21 * raw_nz2)
-        world_nz = obj1_mask * (m1_02 * raw_nx1 + m1_12 * raw_ny1 + m1_22 * raw_nz1) + obj2_mask * (m2_02 * raw_nx2 + m2_12 * raw_ny2 + m2_22 * raw_nz2)
+        # ====================================================================
+        # 📐 3. ワールド法線合成の修正版（Swift側のRow-Major配列に100%最適化）
+        # ====================================================================
+        world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_01 * raw_ny1 + m1_02 * raw_nz1) + \
+                   obj2_mask * (m2_00 * raw_nx2 + m2_01 * raw_ny2 + m2_02 * raw_nz2)
+        
+        world_ny = obj1_mask * (m1_10 * raw_nx1 + m1_11 * raw_ny1 + m1_12 * raw_nz1) + \
+                   obj2_mask * (m2_10 * raw_nx2 + m2_11 * raw_ny2 + m2_12 * raw_nz2)
+        
+        world_nz = obj1_mask * (m1_20 * raw_nx1 + m1_21 * raw_ny1 + m1_22 * raw_nz1) + \
+                   obj2_mask * (m2_20 * raw_nx2 + m2_21 * raw_ny2 + m2_22 * raw_nz2)
+
 
         inv_true_n_len = self.fast_rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
 
