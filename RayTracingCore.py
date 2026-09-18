@@ -353,33 +353,46 @@ class ANERayTracingCore(nn.Module):
                                 obj1_mask * c1_g + obj2_mask * c2_g,
                                 obj1_mask * c1_b + obj2_mask * c2_b], dim=1)
 
-        # 🌟 5.8 透過光と反射光の合成 (アーティスト調整パラメーターベース)
-        # ① 透過マップ (後ろの床や空を透かす)
+        # ==========================================
+        # 🌟 5.8 透過光と反射光の合成（ガラス質感ブースト版）
+        # ==========================================
+        # ① 透過光（Refraction）の計算
         is_refract_hit_floor = torch.clamp(r_floor_raw_color * 5.0, min=0.0, max=1.0) * is_heading_down
         transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
         
-        # ガラス独自のフィルター色と「フチの厚みによる影（edge_mask）」を優しく乗算
-        thickness_shadow = torch.clamp(dot_I_N, min=0.4, max=1.0)
-        transmitted_color = transmitted_color * base_color * thickness_shadow
+        # 💡【ガラス感ブースト1】
+        # ガラスの内部を通る光はシャドウの影響を少しマイルドにし、base_colorをフィルターとして鮮やかに通す
+        # 正面（dot_I_N=1.0）に近いほど透明度を高くし、シマシマがテクスチャっぽく張り付くのを防ぐ
+        glass_tint = torch.tensor([[[[0.90]], [[0.95]], [[0.98]]]]).half() # ほんのり高級感の出る透明度補正
+        transmitted_color = transmitted_color * base_color * glass_tint * torch.clamp(dot_I_N + 0.2, min=0.5, max=1.2)
 
-        # ② 反射マップ (背景の映り込み ＋ 物体固有の色)
-        reflected_color = self.bg_color * (1.0 - p_reflect) + base_color * p_reflect
+        # ② 反射光（Reflection）の計算
+        # 映り込み用の環境色（空の色をベースに、ハイライト感を強調）
+        ambient_reflection = self.bg_color * 1.2
+        reflected_color = ambient_reflection * (1.0 - p_reflect) + base_color * p_reflect
         
-        # 🌟 ガラスやメタルの「フチのギラつき」を edge_mask で綺麗に足し算する
-        reflected_color = torch.clamp(reflected_color + edge_mask * 0.3, 0.0, 1.0)
+        # 💡【ガラス感ブースト2】
+        # 輪郭（edge_mask）に行けば行くほど、白い環境光を「強く加算」してガラスのフチのギラつき（鋭い輪郭線）を強調する
+        # p_trans（透明度）が高いガラスの時ほど、このエッジ反射を鋭く立たせる
+        edge_glow = torch.pow(edge_mask, 3.0) * 0.6 * (0.2 + p_trans * 0.8)
+        reflected_color = torch.clamp(reflected_color + edge_glow, 0.0, 1.5)
 
-        # ③ 透明度パラメーター (p_trans) による最終ルック決定
-        # 透明度1.0(ガラス)なら透過光メイン、0.0(メタル/プラスチック)なら反射光メイン
-        # さらにフチ（edge_mask）に行けば行くほど、ガラスでも強制的に反射を強める（フレネルの疑似再現）
-        final_fresnel = p_reflect + (1.0 - p_reflect) * torch.pow(edge_mask, 3.0) # ANEでも安全な3乗程度
+        # ③ 透明度パラメーター（p_trans）による最終ルック決定
+        # フレネル効果をエッジマスクから計算（フチは強制的に100%反射へ）
+        final_fresnel = p_reflect + (1.0 - p_reflect) * torch.pow(edge_mask, 3.0)
         blend_mask = p_trans * (1.0 - final_fresnel)
         
+        # ガラスとメタルのベースブレンド
         obj_color = (1.0 - blend_mask) * reflected_color + blend_mask * transmitted_color
-        # 👤 影の適用：オブジェクトの最終色に綺麗にライティングを馴染ませる
-        obj_color = obj_color * light_modifier
+        
+        # 💡【ガラス感ブースト3】
+        # 影の適用。不透明固体にはクッキリ影を落とすが、ガラスの時は透過光自体にすでに影が馴染んでいるため、
+        # 全体が真っ黒に変色するのを防ぐブレンドを行う
+        final_light_modifier = p_trans * torch.clamp(light_modifier + 0.3, max=1.0) + (1.0 - p_trans) * light_modifier
+        obj_color = obj_color * final_light_modifier
 
-        # 5.9 ハイライト (光沢)
-        specular = torch.pow(dot_nl, 32.0) * 0.5 * hit_object_mask
+        # 5.9 鏡面ハイライト (光沢)
+        specular = torch.pow(dot_nl, 32.0) * 0.6 * hit_object_mask
 
         # 5.10 最終シーン合成
         final_scene_color = hit_object_mask * (obj_color + specular) + hit_floor_mask * rgb_floor_color
