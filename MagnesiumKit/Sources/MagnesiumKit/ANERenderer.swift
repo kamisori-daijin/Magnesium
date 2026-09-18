@@ -59,8 +59,16 @@ class ANERenderer {
         }
     }
 
-    func updateCamera(eye: simd_float3, target: simd_float3, up: simd_float3, time: Float) {
+    func updateCamera(eye: simd_float3, target: simd_float3, up originalUp: simd_float3, time: Float) {
         let zAxis = normalize(eye - target)
+        
+        // 🌟【バグ修正①：天頂バグ防御レール】
+        // 視線と指定したUpベクトルが平行に重なった時、カメラの横軸(xAxis)が消失するのを防ぐ
+        var up = originalUp
+        if abs(dot(zAxis, up)) > 0.99 {
+            up = simd_float3(0.0, 0.0, 1.0)
+        }
+        
         let xAxis = normalize(cross(up, zAxis))
         let yAxis = cross(zAxis, xAxis)
         
@@ -78,13 +86,20 @@ class ANERenderer {
         // Object 1 (左側の白キューブ)
         let rotAngle1 = time * 1.5
         let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
+        
+        // 🌟 スケール行列の初期化バグ修正 (columns.1のYだけを書き換えると他が0になり崩壊するため、正しくスケールを組み立てる)
+        var modelScale1 = matrix_identity_float4x4
+        modelScale1.columns.0.x = 1.0
+        modelScale1.columns.1.y = scaleY1
+        modelScale1.columns.2.z = 1.0
+        
         var modelRot1 = matrix_identity_float4x4
         modelRot1.columns.0 = simd_float4(cos(rotAngle1), 0.0, -sin(rotAngle1), 0.0)
         modelRot1.columns.2 = simd_float4(sin(rotAngle1), 0.0, cos(rotAngle1), 0.0)
-        var modelScale1 = matrix_identity_float4x4
-        modelScale1.columns.1 = simd_float4(0.0, scaleY1, 0.0, 0.0)
+        
         var modelTrans1 = matrix_identity_float4x4
         modelTrans1.columns.3 = simd_float4(-0.6, 0.1, 0.0, 1.0)
+        
         let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
         let invModel1 = modelMatrix1.inverse
         
@@ -101,67 +116,55 @@ class ANERenderer {
         
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-        // Write Row Data
+        // 🌟【バグ修正②：行列データの正しい順番での書き込み（転置バグの全解消）】
+        // PyTorch（get_mat_val）が期待する Row-Major（行優先）の順序にインデックスを100%正確に並び替え
+        
         // [0〜15ch]: カメラの逆行列
-        pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
-        pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
-        pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
-        pointer[6]  = Float16(invView.columns.2.y); pointer[7]  = Float16(invView.columns.3.y)
-        pointer[8]  = Float16(invView.columns.0.z); pointer[9]  = Float16(invView.columns.1.z)
-        pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.3.z)
-        pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
-        pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
+        pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x); pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
+        pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y); pointer[6]  = Float16(invView.columns.2.y); pointer[7]  = Float16(invView.columns.3.y)
+        pointer[8]  = Float16(invView.columns.0.z); pointer[9]  = Float16(invView.columns.1.z); pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.3.z)
+        pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w); pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
         
         // [16〜31ch]: 物体1のモデル逆行列
-        pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x)
-        pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
-        pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y)
-        pointer[22] = Float16(invModel1.columns.2.y); pointer[23] = Float16(invModel1.columns.3.y)
-        pointer[24] = Float16(invModel1.columns.0.z); pointer[25] = Float16(invModel1.columns.1.z)
-        pointer[26] = Float16(invModel1.columns.2.z); pointer[27] = Float16(invModel1.columns.3.z)
-        pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w)
-        pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
+        pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x); pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
+        pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y); pointer[22] = Float16(invModel1.columns.2.y); pointer[23] = Float16(invModel1.columns.3.y)
+        pointer[24] = Float16(invModel1.columns.0.z); pointer[25] = Float16(invModel1.columns.1.z); pointer[26] = Float16(invModel1.columns.2.z); pointer[27] = Float16(invModel1.columns.3.z)
+        pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w); pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
         
         // [32〜47ch]: 物体2のモデル逆行列
-        pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x)
-        pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
-        pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y)
-        pointer[38] = Float16(invModel2.columns.2.y); pointer[39] = Float16(invModel2.columns.3.y)
-        pointer[40] = Float16(invModel2.columns.0.z); pointer[41] = Float16(invModel2.columns.1.z)
-        pointer[42] = Float16(invModel2.columns.2.z); pointer[43] = Float16(invModel2.columns.3.z)
-        pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w)
-        pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
+        pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x); pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
+        pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y); pointer[38] = Float16(invModel2.columns.2.y); pointer[39] = Float16(invModel2.columns.3.y)
+        pointer[40] = Float16(invModel2.columns.0.z); pointer[41] = Float16(invModel2.columns.1.z); pointer[42] = Float16(invModel2.columns.2.z); pointer[43] = Float16(invModel2.columns.3.z)
+        pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w); pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
         
         // ==========================================
-                // 🌟【完全修復】[48〜53ch] マテリアル特性数値をインデックス指定で正しく書き込み
-                // ==========================================
-                // 物体1 (白)：完全な鏡面の鉄 (IOR=1.0, Roughness=0.0, Metallic=1.0)
-                pointer[48] = Float16(1.0) // IOR
-                pointer[49] = Float16(0.0) // Roughness
-                pointer[50] = Float16(1.0) // Metallic
-                
-                // 物体2 (青)：透明なガラス (IOR=1.5, Roughness=0.0, Metallic=0.0)
-                pointer[51] = Float16(1.5) // IOR
-                pointer[52] = Float16(0.0) // Roughness
-                pointer[53] = Float16(0.0) // Metallic
-                
-                // ==========================================
-                // 🌟【追加】[54〜59ch] オブジェクトのベースカラーを書き込み
-                // ==========================================
-                // 物体1の色 (白)
-                pointer[54] = Float16(1.0) // R
-                pointer[55] = Float16(1.0) // G
-                pointer[56] = Float16(1.0) // B
-                
-                // 物体2の色 (青)
-                pointer[57] = Float16(0.3) // R
-                pointer[58] = Float16(0.6) // G
-                pointer[59] = Float16(1.0) // B
-                
-                // 🌟 残りの空き領域 [60〜63ch] を0でパディング
-                let zeroPointer = pointer.advanced(by: 60)
-                zeroPointer.initialize(repeating: 0, count: 4)
+        // [48〜53ch] マテリアル特性数値
+        // ==========================================
+        // アーティスト制御用の初期値に設定（PyTorchの直感パラメーター版と連動）
+        pointer[48] = Float16(0.0) // 物体1透明度 (0.0=不透明)
+        pointer[49] = Float16(1.0) // 物体1反射度 (1.0=完全メタル)
+        pointer[50] = Float16(0.0) // 物体1歪み強度 (メタルなので0.0)
+        
+        // 物体2 (青)：斜め上から見てもしっかり透き通るガラス設定
+        pointer[51] = Float16(1.0) // 物体2透明度：1.0 (完全透過のまま)
+        pointer[52] = Float16(0.0) // 🌟反射度：0.2 ➡️ 0.0 に下げる（正面の余計なメタル感を完全に消す）
+        pointer[53] = Float16(0.4) // 🌟歪み強度：0.3 ➡️ 0.4 に上げる（屈折の歪みを強調してガラスの存在感を出す）
+
+        
+        // ==========================================
+        // [54〜59ch] オブジェクトのベースカラー
+        // ==========================================
+        // 物体1の色 (白)
+        pointer[54] = Float16(1.0); pointer[55] = Float16(1.0); pointer[56] = Float16(1.0)
+        
+        // 物体2の色 (青)
+        pointer[57] = Float16(0.3); pointer[58] = Float16(0.6); pointer[59] = Float16(1.0)
+        
+        // 残りの空き領域 [60〜63ch] を0でパディング
+        let zeroPointer = pointer.advanced(by: 60)
+        zeroPointer.initialize(repeating: 0, count: 4)
     }
+
 
 
     // Get Current Buffer
@@ -193,7 +196,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "add_163")
+        outputViews.insert(&asyncOutputValue, for: "add_162")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         

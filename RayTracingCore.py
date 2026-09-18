@@ -277,49 +277,59 @@ class ANERayTracingCore(nn.Module):
         pixel_metallic = obj1_mask * mat1_metallic + obj2_mask * mat2_metallic
 
         # ==========================================
-        # 🎨 5. 汎用アーティスト制御シェーディング（ANE完全最適化・超安定版）
+        # 🎨 5. 汎用アーティスト制御シェーディング（法線自動補正・ユニバーサル完全版）
         # ==========================================
-        # 5.0 外からの直感的パラメーターを直接バインド
-        # [48~50ch] 物体1 / [51~53ch] 物体2 
-        # ※Python側から送るチャンネルレイアウトに合わせて get_mat_val のインデックスを調整してください
-        raw_p1_trans      = get_mat_val(inv_view_matrix_64d, 48) # 透明度 (0.0~1.0)
-        raw_p1_reflect    = get_mat_val(inv_view_matrix_64d, 49) # 反射度 (0.0~1.0)
-        raw_p1_distort    = get_mat_val(inv_view_matrix_64d, 50) # 歪み強度 (0.0~0.5)
+        # 5.0 外からの直感的パラメーターを直接その場でバインド
+        raw_p1_trans   = get_mat_val(inv_view_matrix_64d, 48) # 透明度 (0.0~1.0)
+        raw_p1_reflect = get_mat_val(inv_view_matrix_64d, 49) # 反射度 (0.0~1.0)
+        raw_p1_distort = get_mat_val(inv_view_matrix_64d, 50) # 歪み強度 (0.0~0.5)
         
-        raw_p2_trans      = get_mat_val(inv_view_matrix_64d, 51) 
-        raw_p2_reflect    = get_mat_val(inv_view_matrix_64d, 52) 
-        raw_p2_distort    = get_mat_val(inv_view_matrix_64d, 53) 
+        raw_p2_trans   = get_mat_val(inv_view_matrix_64d, 51) 
+        raw_p2_reflect = get_mat_val(inv_view_matrix_64d, 52) 
+        raw_p2_distort = get_mat_val(inv_view_matrix_64d, 53) 
 
         # 衝突した画素に応じたパラメーターの合成
         p_trans   = obj1_mask * raw_p1_trans   + obj2_mask * raw_p2_trans
         p_reflect = obj1_mask * raw_p1_reflect + obj2_mask * raw_p2_reflect
         p_distort = obj1_mask * raw_p1_distort + obj2_mask * raw_p2_distort
 
-        # 5.1 視線ベクトルの正規化と内積 (フチの判定用)
+        # 5.1 視線ベクトルの正規化
         inv_I_len = self.fast_rsqrt(init_dx * init_dx + init_dy * init_dy + init_dz * init_dz + 1e-5)
         norm_idx = init_dx * inv_I_len
         norm_idy = init_dy * inv_I_len
         norm_idz = init_dz * inv_I_len
 
-        # 正面度 (1.0で正面、0.0で真横・フチ)
-        dot_I_N = torch.abs(norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz)
+        # 🌟【重要：カメラ角度破綻を防ぐ法線方向の自動補正】
+        # 視線ベクトルと生の法線（first_nx等）の内積を計算
+        raw_dot_I_N = norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz
         
-        # 輪郭度 (0.0で正面、1.0でフチ)
-        edge_mask = torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0)
+        # 内積がプラス（法線がオブジェクトの裏側に突き抜けている画素）を検出するマスク
+        is_flipped = torch.clamp(raw_dot_I_N * 1000.0, min=0.0, max=1.0)
+        
+        # 裏返っている画素だけ符号を反転（-1を乗算）し、常にカメラ側を向く安全な法線を作る
+        safe_nx = first_nx * (1.0 - 2.0 * is_flipped)
+        safe_ny = first_ny * (1.0 - 2.0 * is_flipped)
+        safe_nz = first_nz * (1.0 - 2.0 * is_flipped)
 
-        # 5.3 ディフューズ（陰影）とシャドウの統合計算
-        dot_nl = torch.clamp(first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz, min=0.0, max=1.0)
+        # 補正後の正しい法線を使って内積を再計算（0.0〜1.0）
+        dot_I_N = torch.clamp(-(norm_idx * safe_nx + norm_idy * safe_ny + norm_idz * safe_nz), min=0.0, max=1.0)
+        
+        # 輪郭度 (0.0で正面、1.0で完全なフチ)
+        edge_mask = torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0)
+        normal_sanity = torch.clamp(dot_I_N * 3.0, min=0.0, max=1.0)
+
+        # 5.3 ディフューズ（陰影）とシャドウの統合計算 (補正後の safe_n を使用)
+        dot_nl = torch.clamp(safe_nx * self.light_dx + safe_ny * self.light_dy + safe_nz * self.light_dz, min=0.0, max=1.0)
         shading = dot_nl + 0.15
-        # 👤 影の処理：影の部分（accum_shadow=1.0）は強制的に暗く（0.15）する
+        # 👤 影の処理：影の部分（accum_shadow=1.0）は強制的に暗く(0.15)沈める
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
-        # 5.4 💡 パラメーター「歪み強度」を使った屈折方向の疑似計算
-        # 物理計算をせず、法線の向きに直接 p_distort を掛けてレイを曲げるだけなので超軽量・超安定
-        refract_dx = norm_idx + first_nx * p_distort
-        refract_dy = norm_idy + first_ny * p_distort
-        refract_dz = norm_idz * first_nz * p_distort
+        # 5.4 パラメーター「歪み強度」を使った屈折方向の疑似計算 (補正後の safe_n を使用)
+        refract_dx = norm_idx + safe_nx * p_distort * normal_sanity
+        refract_dy = norm_idy + safe_ny * p_distort * normal_sanity
+        refract_dz = norm_idz * safe_nz * p_distort * normal_sanity
 
-        # 5.6 屈折レイの床衝突座標（斜め上アングル完全対応）
+        # 5.6 屈折レイの床衝突座標（斜め上アングル完全対応・絶対値ガード）
         is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) 
         safe_denom = refract_dy * is_heading_down + (-1e-4) * (1.0 - is_heading_down)
         dist_to_floor = torch.abs(self.floor_y - py) / torch.abs(safe_denom)
@@ -327,7 +337,7 @@ class ANERayTracingCore(nn.Module):
         r_floor_px = px + refract_dx * dist_to_floor
         r_floor_pz = pz + refract_dz * dist_to_floor
 
-        # 5.7 床のチェッカー模様の並列生成
+        # 5.7 チェッカー床の生成
         sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
@@ -353,46 +363,32 @@ class ANERayTracingCore(nn.Module):
                                 obj1_mask * c1_g + obj2_mask * c2_g,
                                 obj1_mask * c1_b + obj2_mask * c2_b], dim=1)
 
-        # ==========================================
-        # 🌟 5.8 透過光と反射光の合成（ガラス質感ブースト版）
-        # ==========================================
-        # ① 透過光（Refraction）の計算
+        # 5.8 透過光と反射光の合成 (アーティスト調整パラメーターベース)
+        # ① 透過光の計算
         is_refract_hit_floor = torch.clamp(r_floor_raw_color * 5.0, min=0.0, max=1.0) * is_heading_down
         transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
         
-        # 💡【ガラス感ブースト1】
-        # ガラスの内部を通る光はシャドウの影響を少しマイルドにし、base_colorをフィルターとして鮮やかに通す
-        # 正面（dot_I_N=1.0）に近いほど透明度を高くし、シマシマがテクスチャっぽく張り付くのを防ぐ
-        glass_tint = torch.tensor([[[[0.90]], [[0.95]], [[0.98]]]]).half() # ほんのり高級感の出る透明度補正
-        transmitted_color = transmitted_color * base_color * glass_tint * torch.clamp(dot_I_N + 0.2, min=0.5, max=1.2)
+        # ガラス独自のフィルター色と「フチの厚みによる影」を適用
+        thickness_shadow = torch.clamp(dot_I_N, min=0.4, max=1.0) * normal_sanity + 0.4 * (1.0 - normal_sanity)
+        transmitted_color = transmitted_color * base_color * thickness_shadow
 
-        # ② 反射光（Reflection）の計算
-        # 映り込み用の環境色（空の色をベースに、ハイライト感を強調）
-        ambient_reflection = self.bg_color * 1.2
-        reflected_color = ambient_reflection * (1.0 - p_reflect) + base_color * p_reflect
+        # ② 反射光の計算
+        reflected_color = self.bg_color * (1.0 - p_reflect) + base_color * p_reflect
         
-        # 💡【ガラス感ブースト2】
-        # 輪郭（edge_mask）に行けば行くほど、白い環境光を「強く加算」してガラスのフチのギラつき（鋭い輪郭線）を強調する
-        # p_trans（透明度）が高いガラスの時ほど、このエッジ反射を鋭く立たせる
-        edge_glow = torch.pow(edge_mask, 3.0) * 0.6 * (0.2 + p_trans * 0.8)
-        reflected_color = torch.clamp(reflected_color + edge_glow, 0.0, 1.5)
+        # ガラスやメタルの「フチのギラつき」をedge_maskで綺麗に加算
+        reflected_color = torch.clamp(reflected_color + edge_mask * 0.3, 0.0, 1.0)
 
-        # ③ 透明度パラメーター（p_trans）による最終ルック決定
-        # フレネル効果をエッジマスクから計算（フチは強制的に100%反射へ）
-        final_fresnel = p_reflect + (1.0 - p_reflect) * torch.pow(edge_mask, 3.0)
+        # ③ 透明度パラメーターによる最終マテリアルルックのブレンド
+        # ガラス(p_trans=1.0)の時：正面は透過光、エッジ(edge_mask)に行けば行くほど強制的に反射光になる
+        # メタル(p_trans=0.0)の時：blend_maskが0になり、100%反射光(不透明固体)になる
+        final_fresnel = p_reflect + (1.0 - p_reflect) * (edge_mask * edge_mask * edge_mask)
         blend_mask = p_trans * (1.0 - final_fresnel)
         
-        # ガラスとメタルのベースブレンド
         obj_color = (1.0 - blend_mask) * reflected_color + blend_mask * transmitted_color
-        
-        # 💡【ガラス感ブースト3】
-        # 影の適用。不透明固体にはクッキリ影を落とすが、ガラスの時は透過光自体にすでに影が馴染んでいるため、
-        # 全体が真っ黒に変色するのを防ぐブレンドを行う
-        final_light_modifier = p_trans * torch.clamp(light_modifier + 0.3, max=1.0) + (1.0 - p_trans) * light_modifier
-        obj_color = obj_color * final_light_modifier
+        obj_color = obj_color * light_modifier
 
         # 5.9 鏡面ハイライト (光沢)
-        specular = torch.pow(dot_nl, 32.0) * 0.6 * hit_object_mask
+        specular = torch.pow(dot_nl, 32.0) * 0.5 * hit_object_mask
 
         # 5.10 最終シーン合成
         final_scene_color = hit_object_mask * (obj_color + specular) + hit_floor_mask * rgb_floor_color
