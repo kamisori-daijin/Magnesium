@@ -148,7 +148,7 @@ class ANERenderer {
         // 物体2 (青)：斜め上から見てもしっかり透き通るガラス設定
         pointer[51] = Float16(1.0) // 物体2透明度：1.0 (完全透過のまま)
         pointer[52] = Float16(0.0) // 🌟反射度：0.2 ➡️ 0.0 に下げる（正面の余計なメタル感を完全に消す）
-        pointer[53] = Float16(0.4) // 🌟歪み強度：0.3 ➡️ 0.4 に上げる（屈折の歪みを強調してガラスの存在感を出す）
+        pointer[53] = Float16(0.9) // 🌟歪み強度：0.3 ➡️ 0.4 に上げる（屈折の歪みを強調してガラスの存在感を出す）
 
         
         // ==========================================
@@ -196,7 +196,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "add_160")
+        outputViews.insert(&asyncOutputValue, for: "add_163")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         

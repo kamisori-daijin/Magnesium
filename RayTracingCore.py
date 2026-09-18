@@ -221,26 +221,17 @@ class ANERayTracingCore(nn.Module):
         obj1_mask = torch.sum(is_first_object_all * hit1_all, dim=1, keepdim=True).clamp(0.0, 1.0)
         obj2_mask = torch.sum(is_first_object_all * (1.0 - hit1_all) * hit2_all, dim=1, keepdim=True).clamp(0.0, 1.0)
 
-        raw_nx1 = f1_x - f1_c
-        raw_ny1 = f1_y - f1_c
-        raw_nz1 = f1_z - f1_c
-        raw_nx2 = f2_x - f2_c
-        raw_ny2 = f2_y - f2_c
-        raw_nz2 = f2_z - f2_c
+        raw_nx1 = f1_c - f1_x
+        raw_ny1 = f1_c - f1_y
+        raw_nz1 = f1_c - f1_z
+        raw_nx2 = f2_c - f2_x
+        raw_ny2 = f2_c - f2_y
+        raw_nz2 = f2_c - f2_z
 
         # メモリコピーを挟まず積和だけで一撃ワールド法線合成（Reshapeゼロ）
-        # ====================================================================
-        # 📐 3. ワールド法線合成の修正版（Swift側のRow-Major配列に100%最適化）
-        # ====================================================================
-        world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_01 * raw_ny1 + m1_02 * raw_nz1) + \
-                   obj2_mask * (m2_00 * raw_nx2 + m2_01 * raw_ny2 + m2_02 * raw_nz2)
-        
-        world_ny = obj1_mask * (m1_10 * raw_nx1 + m1_11 * raw_ny1 + m1_12 * raw_nz1) + \
-                   obj2_mask * (m2_10 * raw_nx2 + m2_11 * raw_ny2 + m2_12 * raw_nz2)
-        
-        world_nz = obj1_mask * (m1_20 * raw_nx1 + m1_21 * raw_ny1 + m1_22 * raw_nz1) + \
-                   obj2_mask * (m2_20 * raw_nx2 + m2_21 * raw_ny2 + m2_22 * raw_nz2)
-
+        world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_10 * raw_ny1 + m1_20 * raw_nz1) + obj2_mask * (m2_00 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
+        world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_11 * raw_ny2 + m2_21 * raw_nz2)
+        world_nz = obj1_mask * (m1_02 * raw_nx1 + m1_12 * raw_ny1 + m1_22 * raw_nz1) + obj2_mask * (m2_02 * raw_nx2 + m2_12 * raw_ny2 + m2_22 * raw_nz2)
 
         inv_true_n_len = self.fast_rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
 
@@ -308,20 +299,20 @@ class ANERayTracingCore(nn.Module):
         norm_idy = init_dy * inv_I_len
         norm_idz = init_dz * inv_I_len
 
-        # --- 5.1 視線ベクトルの正規化の直後 ---
+        # 🌟【重要：カメラ角度破綻を防ぐ法線方向の自動補正】
+        # 視線ベクトルと生の法線（first_nx等）の内積を計算
         raw_dot_I_N = norm_idx * first_nx + norm_idy * first_ny + norm_idz * first_nz
-
-        # 内積が0以上（同じ方向を向いている不自然な法線）を検出
-        is_flipped = torch.clamp(raw_dot_I_N * 100.0, min=0.0, max=1.0)
-
-        # 裏返っている場合のみフリップして、常にカメラと「対面する」法線を作る
+        
+        # 内積がプラス（法線がオブジェクトの裏側に突き抜けている画素）を検出するマスク
+        is_flipped = torch.clamp(raw_dot_I_N * 1000.0, min=0.0, max=1.0)
+        
+        # 裏返っている画素だけ符号を反転（-1を乗算）し、常にカメラ側を向く安全な法線を作る
         safe_nx = first_nx * (1.0 - 2.0 * is_flipped)
         safe_ny = first_ny * (1.0 - 2.0 * is_flipped)
         safe_nz = first_nz * (1.0 - 2.0 * is_flipped)
 
-        # 確実に正面を向いたので、内積は単純に - (I · N) で 0.0〜1.0 に収まります
+        # 補正後の正しい法線を使って内積を再計算（0.0〜1.0）
         dot_I_N = torch.clamp(-(norm_idx * safe_nx + norm_idy * safe_ny + norm_idz * safe_nz), min=0.0, max=1.0)
-
         
         # 輪郭度 (0.0で正面、1.0で完全なフチ)
         edge_mask = torch.clamp(1.0 - dot_I_N, min=0.0, max=1.0)
@@ -334,14 +325,21 @@ class ANERayTracingCore(nn.Module):
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
         # 5.4 パラメーター「歪み強度」を使った屈折方向の疑似計算 (補正後の safe_n を使用)
-        refract_dx = norm_idx - safe_nx * p_distort * normal_sanity
-        refract_dy = norm_idy - safe_ny * p_distort * normal_sanity
-        refract_dz = norm_idz - safe_nz * p_distort * normal_sanity
+        refract_dx = norm_idx + safe_nx * p_distort * normal_sanity
+        refract_dy = norm_idy + safe_ny * p_distort * normal_sanity
+        refract_dz = norm_idz * safe_nz * p_distort * normal_sanity
 
         # 5.6 屈折レイの床衝突座標（斜め上アングル完全対応・絶対値ガード）
         is_heading_down = torch.clamp(-refract_dy * 1000.0, min=0.0, max=1.0) 
-        safe_denom = refract_dy * is_heading_down + (-1e-4) * (1.0 - is_heading_down)
+        
+        # 🌟 修正：分母が小さくなりすぎるのを防ぎ、ゼロ除算によるシマシマを防止
+        safe_denom = torch.clamp(torch.abs(refract_dy), min=0.05, max=1.0) * torch.sign(refract_dy)
+        safe_denom = safe_denom * is_heading_down + (-1.0) * (1.0 - is_heading_down)
+        
         dist_to_floor = torch.abs(self.floor_y - py) / torch.abs(safe_denom)
+        
+        # 🌟 修正：遠すぎる交差点をフェードアウトさせてアーティファクトを防ぐ
+        fade_out = torch.clamp(1.0 - dist_to_floor / 10.0, min=0.0, max=1.0)
         
         r_floor_px = px + refract_dx * dist_to_floor
         r_floor_pz = pz + refract_dz * dist_to_floor
@@ -372,32 +370,27 @@ class ANERayTracingCore(nn.Module):
                                 obj1_mask * c1_g + obj2_mask * c2_g,
                                 obj1_mask * c1_b + obj2_mask * c2_b], dim=1)
 
-        # 5.8 透過光と反射光の合成 (アーティスト調整パラメーターベース)
         # ① 透過光の計算
         is_refract_hit_floor = torch.clamp(r_floor_raw_color * 5.0, min=0.0, max=1.0) * is_heading_down
         transmitted_color = is_refract_hit_floor * rgb_refracted_floor_color + (1.0 - is_refract_hit_floor) * self.bg_color
         
-        # ガラス独自のフィルター色と「フチの厚みによる影」を適用
         thickness_shadow = torch.clamp(dot_I_N, min=0.4, max=1.0) * normal_sanity + 0.4 * (1.0 - normal_sanity)
-        transmitted_color = transmitted_color * base_color * thickness_shadow
+        transmitted_color = transmitted_color * (base_color * 0.5 + 0.5) * thickness_shadow
 
         # ② 反射光の計算
         reflected_color = self.bg_color * (1.0 - p_reflect) + base_color * p_reflect
-        
-        # ガラスやメタルの「フチのギラつき」をedge_maskで綺麗に加算
         reflected_color = torch.clamp(reflected_color + edge_mask * 0.3, 0.0, 1.0)
 
-        # ③ 透明度パラメーターによる最終マテリアルルックのブレンド
-        # ガラス(p_trans=1.0)の時：正面は透過光、エッジ(edge_mask)に行けば行くほど強制的に反射光になる
-        # メタル(p_trans=0.0)の時：blend_maskが0になり、100%反射光(不透明固体)になる
-        final_fresnel = p_reflect + (1.0 - p_reflect) * (edge_mask * edge_mask * edge_mask)
-        blend_mask = p_trans * (1.0 - final_fresnel)
+        # ③ 透明度パラメーターによる最終マテリアルルックのブレンド (Schlickの近似式)
+        R0 = p_reflect
+        fresnel = R0 + (1.0 - R0) * torch.pow(edge_mask, 5.0)
+        blend_mask = p_trans * (1.0 - fresnel)
         
         obj_color = (1.0 - blend_mask) * reflected_color + blend_mask * transmitted_color
         obj_color = obj_color * light_modifier
 
         # 5.9 鏡面ハイライト (光沢)
-        specular = torch.pow(dot_nl, 32.0) * 0.5 * hit_object_mask
+        specular = torch.pow(dot_nl, 64.0) * 0.8 * hit_object_mask
 
         # 5.10 最終シーン合成
         final_scene_color = hit_object_mask * (obj_color + specular) + hit_floor_mask * rgb_floor_color
