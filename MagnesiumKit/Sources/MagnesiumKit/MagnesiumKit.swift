@@ -31,7 +31,6 @@ internal final class MagnesiumDevice: MGDevice {
     internal let geometry = MGUtil()
     internal var renderer: ANERenderer?
     
-    // 初期化を1つのモデルURLに変更
     public init(modelURL: URL) async {
         do {
             guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
@@ -48,19 +47,20 @@ internal final class MagnesiumDevice: MGDevice {
     }
     
     public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
-        guard let renderer = renderer else { return }
+        guard let renderer = renderer,
+              let vBuf = renderer.expandedVerticesBuffer,
+              let mBuf = renderer.mvpWeightsBuffer,
+              let rBuf = renderer.colorsRBuffer,
+              let gBuf = renderer.colorsGBuffer,
+              let bBuf = renderer.colorsBBuffer else { return }
         
-        renderer.expandedVerticesArray.mutableView(as: Float16.self).withUnsafeMutablePointer { vPtr, _, _ in
-            renderer.mvpWeightsArray.mutableView(as: Float16.self).withUnsafeMutablePointer { mPtr, _, _ in
-                renderer.colorsRArray.mutableView(as: Float16.self).withUnsafeMutablePointer { rPtr, _, _ in
-                    renderer.colorsGArray.mutableView(as: Float16.self).withUnsafeMutablePointer { gPtr, _, _ in
-                        renderer.colorsBArray.mutableView(as: Float16.self).withUnsafeMutablePointer { bPtr, _, _ in
-                            body(vPtr, mPtr, rPtr, gPtr, bPtr)
-                        }
-                    }
-                }
-            }
-        }
+        let vPtr = vBuf.contents().assumingMemoryBound(to: Float16.self)
+        let mPtr = mBuf.contents().assumingMemoryBound(to: Float16.self)
+        let rPtr = rBuf.contents().assumingMemoryBound(to: Float16.self)
+        let gPtr = gBuf.contents().assumingMemoryBound(to: Float16.self)
+        let bPtr = bBuf.contents().assumingMemoryBound(to: Float16.self)
+        
+        body(vPtr, mPtr, rPtr, gPtr, bPtr)
     }
 }
 
@@ -83,7 +83,8 @@ internal final class MagnesiumDevice: MGDevice {
     
     func commit() async throws {
         guard let renderer = device.renderer else { return }
-        try await renderer.drawFrame()
+        // ComputeStream を渡してエンコード
+        try renderer.drawFrame(onto: renderer.sharedComputeStream)
     }
 }
 
@@ -95,18 +96,17 @@ internal final class MagnesiumDevice: MGDevice {
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {}
     
     func withFragmentTexturePointer(index: Int, _ body: (UnsafeMutablePointer<Float16>) -> Void) {
-        guard let renderer = device.renderer else { return }
+        guard let renderer = device.renderer,
+              let tBuf = renderer.rawTextureBuffer else { return }
         
-        renderer.rawTextureArray.mutableView(as: Float16.self).withUnsafeMutablePointer { tPtr, _, _ in
-            body(tPtr)
-        }
+        let tPtr = tBuf.contents().assumingMemoryBound(to: Float16.self)
+        body(tPtr)
     }
     
     func drawPrimitives(vertexCount: Int) {}
     func endEncoding() {}
 }
 
-// ファクトリ関数も1つのURLに修正
 @MainActor public func MGCreateSystemDefaultDevice(modelURL: URL) async -> MGDevice? {
     return await MagnesiumDevice(modelURL: modelURL)
 }
