@@ -179,11 +179,6 @@ class ANERenderContext {
         
         commandBuffer.present(drawable)
         
-        commandBuffer.addCompletedHandler { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.update()
-            }
-        }
         
         commandBuffer.commit()
     }
