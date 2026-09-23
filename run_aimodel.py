@@ -33,7 +33,6 @@ def create_debug_texture():
     return tex
 
 async def main():
-    # Load the 3 AIModel assets
     pre_path = Path("./ane_3d_pre_processor_64.aimodel")
     rast_path = Path("./ane_3d_rasterizer_64.aimodel")
     tex_path = Path("./ane_texture_processor.aimodel")
@@ -55,53 +54,60 @@ async def main():
         rast_function: InferenceFunction = rast_model.load_function("main")
         tex_function: InferenceFunction = tex_model.load_function("main") 
 
-        # -----------------------------------------------------------------
-        # [0/3] Texture Processor
-        # -----------------------------------------------------------------
-        print("🚀 [0/3] Running Texture Processor on ANE...")
+        # Debug: Print model signature
+        def print_model_signature(name, func):
+            print(f"\n=== {name} Model Signature ===")
+            print("Inputs:")
+            for feat in func.desc.input_features:
+                shape = getattr(feat, 'shape', 'Unknown')
+                print(f"  - {feat.name}: {feat.type} (Shape: {shape})")
+            print("Outputs:")
+            for feat in func.desc.output_features:
+                shape = getattr(feat, 'shape', 'Unknown')
+                print(f"  - {feat.name}: {feat.type} (Shape: {shape})")
+
+        print_model_signature("Texture Processor", tex_function)
+        print_model_signature("3D PreProcessor", pre_function)
+        print_model_signature("3D Rasterizer", rast_function)
+        # --------------------------------------------------
+
+        print("\n🚀 [0/3] Running Texture Processor on ANE...")
         raw_tex_np = create_debug_texture()
         tex_inputs = {"raw_image": NDArray(raw_tex_np)}
         tex_outputs = await tex_function(tex_inputs)
         processed_texture_np = tex_outputs[tex_function.desc.output_names[0]].numpy()
 
-        # 1. Vertex buffer: [1, 4, 3, 64] -> (0,0,0,1) 
         expanded_vertices_np = np.zeros((1, 4, 3, 64), dtype=np.float16)
-        expanded_vertices_np[0, 3, :, :] = 1.0  # 全ダミー頂点のWを1.0にする
+        expanded_vertices_np[0, 3, :, :] = 1.0
   
         mvp_weights_np = np.zeros((4, 4, 1, 1), dtype=np.float16)
         
-        # 3. Color Buffer: [1, 1, 1, 64] 
         colors_r_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
         colors_g_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
         colors_b_np = np.zeros((1, 1, 1, 64), dtype=np.float16)
 
-    
         base_mvp = create_camera_matrix([2.0, 2.0, 5.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0])
         
-     
         for i in range(4):
             for j in range(4):
                 mvp_weights_np[i, j, 0, 0] = base_mvp[i, j]
 
         pyramid_faces = [
-            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]], # Face0
-            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]], # Face1
-            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]], # Face2
-            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]], # Face3
+            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, 1.0, 1.0]],
+            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, 1.0, 1.0], [ 1.0, -1.0, -1.0, 1.0]],
+            [[ 0.0,  1.0, 0.0, 1.0], [ 1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, -1.0, 1.0]],
+            [[ 0.0,  1.0, 0.0, 1.0], [-1.0, -1.0, -1.0, 1.0], [-1.0, -1.0, 1.0, 1.0]],
         ]
         pyramid_colors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
 
         for i in range(4):
-          
             colors_r_np[0, 0, 0, i] = pyramid_colors[i][0]
             colors_g_np[0, 0, 0, i] = pyramid_colors[i][1]
             colors_b_np[0, 0, 0, i] = pyramid_colors[i][2]
             
-            
             face_data = np.array(pyramid_faces[i], dtype=np.float16).T
             expanded_vertices_np[0, :, :, i] = face_data
 
-    
         print("🚀 [1/3] Running 3D PreProcessor on ANE...")
         pre_inputs = {
             "expanded_vertices": NDArray(expanded_vertices_np),
@@ -112,12 +118,10 @@ async def main():
         }
         pre_outputs = await pre_function(pre_inputs)
 
-    
         print("🚀 [2/3] Running 3D Rasterization with Texture on ANE...")
         
         rast_inputs = {}
-        
-        
+    
         rast_inputs['a0'] = pre_outputs['sub']
         rast_inputs['b0'] = pre_outputs['sub_1']
         rast_inputs['c0'] = pre_outputs['neg']
@@ -142,18 +146,11 @@ async def main():
         rast_inputs['b1_col'] = pre_outputs['colors_b']
         rast_inputs['b2_col'] = pre_outputs['colors_b']
         
-        # Z depth
         rast_inputs['z_weight'] = pre_outputs['slice_10']
-        
-        # Processed texture
         rast_inputs["processed_texture"] = NDArray(processed_texture_np)
 
-     
         rast_outputs = await rast_function(rast_inputs)
 
-        # -----------------------------------------------------------------
-        # save
-        # -----------------------------------------------------------------
         out_names = rast_function.desc.output_names
         r_out = rast_outputs[out_names[0]].numpy()[0, 0, :, :]
         g_out = rast_outputs[out_names[1]].numpy()[0, 0, :, :]

@@ -7,6 +7,7 @@ import Foundation
 import Metal
 import MetalKit
 import MagnesiumKit
+import Observation
 
 @MainActor
 @Observable
@@ -46,43 +47,30 @@ class ANERenderContext {
     }
     
     func handleSelectedURLs(_ urls: [URL]) {
-        guard urls.count == 3 else { return }
+        guard urls.count == 1, let modelURL = urls.first else { return }
+        guard modelURL.pathExtension.lowercased() == "aimodel" else { return }
         
-        let allowedExtensions = ["aimodel"]
-        
-        for url in urls {
-            guard allowedExtensions.contains(url.pathExtension.lowercased()) else {
-                print("Error: Invalid file extension for \(url.lastPathComponent)")
-                return
-            }
-            _ = url.startAccessingSecurityScopedResource()
-        }
-        
-        guard let pre = urls.first(where: { $0.lastPathComponent.lowercased().contains("pre") }),
-              let rast = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
-              let tex = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
-            print("Error: Could not identify all 3 models.")
-            return
-        }
+        _ = modelURL.startAccessingSecurityScopedResource()
         
         self.isLoading = true
         Task {
-            self.mgDevice = await MGCreateSystemDefaultDevice(preURL: pre, rastURL: rast, texURL: tex)
+            self.mgDevice = await MGCreateSystemDefaultDevice(modelURL: modelURL)
             self.isLoading = false
             
-            for url in urls { url.stopAccessingSecurityScopedResource() }
+            modelURL.stopAccessingSecurityScopedResource()
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
+                self.update() // First run
             }
         }
     }
 
-    func update() async {
+    func update() {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
-        self.angle += 0.0083
+        self.angle += 0.1
         
         let radius: Float = 6.0
         let eyeX = radius * sin(self.angle)
@@ -94,33 +82,34 @@ class ANERenderContext {
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
-        // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
-            let wChannelOffset = 3 * 3 * 64
             for faceIdx in 0..<64 {
-                vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
+                for v in 0..<3 {
+                    let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
+                    vertices[wIndex] = 1.0
+                }
             }
 
             let faces = TorusGeometry.generateFaces()
 
             for slot in 0..<min(faces.count, 64) {
                 let face = faces[slot]
-                
                 colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
                 colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
                 colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
                 
-                for v in 0..<3 {
-                    for ch in 0..<4 {
-                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                for ch in 0..<4 {
+                    for v in 0..<3 {
+                        let pIndex = (slot * 4 * 3) + (ch * 3) + v
                         vertices[pIndex] = face[v][ch]
                     }
                 }
                 
-                for m in 0..<16 {
-                    mvpWeights[m * 64 + slot] = cameraMatrix[m]
+                for i in 0..<4 {
+                    for j in 0..<4 {
+                        let mIndex = (slot * 4 * 4) + (i * 4) + j
+                        mvpWeights[mIndex] = cameraMatrix[i * 4 + j]
+                    }
                 }
             }
         }
@@ -132,31 +121,25 @@ class ANERenderContext {
             return
         }
         
-        // 2. Set Texture
         mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
-            // 256x256 Dummy Texture
             for y in 0..<256 {
                 for x in 0..<256 {
                     let index = (y * 256 + x) * 3
                     let u = Float16(x) / 255.0
                     let v = Float16(y) / 255.0
-                    
-                    texturePointer[index + 0] = u       // R
-                    texturePointer[index + 1] = v       // G
-                    texturePointer[index + 2] = 1.0 - u // B
+                    texturePointer[index + 0] = u
+                    texturePointer[index + 1] = v
+                    texturePointer[index + 2] = 1.0 - u
                 }
             }
         }
         
         mgEncoder.endEncoding()
         
-        do {
-            try await mgCommandBuffer.commit()
-            self.currentEventValue += 1
-            self.sharedEvent?.signaledValue = self.currentEventValue
-        } catch {
-            print("Inference error: \(error)")
-        }
+        try? mgCommandBuffer.commit()
+        
+        self.currentEventValue += 1
+        self.sharedEvent?.signaledValue = self.currentEventValue
         
         self.isComputing = false
     }
@@ -190,6 +173,8 @@ class ANERenderContext {
         }
         
         commandBuffer.present(drawable)
+        
+        
         commandBuffer.commit()
     }
 }
