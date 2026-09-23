@@ -13,7 +13,7 @@ class ANERenderer {
     private var pipelineModel: AIModel?
     private var pipelineFunction: InferenceFunction?
     
-    // MTLBuffer に変更して ComputeStream で扱えるようにする
+    // MTLBuffer
     internal var expandedVerticesBuffer: MTLBuffer?
     internal var mvpWeightsBuffer: MTLBuffer?
     internal var colorsRBuffer: MTLBuffer?
@@ -86,7 +86,7 @@ class ANERenderer {
               let rBuf = colorsRBuffer, let gBuf = colorsGBuffer, let bBuf = colorsBBuffer,
               let tBuf = rawTextureBuffer else { return }
         
-        // 1. 入力のセットアップ (AsyncValue)
+        // 1.　Setup Input
         let inputs: [String: InferenceFunction.AsyncValue] = [
             "expanded_vertices": InferenceFunction.AsyncValue(unsafeBuffer: vBuf, scalarType: .float16, shape: [1, 64, 4, 3]),
             "mvp_weights": InferenceFunction.AsyncValue(unsafeBuffer: mBuf, scalarType: .float16, shape: [1, 64, 4, 4]),
@@ -96,7 +96,7 @@ class ANERenderer {
             "raw_image": InferenceFunction.AsyncValue(unsafeBuffer: tBuf, scalarType: .float16, shape: [1, 3, 256, 256])
         ]
         
-        // 2. 出力先のバッファをMetalヒープに直接マッピング (AsyncMutableViews)
+        // 2. Output Buffer to MTLHeap (AsyncMutableViews)
         var outputViews = InferenceFunction.AsyncMutableViews()
         let shape: [Int] = [1, 1, 1024, 1024]
         
@@ -112,7 +112,7 @@ class ANERenderer {
         outputViews.insert(&viewForMask, for: "upsample_bilinear2d_3")
         outputViews.insert(&viewForZ, for: "upsample_bilinear2d_4")
 
-        // 3. ANEの処理をComputeStreamにエンコード
+        // 3. Encode
         let _ = try pipeline.encode(inputs: inputs, outputViews: outputViews, to: stream)
     }
 }

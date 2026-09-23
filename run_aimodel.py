@@ -54,7 +54,7 @@ async def main():
         rast_function: InferenceFunction = rast_model.load_function("main")
         tex_function: InferenceFunction = tex_model.load_function("main") 
 
-        # --- デバッグ用: モデルの入出力情報をプリント ---
+        # Debug: Print model signature
         def print_model_signature(name, func):
             print(f"\n=== {name} Model Signature ===")
             print("Inputs:")
@@ -121,8 +121,7 @@ async def main():
         print("🚀 [2/3] Running 3D Rasterization with Texture on ANE...")
         
         rast_inputs = {}
-        
-        # デバッグプリントの出力を参考に、以下のキー名を適宜書き換えてください
+    
         rast_inputs['a0'] = pre_outputs['sub']
         rast_inputs['b0'] = pre_outputs['sub_1']
         rast_inputs['c0'] = pre_outputs['neg']

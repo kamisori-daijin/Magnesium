@@ -8,19 +8,18 @@ class ANE3DPreProcessor64(nn.Module):
         
     def forward(self, expanded_vertices, mvp_weights, colors_r, colors_g, colors_b):
         """
-        入力のShapeを変更（64をチャンネルに配置）:
         expanded_vertices: [1, 64, 4, 3] 
         mvp_weights:       [1, 64, 4, 4]  
         colors_r / g / b:  [1, 64, 1, 1]
         """
         
-        # 計算の軸を合わせるだけで、Reshapeは一切不要
+        # No Reshape
         transformed = (
             expanded_vertices[:, :, 0:1, :] * mvp_weights[:, :, :, 0:1] +
             expanded_vertices[:, :, 1:2, :] * mvp_weights[:, :, :, 1:2] +
             expanded_vertices[:, :, 2:3, :] * mvp_weights[:, :, :, 2:3] +
             expanded_vertices[:, :, 3:4, :] * mvp_weights[:, :, :, 3:4]
-        ) # 出力: [1, 64, 4, 3]
+        ) # Output: [1, 64, 4, 3]
         
         X_c = transformed[:, :, 0:1, :]
         Y_c = transformed[:, :, 1:2, :]
@@ -32,7 +31,7 @@ class ANE3DPreProcessor64(nn.Module):
         screen_y = Y_c / safe_W
         inv_Z = 1.0 / safe_W     
         
-        # ここで取り出されるテンソルはすべて [1, 64, 1, 1] になります
+        # All Tensor is [1, 64, 1, 1] 
         p0_x, p1_x, p2_x = screen_x[:, :, :, 0:1], screen_x[:, :, :, 1:2], screen_x[:, :, :, 2:3]
         p0_y, p1_y, p2_y = screen_y[:, :, :, 0:1], screen_y[:, :, :, 1:2], screen_y[:, :, :, 2:3]
      

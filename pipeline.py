@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-
-# これまで作成したモデルをインポート (ファイル名は適宜変更してください)
 from PreProcessor import ANE3DPreProcessor64
 from ShaderModel import ANE3DRenderer64
 from TextureModel import ANETextureProcessor
@@ -13,7 +11,7 @@ class ANEMonolithicPipeline(nn.Module):
         self.pre_processor = ANE3DPreProcessor64()
         self.renderer = ANE3DRenderer64(target_width, target_height)
         
-        # ダミーのUV座標を登録 (今回はテクスチャ全体にマッピング)
+        # Dummy UV
         self.register_buffer("U0", torch.zeros(1, 64, 1, 1))
         self.register_buffer("V0", torch.zeros(1, 64, 1, 1))
         self.register_buffer("U1", torch.full((1, 64, 1, 1), 1.0))
@@ -22,15 +20,15 @@ class ANEMonolithicPipeline(nn.Module):
         self.register_buffer("V2", torch.full((1, 64, 1, 1), 1.0))
 
     def forward(self, expanded_vertices, mvp_weights, colors_r, colors_g, colors_b, raw_image):
-        # 1. テクスチャ処理
+        # 1. Texture Processing
         processed_texture = self.texture_processor(raw_image)
         
-        # 2. 頂点計算 (PreProcessor)
+        # 2. Vertex Calculation (PreProcessor)
         (A0, B0, C0, A1, B1, C1, A2, B2, C2, 
          R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col, 
          p0_iz, p1_iz, p2_iz) = self.pre_processor(expanded_vertices, mvp_weights, colors_r, colors_g, colors_b)
         
-        # 3. レンダリング (Renderer)
+        # 3. Rendering (Renderer)
         R, G, B, mask_w, max_inv_z = self.renderer(
             A0, B0, C0, A1, B1, C1, A2, B2, C2,
             R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col,

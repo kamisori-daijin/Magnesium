@@ -1,20 +1,20 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from pipeline import ANEMonolithicPipeline  # パイプラインをインポート
+from pipeline import ANEMonolithicPipeline  
 from pathlib import Path
 
 WIDTH = 1024
 HEIGHT = 1024
 
-# モデルの初期化 (Float16)
+# Initialize Model (Float16)
 model = ANEMonolithicPipeline(target_width=WIDTH, target_height=HEIGHT).to(dtype=torch.float16)
 model.eval()
 
 # -------------------------------------------------------------------------
 # 2. Definition of Input Ports
 # -------------------------------------------------------------------------
-# 新しいパイプラインの入力に合わせたダミーデータ
+# Dummy Input Data
 expanded_vertices = torch.zeros(1, 64, 4, 3, dtype=torch.float16)
 mvp_weights       = torch.zeros(1, 64, 4, 4, dtype=torch.float16)
 colors_r          = torch.zeros(1, 64, 1, 1, dtype=torch.float16)

@@ -83,7 +83,7 @@ internal final class MagnesiumDevice: MGDevice {
     
     func commit() throws {
         guard let renderer = device.renderer else { return }
-        // ComputeStream を渡してエンコード
+        // ComputeStream Encode
         try renderer.drawFrame(onto: renderer.sharedComputeStream)
     }
 }

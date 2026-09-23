@@ -47,7 +47,7 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint gIndex = (componentStride * 1) + pixelIndex;
     uint bIndex = (componentStride * 2) + pixelIndex;
     uint mIndex = (componentStride * 3) + pixelIndex;
-    uint zIndex = (componentStride * 4) + pixelIndex; // 5つ目のZバッファ
+    uint zIndex = (componentStride * 4) + pixelIndex; // Zbuffer
     
     half r_val = currentBuffer[rIndex];
     half g_val = currentBuffer[gIndex];
@@ -55,7 +55,7 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     half mask_w = currentBuffer[mIndex];
     half z_val = currentBuffer[zIndex];
     
-    // カリング処理: Z値が0（背景）の場合は描画しない
+    // Curring
     if (mask_w > 0.001h && z_val > 0.0h) {
         half3 sampledColor = half3(r_val, g_val, b_val) / (mask_w + 1e-4h);
         sampledColor = clamp(sampledColor, 0.0h, 1.0h);
@@ -63,5 +63,6 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
         return float4(float3(sampledColor), 1.0h);
     } else {
         discard_fragment();
+        return float4(0.0);
     }
 }

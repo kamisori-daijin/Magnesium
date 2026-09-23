@@ -11,7 +11,7 @@ class ANE3DRenderer64(nn.Module):
         self.internal_w = 256
         self.internal_h = 256
         
-        # グリッドを [1, 64, 256, 256] で作成
+        # Grid [1, 64, 256, 256] 
         y_grid = torch.linspace(1.0, -1.0, self.internal_h).view(1, 1, self.internal_h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.internal_w).view(1, 1, 1, self.internal_w)
         

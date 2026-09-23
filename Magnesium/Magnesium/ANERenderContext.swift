@@ -3,11 +3,6 @@
 //  Magnesium
 //
 
-//
-//  ANERenderContext.swift
-//  Magnesium
-//
-
 import Foundation
 import Metal
 import MetalKit
@@ -66,7 +61,7 @@ class ANERenderContext {
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
-                self.update() // 初回実行（同期呼び出し）
+                self.update() // First run
             }
         }
     }
@@ -75,7 +70,7 @@ class ANERenderContext {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
-        self.angle += 0.0083
+        self.angle += 0.1
         
         let radius: Float = 6.0
         let eyeX = radius * sin(self.angle)
