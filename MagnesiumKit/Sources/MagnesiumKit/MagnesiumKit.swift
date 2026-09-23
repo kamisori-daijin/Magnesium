@@ -20,10 +20,7 @@ public protocol MGDevice: AnyObject {
 
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
     func setVertexBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
-    
-    // Bridge Pointer
     func withFragmentTexturePointer(index: Int, _ body: (UnsafeMutablePointer<Float16>) -> Void)
-    
     func drawPrimitives(vertexCount: Int)
     func endEncoding()
 }
@@ -34,12 +31,13 @@ internal final class MagnesiumDevice: MGDevice {
     internal let geometry = MGUtil()
     internal var renderer: ANERenderer?
     
-    public init(preURL: URL, rastURL: URL, texURL: URL) async {
+    // 初期化を1つのモデルURLに変更
+    public init(modelURL: URL) async {
         do {
             guard let systemMetalDevice = MTLCreateSystemDefaultDevice() else { return }
-            self.renderer = try await ANERenderer(preURL: preURL, rastURL: rastURL, texURL: texURL, metalDevice: systemMetalDevice)
+            self.renderer = try await ANERenderer(modelURL: modelURL, metalDevice: systemMetalDevice)
         } catch {
-            print("Error: \(error)")
+            print("Error initializing ANERenderer: \(error)")
         }
     }
     
@@ -108,6 +106,7 @@ internal final class MagnesiumDevice: MGDevice {
     func endEncoding() {}
 }
 
-@MainActor public func MGCreateSystemDefaultDevice(preURL: URL, rastURL: URL, texURL: URL) async -> MGDevice? {
-    return await MagnesiumDevice(preURL: preURL, rastURL: rastURL, texURL: texURL)
+// ファクトリ関数も1つのURLに修正
+@MainActor public func MGCreateSystemDefaultDevice(modelURL: URL) async -> MGDevice? {
+    return await MagnesiumDevice(modelURL: modelURL)
 }

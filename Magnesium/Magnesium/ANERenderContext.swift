@@ -45,32 +45,26 @@ class ANERenderContext {
         }
     }
     
+    // 1つのモデルファイルだけを受け取るように変更
     func handleSelectedURLs(_ urls: [URL]) {
-        guard urls.count == 3 else { return }
-        
-        let allowedExtensions = ["aimodel"]
-        
-        for url in urls {
-            guard allowedExtensions.contains(url.pathExtension.lowercased()) else {
-                print("Error: Invalid file extension for \(url.lastPathComponent)")
-                return
-            }
-            _ = url.startAccessingSecurityScopedResource()
-        }
-        
-        guard let pre = urls.first(where: { $0.lastPathComponent.lowercased().contains("pre") }),
-              let rast = urls.first(where: { $0.lastPathComponent.lowercased().contains("rasterizer") || $0.lastPathComponent.lowercased().contains("render") }),
-              let tex = urls.first(where: { $0.lastPathComponent.lowercased().contains("texture") }) else {
-            print("Error: Could not identify all 3 models.")
+        guard urls.count == 1, let modelURL = urls.first else {
+            print("Error: Please select exactly one .aimodel file.")
             return
         }
         
+        guard modelURL.pathExtension.lowercased() == "aimodel" else {
+            print("Error: Invalid file extension for \(modelURL.lastPathComponent)")
+            return
+        }
+        
+        _ = modelURL.startAccessingSecurityScopedResource()
+        
         self.isLoading = true
         Task {
-            self.mgDevice = await MGCreateSystemDefaultDevice(preURL: pre, rastURL: rast, texURL: tex)
+            self.mgDevice = await MGCreateSystemDefaultDevice(modelURL: modelURL)
             self.isLoading = false
             
-            for url in urls { url.stopAccessingSecurityScopedResource() }
+            modelURL.stopAccessingSecurityScopedResource()
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
@@ -96,12 +90,8 @@ class ANERenderContext {
 
         // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
-            
-            // Wチャンネルの初期化位置も新しいShapeに合わせる
-            // Shape: [1, 64, 4, 3] -> 64(faces) * 4(xyzw) * 3(vertices)
             for faceIdx in 0..<64 {
                 for v in 0..<3 {
-                    // W(index 3) の位置を 1.0 にする
                     let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
                     vertices[wIndex] = 1.0
                 }
@@ -118,13 +108,11 @@ class ANERenderContext {
                 
                 for ch in 0..<4 {
                     for v in 0..<3 {
-                        // 新しいインデックス計算: [1, 64, 4, 3]
                         let pIndex = (slot * 4 * 3) + (ch * 3) + v
                         vertices[pIndex] = face[v][ch]
                     }
                 }
                 
-                // mvpWeights も [1, 64, 4, 4] に変わったため修正
                 for i in 0..<4 {
                     for j in 0..<4 {
                         let mIndex = (slot * 4 * 4) + (i * 4) + j
@@ -143,16 +131,15 @@ class ANERenderContext {
         
         // 2. Set Texture
         mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
-            // 256x256 Dummy Texture
             for y in 0..<256 {
                 for x in 0..<256 {
                     let index = (y * 256 + x) * 3
                     let u = Float16(x) / 255.0
                     let v = Float16(y) / 255.0
                     
-                    texturePointer[index + 0] = u       // R
-                    texturePointer[index + 1] = v       // G
-                    texturePointer[index + 2] = 1.0 - u // B
+                    texturePointer[index + 0] = u
+                    texturePointer[index + 1] = v
+                    texturePointer[index + 2] = 1.0 - u
                 }
             }
         }
