@@ -16,11 +16,11 @@ model.eval()
 # -------------------------------------------------------------------------
 # forward(self, mvp_matrices, expanded_vertices, colors) 
 
-dummy_vertices = torch.zeros(1, 4, 3, 64, dtype=torch.float16)  # Vertex buffer
-dummy_mvp_w    = torch.zeros(1, 4, 4, 64, dtype=torch.float16)  # 1x1 Conv weight shape MVP
-dummy_r        = torch.zeros(1, 1, 1, 64, dtype=torch.float16)
-dummy_g        = torch.zeros(1, 1, 1, 64, dtype=torch.float16)
-dummy_b        = torch.zeros(1, 1, 1, 64, dtype=torch.float16)
+dummy_vertices = torch.zeros(1, 64, 4, 3, dtype=torch.float16)  # Vertex buffer
+dummy_mvp_w    = torch.zeros(1, 64, 4, 4, dtype=torch.float16)  # 1x1 Conv weight shape MVP
+dummy_r        = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
+dummy_g        = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
+dummy_b        = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
 args = (dummy_vertices, dummy_mvp_w, dummy_r, dummy_g, dummy_b)
 

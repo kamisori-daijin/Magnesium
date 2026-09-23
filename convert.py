@@ -16,7 +16,7 @@ model.eval()
 # -------------------------------------------------------------------------
 # Create dummy data for coefficients like A0, B0, C0,
 def make_dummy():
-    return torch.zeros(1, 1, 1, 64, dtype=torch.float16)
+    return torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
 
 # Prepare dummy data matching the arguments of the forward method

@@ -46,11 +46,11 @@ class ANERenderer {
         self.rstFunction = try rstModel?.loadFunction(named: "main")
         self.texFunction = try texModel?.loadFunction(named: "main")
         
-        self.expandedVerticesArray = NDArray(shape:[1, 4, 3, 64], scalarType: .float16)
-        self.mvpWeightsArray = NDArray(shape:[1, 4, 4, 1, 64], scalarType: .float16)
-        self.colorsRArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
-        self.colorsGArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
-        self.colorsBArray = NDArray(shape:[1, 1, 1, 64], scalarType: .float16)
+        self.expandedVerticesArray = NDArray(shape:[1, 64, 4, 3], scalarType: .float16)
+        self.mvpWeightsArray = NDArray(shape:[1, 64, 4, 4], scalarType: .float16)
+        self.colorsRArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
+        self.colorsGArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
+        self.colorsBArray = NDArray(shape:[1, 64, 1, 1], scalarType: .float16)
         
         self.rawTextureArray = NDArray(shape:[1, 3, 256, 256], scalarType: .float16)
         self.alignedTextureArray = NDArray(shape:[1, 64, 256, 256], scalarType: .float16)
