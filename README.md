@@ -20,37 +20,31 @@ A 3D graphics pipeline running on the **Apple Neural Engine (ANE)**, utilizing t
 - **AI Co-Development Infrastructure**: The majority of the Python, Swift, and Metal pipeline code was generated and rapidly prototyped using **Gemini and Siri AI**.
 
 
-## Implementation Details
-
-### 1. 64-Batch Broadcast Vertex Pipeline
-To render multiple independent objects without triggering the high-cost depth convolution (`groups=64`) routines that would confuse the Core AI compiler, the geometry engine leverages a **per-element tensor product broadcast hack**.
-
-The input transformations are packed into a `[1, 4, 4, 1, 64]` tensor representing 64 independent 4x4 MVP matrices. By performing a fused `torch.sum(*)` operation, the ANE multifires the 64 intrinsic spatial transformations in parallel. The mesh grid is clamped to a static `[1, 2, 256, 256]` raster space.
-- **Channel 0**: X coordinate ($[-1.0 \dots 1.0]$ grid)
-- **Channel 1**: Y coordinate ($[1.0 \dots -1.0]$ grid)
-
-### 2. Perspective Corrected Centroid Sampling
-Spatial depth inversion maps the coordinates by replacing the division denominator in the clipping space with the true spatial distance channel $W_c$. The 3D geometry engine outputs precise 3-vertex inverse depth gradients via hidden tensor blocks (`slice_11` to `slice_13`), and the rasterizer constructs smooth, pixel-level depth gradients to achieve overlap occlusion.
-
-### 3. Planar Zero-Copy Ingestion in Metal Shaders
-The ANE hardware dumps raw planar data (R, G, B, and mask arranged sequentially as separate sheets) directly into an `MTLBuffer` allocated on the heap. The Metal fragment shader avoids costly memory copies and achieves high-overhead texturing by calculating precise planar offsets using the layout format stride.
-
+Implementation Details
+1. Monolithic ANE pipeline
+The entire graphics pipeline is structured as a single PyTorch nn.Module (ANEMonolithicPipeline), seamlessly chaining three hardware-accelerated stages:
+- Texture Processing: Expands standard RGB images into a 64-channel format using a 1x1 Conv2d layer to match the batch dimension of the geometry.
+- Vertex Calculation: Computes screen coordinates and edge equations for 64 independent faces simultaneously.
+- Rendering: Executes perspective-correct centroid sampling and Z-depth occlusion directly on the ANE.
+2. 64-batch broadcast vertex pipeline
+Instead of relying on high-cost depth convolution routines, the geometry engine leverages a per-element tensor product broadcast. The input transformations are packed into a [1, 64, 4, 3] vertex tensor and a [1, 64, 4, 4] MVP weight tensor. By performing fused tensor multiplications, the ANE computes 64 intrinsic spatial transformations in parallel. The mesh grid is clamped to a static [1, 64, 256, 256] raster space.
+3. Perspective corrected centroid sampling & Z-occlusion
+Spatial depth inversion maps the coordinates by replacing the division denominator in the clipping space with the true spatial distance channel . The renderer calculates pixel-level depth gradients and applies a sharpness-weighted Z-buffer (z_blend_weights). It then utilizes a grouped F.conv2d operation to blend the 64 overlapping faces into a final, correctly occluded RGB output.
+4. Planar zero-copy ingestion in Metal shaders
+The ANE hardware dumps raw planar data (R, G, B, mask, and Z-depth arranged sequentially as separate sheets) directly into an MTLBuffer. The Metal fragment shader avoids costly memory copies by calculating precise planar offsets using the layout format stride.
 ```metal
 // Direct plane scan within the Metal fragment shader
-uint componentStride = 64 * width * height;
+uint componentStride = width * height;
 
 uint rIndex = (componentStride * 0) + pixelIndex;
-
 uint gIndex = (componentStride * 1) + pixelIndex;
-
 uint bIndex = (componentStride * 2) + pixelIndex;
-
 ```
-
 ---
 
 ## Known Issues
-Memory consumption is still high at 267MB, and CPU usage is around 38%.
+- CPU Usage: Although the render loop has been synchronized with CVDisplayLink (via MTKViewDelegate) to eliminate DispatchQueue overhead, CPU usage remains high due to per-frame color generation and related processing.
+- Memory Consumption: Currently at 267MB (optimization ongoing).
 
 ---
 ## How to Use
@@ -60,10 +54,8 @@ pip install coreai-torch
 ```
 2. Convert Shader Models
 ```bash
-python convert.py
-python convert_prepro.py
-python convert_texture.py
+python convert_pipeline.py
 ```
 3. Open `Magnesium.xcodeproj`
 4. Build and Run
-5. Use the Model Picker to select the three generated `.aimodel` files (to select multiple assets, hold down the Command key while selecting).
+5. Use the Model Picker to select the generated `.aimodel` files.
