@@ -3,10 +3,16 @@
 //  Magnesium
 //
 
+//
+//  ANERenderContext.swift
+//  Magnesium
+//
+
 import Foundation
 import Metal
 import MetalKit
 import MagnesiumKit
+import Observation
 
 @MainActor
 @Observable
@@ -45,17 +51,9 @@ class ANERenderContext {
         }
     }
     
-    // 1つのモデルファイルだけを受け取るように変更
     func handleSelectedURLs(_ urls: [URL]) {
-        guard urls.count == 1, let modelURL = urls.first else {
-            print("Error: Please select exactly one .aimodel file.")
-            return
-        }
-        
-        guard modelURL.pathExtension.lowercased() == "aimodel" else {
-            print("Error: Invalid file extension for \(modelURL.lastPathComponent)")
-            return
-        }
+        guard urls.count == 1, let modelURL = urls.first else { return }
+        guard modelURL.pathExtension.lowercased() == "aimodel" else { return }
         
         _ = modelURL.startAccessingSecurityScopedResource()
         
@@ -68,11 +66,12 @@ class ANERenderContext {
             
             if self.mgDevice != nil {
                 self.mgCommandQueue = self.mgDevice?.makeCommandQueue()
+                self.update() // 初回実行（同期呼び出し）
             }
         }
     }
 
-    func update() async {
+    func update() {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
@@ -88,7 +87,6 @@ class ANERenderContext {
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
-        // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
             for faceIdx in 0..<64 {
                 for v in 0..<3 {
@@ -101,7 +99,6 @@ class ANERenderContext {
 
             for slot in 0..<min(faces.count, 64) {
                 let face = faces[slot]
-                
                 colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
                 colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
                 colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
@@ -129,14 +126,12 @@ class ANERenderContext {
             return
         }
         
-        // 2. Set Texture
         mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
             for y in 0..<256 {
                 for x in 0..<256 {
                     let index = (y * 256 + x) * 3
                     let u = Float16(x) / 255.0
                     let v = Float16(y) / 255.0
-                    
                     texturePointer[index + 0] = u
                     texturePointer[index + 1] = v
                     texturePointer[index + 2] = 1.0 - u
@@ -146,13 +141,10 @@ class ANERenderContext {
         
         mgEncoder.endEncoding()
         
-        do {
-            try await mgCommandBuffer.commit()
-            self.currentEventValue += 1
-            self.sharedEvent?.signaledValue = self.currentEventValue
-        } catch {
-            print("Inference error: \(error)")
-        }
+        try? mgCommandBuffer.commit()
+        
+        self.currentEventValue += 1
+        self.sharedEvent?.signaledValue = self.currentEventValue
         
         self.isComputing = false
     }
@@ -186,6 +178,13 @@ class ANERenderContext {
         }
         
         commandBuffer.present(drawable)
+        
+        commandBuffer.addCompletedHandler { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.update()
+            }
+        }
+        
         commandBuffer.commit()
     }
 }

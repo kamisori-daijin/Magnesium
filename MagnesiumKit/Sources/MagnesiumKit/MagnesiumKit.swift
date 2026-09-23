@@ -15,7 +15,7 @@ public protocol MGDevice: AnyObject {
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
 @MainActor public protocol MGCommandBuffer: AnyObject {
     func makeRenderCommandEncoder() -> MGRenderCommandEncoder?
-    func commit() async throws
+    func commit() throws
 }
 
 @MainActor public protocol MGRenderCommandEncoder: AnyObject {
@@ -81,7 +81,7 @@ internal final class MagnesiumDevice: MGDevice {
         return enc
     }
     
-    func commit() async throws {
+    func commit() throws {
         guard let renderer = device.renderer else { return }
         // ComputeStream を渡してエンコード
         try renderer.drawFrame(onto: renderer.sharedComputeStream)
