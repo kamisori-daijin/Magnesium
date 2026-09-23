@@ -96,11 +96,15 @@ class ANERenderContext {
 
         // 1. Setup Geometry Data
         mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
-            let wChannelOffset = 3 * 3 * 64
+            
+            // Wチャンネルの初期化位置も新しいShapeに合わせる
+            // Shape: [1, 64, 4, 3] -> 64(faces) * 4(xyzw) * 3(vertices)
             for faceIdx in 0..<64 {
-                vertices[wChannelOffset + (0 * 64) + faceIdx] = 1.0
-                vertices[wChannelOffset + (1 * 64) + faceIdx] = 1.0
-                vertices[wChannelOffset + (2 * 64) + faceIdx] = 1.0
+                for v in 0..<3 {
+                    // W(index 3) の位置を 1.0 にする
+                    let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
+                    vertices[wIndex] = 1.0
+                }
             }
 
             let faces = TorusGeometry.generateFaces()
@@ -112,15 +116,20 @@ class ANERenderContext {
                 colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
                 colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
                 
-                for v in 0..<3 {
-                    for ch in 0..<4 {
-                        let pIndex = (ch * 3 * 64) + (v * 64) + slot
+                for ch in 0..<4 {
+                    for v in 0..<3 {
+                        // 新しいインデックス計算: [1, 64, 4, 3]
+                        let pIndex = (slot * 4 * 3) + (ch * 3) + v
                         vertices[pIndex] = face[v][ch]
                     }
                 }
                 
-                for m in 0..<16 {
-                    mvpWeights[m * 64 + slot] = cameraMatrix[m]
+                // mvpWeights も [1, 64, 4, 4] に変わったため修正
+                for i in 0..<4 {
+                    for j in 0..<4 {
+                        let mIndex = (slot * 4 * 4) + (i * 4) + j
+                        mvpWeights[mIndex] = cameraMatrix[i * 4 + j]
+                    }
                 }
             }
         }

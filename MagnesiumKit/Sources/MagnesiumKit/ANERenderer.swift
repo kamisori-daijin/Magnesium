@@ -125,9 +125,9 @@ class ANERenderer {
         rstInputs["g0"] = colorsG; rstInputs["g1"] = colorsG; rstInputs["g2"] = colorsG
         rstInputs["b0_col"] = colorsB; rstInputs["b1_col"] = colorsB; rstInputs["b2_col"] = colorsB
         
-        rstInputs["p0_iz"] = preOutputs.remove("slice_11")?.ndArray
-        rstInputs["p1_iz"] = preOutputs.remove("slice_12")?.ndArray
-        rstInputs["p2_iz"] = preOutputs.remove("slice_13")?.ndArray
+        rstInputs["p0_iz"] = preOutputs.remove("slice_19")?.ndArray
+        rstInputs["p1_iz"] = preOutputs.remove("slice_20")?.ndArray
+        rstInputs["p2_iz"] = preOutputs.remove("slice_21")?.ndArray
         
         rstInputs["u0"] = colorsR; rstInputs["v0"] = colorsR
         rstInputs["u1"] = colorsR; rstInputs["v1"] = colorsR
