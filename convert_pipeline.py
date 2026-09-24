@@ -17,12 +17,14 @@ model.eval()
 # Dummy Input Data
 expanded_vertices = torch.zeros(1, 64, 4, 3, dtype=torch.float16)
 mvp_weights       = torch.zeros(1, 64, 4, 4, dtype=torch.float16)
+normals           = torch.zeros(1, 64, 3, 3, dtype=torch.float16) # Nomals
+light_dir         = torch.zeros(1, 64, 1, 1, dtype=torch.float16) # Light
 colors_r          = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 colors_g          = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 colors_b          = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 raw_image         = torch.zeros(1, 3, 256, 256, dtype=torch.float16)
 
-args = (expanded_vertices, mvp_weights, colors_r, colors_g, colors_b, raw_image)
+args = (expanded_vertices, mvp_weights, normals, light_dir, colors_r, colors_g, colors_b, raw_image)
 
 # -------------------------------------------------------------------------
 # 3. Export Settings for CoreAI

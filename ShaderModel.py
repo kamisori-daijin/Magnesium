@@ -11,7 +11,6 @@ class ANE3DRenderer64(nn.Module):
         self.internal_w = 256
         self.internal_h = 256
         
-        # Grid [1, 64, 256, 256] 
         y_grid = torch.linspace(1.0, -1.0, self.internal_h).view(1, 1, self.internal_h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.internal_w).view(1, 1, 1, self.internal_w)
         
@@ -35,6 +34,8 @@ class ANE3DRenderer64(nn.Module):
                 R0, G0, B0_col, R1, G1, B1_col, R2, G2, B2_col,
                 p0_iz, p1_iz, p2_iz,
                 U0, V0, U1, V1, U2, V2,
+                N0, N1, N2, 
+                light_dir,  
                 processed_texture):
         
         edges0 = (A0 * self.x_grid_64ch) + (B0 * self.y_grid_64ch) + C0
@@ -46,6 +47,7 @@ class ANE3DRenderer64(nn.Module):
         mask = torch.clamp(inside_cw, min=0.0, max=1.0) * valid_mask
      
         total_area = edges0 + edges1 + edges2
+        # 元の除算の形に戻しました
         inv_total_area = 1.0 / (total_area + 1e-5)
         
         w0 = edges1 * inv_total_area
@@ -61,14 +63,31 @@ class ANE3DRenderer64(nn.Module):
         G_blend = (G0 * w0 + G1 * w1 + G2 * w2)
         B_blend = (B0 * w0 + B1 * w1 + B2 * w2)
         
+        # 法線の補間
+        Nx = N0[..., 0:1] * w0 + N1[..., 0:1] * w1 + N2[..., 0:1] * w2
+        Ny = N0[..., 1:2] * w0 + N1[..., 1:2] * w1 + N2[..., 1:2] * w2
+        Nz = N0[..., 2:3] * w0 + N1[..., 2:3] * w1 + N2[..., 2:3] * w2
+        
+        # ANE最適化: 逆平方根(rsqrt)を使って正規化の除算を回避
+        length_sq = Nx*Nx + Ny*Ny + Nz*Nz + 1e-8
+        inv_length = torch.rsqrt(length_sq)
+        Nx, Ny, Nz = Nx * inv_length, Ny * inv_length, Nz * inv_length
+        
+        # 内積計算
+        diffuse = Nx * light_dir[:, 0:1, :, :] + Ny * light_dir[:, 1:2, :, :] + Nz * light_dir[:, 2:3, :, :]
+        diffuse = torch.clamp(diffuse, min=0.0, max=1.0)
+        
+        intensity = 0.2 + 0.8 * diffuse
+        
         safe_inv_z = torch.clamp(pixel_inv_z, min=1e-4)
+        # こちらも同様に元の除算の形に戻します
         inv_z_reciprocal = 1.0 / safe_inv_z
         
         u_sampler = processed_texture * (u_gradient * inv_z_reciprocal)
         v_sampler = processed_texture * (v_gradient * inv_z_reciprocal)
         sampled_texture = torch.clamp((u_sampler + v_sampler) * 0.5, min=0.0, max=1.0)
 
-        final_color = sampled_texture * (R_blend + G_blend + B_blend)
+        final_color = sampled_texture * (R_blend + G_blend + B_blend) * intensity
 
         max_inv_z, _ = torch.max(pixel_inv_z, dim=1, keepdim=True)
         
