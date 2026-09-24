@@ -97,7 +97,7 @@ class ANERenderContext {
                 }
             }
 
-            let faces = TorusGeometry.generateFaces()
+            let faces = SphereGeometry.generateFaces()
 
             for slot in 0..<min(faces.count, 64) {
                 let face = faces[slot]
@@ -112,12 +112,20 @@ class ANERenderContext {
                     }
                 }
                 
-                // 法線のダミーデータ設定（実際にはジオメトリから計算した法線を入れます）
+                let v0 = SIMD3<Float>(Float(face[0][0]), Float(face[0][1]), Float(face[0][2]))
+                let v1 = SIMD3<Float>(Float(face[1][0]), Float(face[1][1]), Float(face[1][2]))
+                let v2 = SIMD3<Float>(Float(face[2][0]), Float(face[2][1]), Float(face[2][2]))
+
+                let edge1 = v1 - v0
+                let edge2 = v2 - v0
+                let normal = normalize(cross(edge1, edge2))
+
+                // 3つの頂点すべてに同じ面法線を設定
                 for v in 0..<3 {
                     let nIndex = (slot * 3 * 3) + (v * 3)
-                    normals[nIndex + 0] = Float16(0.0)
-                    normals[nIndex + 1] = Float16(1.0) // 上向きの法線
-                    normals[nIndex + 2] = Float16(0.0)
+                    normals[nIndex + 0] = Float16(normal.x)
+                    normals[nIndex + 1] = Float16(normal.y)
+                    normals[nIndex + 2] = Float16(normal.z)
                 }
                 
                 for i in 0..<4 {
