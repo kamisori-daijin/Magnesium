@@ -16,6 +16,8 @@ class ANERenderer {
     // MTLBuffer
     internal var expandedVerticesBuffer: MTLBuffer?
     internal var mvpWeightsBuffer: MTLBuffer?
+    internal var normalsBuffer: MTLBuffer?
+    internal var lightDirBuffer: MTLBuffer?
     internal var colorsRBuffer: MTLBuffer?
     internal var colorsGBuffer: MTLBuffer?
     internal var colorsBBuffer: MTLBuffer?
@@ -46,11 +48,15 @@ class ANERenderer {
     private func setupMetalBuffers() {
         let vCount = 1 * 64 * 4 * 3 * MemoryLayout<Float16>.stride
         let mCount = 1 * 64 * 4 * 4 * MemoryLayout<Float16>.stride
+        let nCount = 1 * 64 * 3 * 3 * MemoryLayout<Float16>.stride
+        let lCount = 1 * 64 * 1 * 1 * MemoryLayout<Float16>.stride
         let cCount = 1 * 64 * 1 * 1 * MemoryLayout<Float16>.stride
         let tCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride
         
         self.expandedVerticesBuffer = metalDevice.makeBuffer(length: vCount, options: .storageModeShared)
         self.mvpWeightsBuffer = metalDevice.makeBuffer(length: mCount, options: .storageModeShared)
+        self.normalsBuffer = metalDevice.makeBuffer(length: nCount, options: .storageModeShared)
+        self.lightDirBuffer = metalDevice.makeBuffer(length: lCount, options: .storageModeShared)
         self.colorsRBuffer = metalDevice.makeBuffer(length: cCount, options: .storageModeShared)
         self.colorsGBuffer = metalDevice.makeBuffer(length: cCount, options: .storageModeShared)
         self.colorsBBuffer = metalDevice.makeBuffer(length: cCount, options: .storageModeShared)
@@ -83,13 +89,16 @@ class ANERenderer {
         guard let canvasBuf = self.displayBuffers[0] else { return }
         
         guard let vBuf = expandedVerticesBuffer, let mBuf = mvpWeightsBuffer,
+              let nBuf = normalsBuffer, let lBuf = lightDirBuffer,
               let rBuf = colorsRBuffer, let gBuf = colorsGBuffer, let bBuf = colorsBBuffer,
               let tBuf = rawTextureBuffer else { return }
         
-        // 1.　Setup Input
+        // 1. Setup Input
         let inputs: [String: InferenceFunction.AsyncValue] = [
             "expanded_vertices": InferenceFunction.AsyncValue(unsafeBuffer: vBuf, scalarType: .float16, shape: [1, 64, 4, 3]),
             "mvp_weights": InferenceFunction.AsyncValue(unsafeBuffer: mBuf, scalarType: .float16, shape: [1, 64, 4, 4]),
+            "normals": InferenceFunction.AsyncValue(unsafeBuffer: nBuf, scalarType: .float16, shape: [1, 64, 3, 3]),
+            "light_dir": InferenceFunction.AsyncValue(unsafeBuffer: lBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
             "colors_r": InferenceFunction.AsyncValue(unsafeBuffer: rBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
             "colors_g": InferenceFunction.AsyncValue(unsafeBuffer: gBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
             "colors_b": InferenceFunction.AsyncValue(unsafeBuffer: bBuf, scalarType: .float16, shape: [1, 64, 1, 1]),

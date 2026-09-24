@@ -9,7 +9,8 @@ public protocol MGDevice: AnyObject {
     func getDisplayBuffer(index: Int) -> MTLBuffer?
     func createCameraMatrix(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> [Float16]
     
-    func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void)
+    // ここを7つの引数に修正
+    func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void)
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
@@ -46,22 +47,27 @@ internal final class MagnesiumDevice: MGDevice {
         geometry.createCameraMatrix(eye: eye, target: target, up: up)
     }
     
-    public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
-        guard let renderer = renderer,
-              let vBuf = renderer.expandedVerticesBuffer,
-              let mBuf = renderer.mvpWeightsBuffer,
-              let rBuf = renderer.colorsRBuffer,
-              let gBuf = renderer.colorsGBuffer,
-              let bBuf = renderer.colorsBBuffer else { return }
-        
-        let vPtr = vBuf.contents().assumingMemoryBound(to: Float16.self)
-        let mPtr = mBuf.contents().assumingMemoryBound(to: Float16.self)
-        let rPtr = rBuf.contents().assumingMemoryBound(to: Float16.self)
-        let gPtr = gBuf.contents().assumingMemoryBound(to: Float16.self)
-        let bPtr = bBuf.contents().assumingMemoryBound(to: Float16.self)
-        
-        body(vPtr, mPtr, rPtr, gPtr, bPtr)
-    }
+    public func withGeometryPointers(_ body: (UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>, UnsafeMutablePointer<Float16>) -> Void) {
+            guard let renderer = renderer,
+                  let vBuf = renderer.expandedVerticesBuffer,
+                  let mBuf = renderer.mvpWeightsBuffer,
+                  let nBuf = renderer.normalsBuffer,
+                  let lBuf = renderer.lightDirBuffer,
+                  let rBuf = renderer.colorsRBuffer,
+                  let gBuf = renderer.colorsGBuffer,
+                  let bBuf = renderer.colorsBBuffer else { return }
+            
+            let vPtr = vBuf.contents().assumingMemoryBound(to: Float16.self)
+            let mPtr = mBuf.contents().assumingMemoryBound(to: Float16.self)
+            let nPtr = nBuf.contents().assumingMemoryBound(to: Float16.self)
+            let lPtr = lBuf.contents().assumingMemoryBound(to: Float16.self)
+            let rPtr = rBuf.contents().assumingMemoryBound(to: Float16.self)
+            let gPtr = gBuf.contents().assumingMemoryBound(to: Float16.self)
+            let bPtr = bBuf.contents().assumingMemoryBound(to: Float16.self)
+            
+          
+            body(vPtr, mPtr, nPtr, lPtr, rPtr, gPtr, bPtr)
+        }
 }
 
 @MainActor private final class MagnesiumCommandQueue: MGCommandQueue {

@@ -70,7 +70,7 @@ class ANERenderContext {
         guard let mgDevice = self.mgDevice, !self.isComputing else { return }
         
         self.isComputing = true
-        self.angle += 0.1
+        self.angle += 0.05
         
         let radius: Float = 6.0
         let eyeX = radius * sin(self.angle)
@@ -82,7 +82,14 @@ class ANERenderContext {
             up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
-        mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
+        mgDevice.withGeometryPointers { vertices, mvpWeights, normals, lightDir, colorsR, colorsG, colorsB in
+            
+            // ライトの方向を設定 (例: 斜め上からの光)
+            lightDir[0] = Float16(0.0) // X
+            lightDir[1] = Float16(1.0) // Y
+            lightDir[2] = Float16(0.0) // Z
+            // 残りの61チャンネルは0のままでOK
+            
             for faceIdx in 0..<64 {
                 for v in 0..<3 {
                     let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
@@ -103,6 +110,14 @@ class ANERenderContext {
                         let pIndex = (slot * 4 * 3) + (ch * 3) + v
                         vertices[pIndex] = face[v][ch]
                     }
+                }
+                
+                // 法線のダミーデータ設定（実際にはジオメトリから計算した法線を入れます）
+                for v in 0..<3 {
+                    let nIndex = (slot * 3 * 3) + (v * 3)
+                    normals[nIndex + 0] = Float16(0.0)
+                    normals[nIndex + 1] = Float16(1.0) // 上向きの法線
+                    normals[nIndex + 2] = Float16(0.0)
                 }
                 
                 for i in 0..<4 {
@@ -173,8 +188,6 @@ class ANERenderContext {
         }
         
         commandBuffer.present(drawable)
-        
-        
         commandBuffer.commit()
     }
 }
