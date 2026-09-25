@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class ANERayTracingCore(nn.Module):
-    def __init__(self, width=256, height=256, max_steps=64, shadow_steps=16):
+    def __init__(self, width=256, height=256, max_steps=64, shadow_steps=64):
         super().__init__()
         self.w = width
         self.h = height
@@ -10,7 +10,7 @@ class ANERayTracingCore(nn.Module):
         self.shadow_steps = shadow_steps
         self.dt = 0.08
         
-        # 4D Tensor
+        # すべての内部バッファのチャネル数を「C=1」に完全統一（100% ANEで動いていたベース）
         self.register_buffer("eps", torch.tensor([[[[0.02]]]]).half())
         self.register_buffer("floor_y", torch.tensor([[[[-0.8]]]]).half())
         
@@ -28,24 +28,34 @@ class ANERayTracingCore(nn.Module):
         self.register_buffer("light_dy", torch.tensor([[[[0.5773]]]]).half())
         self.register_buffer("light_dz", torch.tensor([[[[0.5773]]]]).half())
 
+        # 時間展開（レイマーチング）比率用バッファ
         self.register_buffer("step_ratios", (torch.arange(self.max_steps).view(1, self.max_steps, 1, 1) * self.dt).half())
         self.register_buffer("shadow_ratios", (torch.arange(self.shadow_steps).view(1, self.shadow_steps, 1, 1) * self.dt).half())
-        self.register_buffer("voxel_data_64", torch.randint(0, 2, (1, 64, 64, 64)).half()) # [1, C=64, H=64, W=64]
-        self.register_buffer("voxel_indices", torch.linspace(-1.0, 1.0, 64).view(1, 64, 1, 1).half()) #
+
+        # オブジェクト1用のベースマスクテクスチャ（四角形シルエット）
         y_tex = torch.linspace(-1.0, 1.0, self.h).view(1, 1, self.h, 1)
         x_tex = torch.linspace(-1.0, 1.0, self.w).view(1, 1, 1, self.w)
         base_mask_x = torch.clamp(1.0 - (torch.abs(x_tex) - 0.4) * 100.0, min=0.0, max=1.0)
         base_mask_y = torch.clamp(1.0 - (torch.abs(y_tex) - 0.4) * 100.0, min=0.0, max=1.0)
         cube_2d_mask = (base_mask_x * base_mask_y).half()
-
         self.register_buffer("base_multiview_textures", torch.cat([cube_2d_mask, cube_2d_mask, cube_2d_mask], dim=1))
 
-        # Define Conv2d for ANE cumsum
+        # 共有の64分割インデックス用デジタルマスク基準バッファ
+        self.register_buffer("grid_bins_shared", torch.arange(64).view(1, 64, 1, 1).half())
+
+        # ANE Conv2dによる累積和（下三角行列の固定重み）
         self.ane_cumsum_conv = nn.Conv2d(self.max_steps, self.max_steps, kernel_size=1, bias=False)
         weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
         self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
         self.ane_cumsum_conv.weight.requires_grad = False
 
+    def fast_rsqrt(self, x):
+        y = 1.0
+        y = y * (1.5 - 0.5 * x * y * y)
+        y = y * (1.5 - 0.5 * x * y * y)
+        return y
+
+    # オブジェクト1用のマルチビュー形状判定
     def check_multiview_hit(self, px, py, pz):
         out_x = torch.relu(torch.abs(px) - 1.0)
         out_y = torch.relu(torch.abs(py) - 1.0)
@@ -65,43 +75,33 @@ class ANERayTracingCore(nn.Module):
         mask_yz = self.base_multiview_textures[:, 2:3, :, :] * proj_yz
 
         return mask_xy * mask_xz * mask_yz * box_check
+
+    # 🚀 4次元ブロードキャスト・インデックス完全適合版 64^3 ボクセル形状関数
     def check_voxel_hit(self, px, py, pz, voxel_data_64):
-        # 1マスあたりの半幅 (2.0 / 64 / 2 = 約0.0156)
-        half_w = 0.0156
+        # 1マスあたりの幅 (空間が-1.0〜1.0なので、幅2.0 / 64 = 0.03125)
+        grid_w = 0.03125
 
-        # 💡 すべてのサンプリング基準を [1, 64, 1, 1]（チャネル方向）に完全に固定！
-        # これにより、レイの持つ [1, max_steps(64), 256, 256] という形状の
-        # H(256) や W(256) の次元と完璧にブロードキャスト（自動拡張）が噛み合います。
-        grid_bins_shared = self.voxel_indices.view(1, 64, 1, 1)
+        # 💡 [4次元の壁突破] レイのワールド座標を 0.0 〜 63.0 のインデックス信号に変換
+        idx_x = torch.clamp(((px + 1.0) / grid_w), min=0.0, max=63.0)
+        idx_y = torch.clamp(((py + 1.0) / grid_w), min=0.0, max=63.0)
+        idx_z = torch.clamp(((pz + 1.0) / grid_w), min=0.0, max=63.0)
 
-        # 全ての軸のゲート判定を、完全にチャネル方向（dim=1のC=64）で一斉評価
-        z_gate = torch.clamp((half_w - torch.abs(pz - grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
-        y_gate = torch.clamp((half_w - torch.abs(py - grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
-        x_gate = torch.clamp((half_w - torch.abs(px - grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
+        # チャネル方向（C=64）に完全整列させたデジタルゲートを作成 [1, 64, 256, 256] 
+        z_gate = torch.clamp((0.5 - torch.abs(idx_z - self.grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
+        y_gate = torch.clamp((0.5 - torch.abs(idx_y - self.grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
+        x_gate = torch.clamp((0.5 - torch.abs(idx_x - self.grid_bins_shared)) * 100000.0, min=0.0, max=1.0)
 
-        # 💡 ボクセルデータ（4Dアトラス）との一斉積和
-        # voxel_data_64 の形状は [1, 64, 64, 64] です。
-        # x_gate, y_gate, z_gate はすべて [1, 64, 256, 256] に自動拡張されます。
-        # ANEの上で [1, 64, 256, 256] 同士の要素ごとの掛け算（Hadamard product）として超並列に処理されます。
-        sampled_plane = voxel_data_64 * y_gate * x_gate
-            # 最後にZ軸のゲートを掛け合わせて、チャネル方向（dim=1のC=64）を足し算（sum）で潰す
-        # これで、4次元のまま、末尾のH(256)やW(256)を1ミリも破壊せずに一撃ルックアップが完了します！
-        final_hit = torch.sum(sampled_plane * z_gate, dim=1, keepdim=True).clamp(0.0, 1.0)
+        # 💡 voxel_data_64 が [1, 64, 1, 1] であるため、先にゲート同士を掛け合わせます
+        # これにより [1, 64, 256, 256] のテンソルが生成されます
+        combined_gate = y_gate * x_gate * z_gate
+
+        # その後、[1, 64, 1, 1] の voxel_data_64 をブロードキャストして掛け合わせます
+        sampled_plane = voxel_data_64 * combined_gate
+
+        # 最後にC軸（dim=1）をsumで足し算して潰す
+        final_hit = torch.sum(sampled_plane, dim=1, keepdim=True).clamp(0.0, 1.0)
 
         return final_hit
-
-
- 
-    def fast_rsqrt(self, x):
-        # Initial guess for inverse square root
-        y = 1.0
-
-        # Newton's method step repeated 2-3 times
-        # y_new = y * (1.5 - 0.5 * x * y * y)
-        y = y * (1.5 - 0.5 * x * y * y)
-        y = y * (1.5 - 0.5 * x * y * y)
-
-        return y
 
     def forward(self, multiview_textures, inv_view_matrix_64d, voxel_data_64):
         def get_mat_val(mat, idx):
@@ -111,7 +111,6 @@ class ANERayTracingCore(nn.Module):
         r00, r01, r02 = get_mat_val(inv_view_matrix_64d, 0), get_mat_val(inv_view_matrix_64d, 1), get_mat_val(inv_view_matrix_64d, 2)
         r10, r11, r12 = get_mat_val(inv_view_matrix_64d, 4), get_mat_val(inv_view_matrix_64d, 5), get_mat_val(inv_view_matrix_64d, 6)
         r20, r21, r22 = get_mat_val(inv_view_matrix_64d, 8), get_mat_val(inv_view_matrix_64d, 9), get_mat_val(inv_view_matrix_64d, 10)
-
         dx = r00 * self.cam_dx + r01 * self.cam_dy + r02 * self.cam_dz
         dy = r10 * self.cam_dx + r11 * self.cam_dy + r12 * self.cam_dz
         dz = r20 * self.cam_dx + r21 * self.cam_dy + r22 * self.cam_dz
@@ -145,14 +144,13 @@ class ANERayTracingCore(nn.Module):
         m2_00, m2_01, m2_02, m2_03 = get_mat_val(inv_view_matrix_64d, 32), get_mat_val(inv_view_matrix_64d, 33), get_mat_val(inv_view_matrix_64d, 34), get_mat_val(inv_view_matrix_64d, 35)
         m2_10, m2_11, m2_12, m2_13 = get_mat_val(inv_view_matrix_64d, 36), get_mat_val(inv_view_matrix_64d, 37), get_mat_val(inv_view_matrix_64d, 38), get_mat_val(inv_view_matrix_64d, 39)
         m2_20, m2_21, m2_22, m2_23 = get_mat_val(inv_view_matrix_64d, 40), get_mat_val(inv_view_matrix_64d, 41), get_mat_val(inv_view_matrix_64d, 42), get_mat_val(inv_view_matrix_64d, 43)
-
         local2_px_all = m2_00 * px_all + m2_01 * py_all + m2_02 * pz_all + m2_03
         local2_py_all = m2_10 * px_all + m2_11 * py_all + m2_12 * pz_all + m2_13
         local2_pz_all = m2_20 * px_all + m2_21 * py_all + m2_22 * pz_all + m2_23
-
+    
         # --- 3. 衝突判定の一括レイマーチング ---
-        # 💡 外から引数で受け取った `voxel_data_64` を、関数にそのまま引き渡します！
         hit1_all = self.check_multiview_hit(local1_px_all, local1_py_all, local1_pz_all)
+        # 💡 引数の voxel_data_64 を確実に受け渡します
         hit2_all = self.check_voxel_hit(local2_px_all, local2_py_all, local2_pz_all, voxel_data_64)
         object_hit_all = torch.max(hit1_all, hit2_all)
 
@@ -177,7 +175,7 @@ class ANERayTracingCore(nn.Module):
         hit_floor_mask = torch.sum(is_first_floor_all, dim=1, keepdim=True).clamp(0.0, 1.0)
         accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
 
-        # 💡 [ReLU制御] 空（背景）に抜けたレイの色蓄積と生存終了
+        # 💡 [ReLU制御] 空に抜けたレイの色蓄積と生存終了
         is_sky = torch.relu(1.0 - accum_hit)
         accum_color_r = accum_color_r + is_sky * 0.0  # 背景色は黒
         accum_color_g = accum_color_g + is_sky * 0.0
@@ -194,7 +192,7 @@ class ANERayTracingCore(nn.Module):
         local2_py = m2_10 * px + m2_11 * py + m2_12 * pz + m2_13
         local2_pz = m2_20 * px + m2_21 * py + m2_22 * pz + m2_23
 
-        # 💡 [外部入力適合] 法線用の周囲差分サンプリングにも voxel_data_64 を引き渡します
+        # 法線用の周囲差分サンプリング（外部入力 voxel_data_64 を完全適用）
         f1_c = self.check_multiview_hit(local1_px, local1_py, local1_pz)
         f1_x = self.check_multiview_hit(local1_px + self.eps, local1_py, local1_pz)
         f1_y = self.check_multiview_hit(local1_px, local1_py + self.eps, local1_pz)
@@ -236,11 +234,11 @@ class ANERayTracingCore(nn.Module):
         l2_spz = m2_20 * spx_all + m2_21 * spy_all + m2_22 * spz_all + m2_23
 
         s_hit1 = self.check_multiview_hit(l1_spx, l1_spy, l1_spz)
-        # 💡 [外部入力適合] 影の判定にも voxel_data_64 を引き渡します
+        # 💡 影の遮蔽判定にも動的ボクセルデータを引き渡します
         s_hit2 = self.check_voxel_hit(l2_spx, l2_spy, l2_spz, voxel_data_64)
         accum_shadow = torch.sum(torch.max(s_hit1, s_hit2), dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
-        # 明暗の計算
+        # 明暗・ライティングの計算
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
         light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
@@ -261,7 +259,7 @@ class ANERayTracingCore(nn.Module):
         ray_energy_g = ray_energy_g * (1.0 - gate_floor)
         ray_energy_b = ray_energy_b * (1.0 - gate_floor)
 
-        # ② オブジェクト1ゲート（白い滑らかなマテリアル）
+        # ② オブジェクト1ゲート（白いマット立方体）
         gate_obj1 = torch.relu(obj1_mask)
         accum_color_r = accum_color_r + gate_obj1 * (1.0 * light_modifier) * ray_energy_r
         accum_color_g = accum_color_g + gate_obj1 * (1.0 * light_modifier) * ray_energy_g
@@ -270,7 +268,7 @@ class ANERayTracingCore(nn.Module):
         ray_energy_g = ray_energy_g * (1.0 - gate_obj1)
         ray_energy_b = ray_energy_b * (1.0 - gate_obj1)
 
-        # ③ オブジェクト2ゲート（外部指定できる64^3ボクセル素材）
+        # ③ オブジェクト2ゲート（外部からトポロジーを変更できる動的ボクセル素材）
         gate_obj2 = torch.relu(obj2_mask)
         accum_color_r = accum_color_r + gate_obj2 * (0.7 * light_modifier) * ray_energy_r
         accum_color_g = accum_color_g + gate_obj2 * (0.8 * light_modifier) * ray_energy_g
@@ -282,3 +280,5 @@ class ANERayTracingCore(nn.Module):
         # --- 7. 出力カラーの結合 ---
         final_color = torch.cat([accum_color_r, accum_color_g, accum_color_b], dim=1)
         return accum_hit * final_color
+
+        

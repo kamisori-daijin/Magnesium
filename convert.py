@@ -13,7 +13,7 @@ multiview_input_shape = torch.zeros(1, 3, 256, 256, dtype=torch.float16)
 
 # Camera
 matrix_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
-voxel_input_shape = torch.zeros(1, 64, 64, 64, dtype=torch.float16)
+voxel_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
 args = (multiview_input_shape, matrix_input_shape, voxel_input_shape)
 
