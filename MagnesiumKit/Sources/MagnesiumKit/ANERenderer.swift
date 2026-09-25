@@ -162,7 +162,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_352")
+        outputViews.insert(&asyncOutputValue, for: "mul_382")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         

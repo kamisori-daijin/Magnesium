@@ -80,6 +80,7 @@ class ANERayTracingCore(nn.Module):
         def get_mat_val(mat, idx):
             return mat[:, idx:idx+1, :, :]
 
+        # --- 1. カメラレイの生成 ---
         r00, r01, r02 = get_mat_val(inv_view_matrix_64d, 0), get_mat_val(inv_view_matrix_64d, 1), get_mat_val(inv_view_matrix_64d, 2)
         r10, r11, r12 = get_mat_val(inv_view_matrix_64d, 4), get_mat_val(inv_view_matrix_64d, 5), get_mat_val(inv_view_matrix_64d, 6)
         r20, r21, r22 = get_mat_val(inv_view_matrix_64d, 8), get_mat_val(inv_view_matrix_64d, 9), get_mat_val(inv_view_matrix_64d, 10)
@@ -90,13 +91,23 @@ class ANERayTracingCore(nn.Module):
 
         inv_len = self.fast_rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
         init_dx, init_dy, init_dz = dx * inv_len, dy * inv_len, dz * inv_len
-
         init_px, init_py, init_pz = get_mat_val(inv_view_matrix_64d, 3), get_mat_val(inv_view_matrix_64d, 7), get_mat_val(inv_view_matrix_64d, 11)
 
+        # 💡 [ReLU制御] レイの状態（エネルギーと生存フラグ）を初期化
+        # 最初は全員1.0（生存・100%のエネルギー）
+        ray_energy_r = self.ONES
+        ray_energy_g = self.ONES
+        ray_energy_b = self.ONES
+        accum_color_r = self.ZEROS
+        accum_color_g = self.ZEROS
+        accum_color_b = self.ZEROS
+
+        # 空間展開用のベース座標
         px_all = init_px + init_dx * self.step_ratios
         py_all = init_py + init_dy * self.step_ratios
         pz_all = init_pz + init_dz * self.step_ratios
 
+        # --- 2. オブジェクト空間へのトランスフォーム ---
         m1_00, m1_01, m1_02, m1_03 = get_mat_val(inv_view_matrix_64d, 16), get_mat_val(inv_view_matrix_64d, 17), get_mat_val(inv_view_matrix_64d, 18), get_mat_val(inv_view_matrix_64d, 19)
         m1_10, m1_11, m1_12, m1_13 = get_mat_val(inv_view_matrix_64d, 20), get_mat_val(inv_view_matrix_64d, 21), get_mat_val(inv_view_matrix_64d, 22), get_mat_val(inv_view_matrix_64d, 23)
         m1_20, m1_21, m1_22, m1_23 = get_mat_val(inv_view_matrix_64d, 24), get_mat_val(inv_view_matrix_64d, 25), get_mat_val(inv_view_matrix_64d, 26), get_mat_val(inv_view_matrix_64d, 27)
@@ -113,6 +124,7 @@ class ANERayTracingCore(nn.Module):
         local2_py_all = m2_10 * px_all + m2_11 * py_all + m2_12 * pz_all + m2_13
         local2_pz_all = m2_20 * px_all + m2_21 * py_all + m2_22 * pz_all + m2_23
 
+        # --- 3. 衝突判定の累積和演算 ---
         hit1_all = self.check_multiview_hit(local1_px_all, local1_py_all, local1_pz_all)
         hit2_all = self.check_multiview_hit(local2_px_all, local2_py_all, local2_pz_all)
         object_hit_all = torch.max(hit1_all, hit2_all)
@@ -120,23 +132,32 @@ class ANERayTracingCore(nn.Module):
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
-        # Run Conv2d for ANE cumsum
         cum_hit = self.ane_cumsum_conv(any_hit_all)
-
         prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
         not_hit_yet_all = torch.clamp(1.0 - prior_hit, min=0.0, max=1.0)
 
         is_first_object_all = not_hit_yet_all * object_hit_all
         is_first_floor_all = not_hit_yet_all * (1.0 - object_hit_all) * floor_hit_all
 
-        hit_object_mask = torch.sum(is_first_object_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-        hit_floor_mask = torch.sum(is_first_floor_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-        accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
-
+        # ファーストヒットのワールド座標（縮退）
         px = torch.sum(is_first_object_all * px_all + is_first_floor_all * px_all, dim=1, keepdim=True)
         py = torch.sum(is_first_object_all * py_all + is_first_floor_all * py_all, dim=1, keepdim=True)
         pz = torch.sum(is_first_object_all * pz_all + is_first_floor_all * pz_all, dim=1, keepdim=True)
 
+        # マスクの確定
+        hit_object_mask = torch.sum(is_first_object_all, dim=1, keepdim=True).clamp(0.0, 1.0)
+        hit_floor_mask = torch.sum(is_first_floor_all, dim=1, keepdim=True).clamp(0.0, 1.0)
+        accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
+
+        # 💡 [ReLU制御] 空（背景）に抜けたレイのゲートを作成
+        # 当たらなかったピクセル（1.0 - accum_hit）だけを通過させ、背景色（黒）を足してレイを終了させる
+        is_sky = torch.relu(1.0 - accum_hit)
+        accum_color_r = accum_color_r + is_sky * 0.0
+        accum_color_g = accum_color_g + is_sky * 0.0
+        accum_color_b = accum_color_b + is_sky * 0.0
+        ray_energy_r = ray_energy_r * (1.0 - is_sky) # 空に当たったレイはエネルギー0（死亡）
+
+        # --- 4. 法線とシャドウの計算 ---
         local1_px = m1_00 * px + m1_01 * py + m1_02 * pz + m1_03
         local1_py = m1_10 * px + m1_11 * py + m1_12 * pz + m1_13
         local1_pz = m1_20 * px + m1_21 * py + m1_22 * pz + m1_23
@@ -157,7 +178,7 @@ class ANERayTracingCore(nn.Module):
         raw_nx2, raw_ny2, raw_nz2 = f2_c - f2_x, f2_c - f2_y, f2_c - f2_z
 
         world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_10 * raw_ny1 + m1_20 * raw_nz1) + obj2_mask * (m2_00 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
-        world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_11 * raw_ny2 + m2_21 * raw_nz2)
+        world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
         world_nz = obj1_mask * (m1_02 * raw_nx1 + m1_12 * raw_ny1 + m1_22 * raw_nz1) + obj2_mask * (m2_02 * raw_nx2 + m2_12 * raw_ny2 + m2_22 * raw_nz2)
 
         inv_true_n_len = self.fast_rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
@@ -166,6 +187,7 @@ class ANERayTracingCore(nn.Module):
         first_ny = hit_object_mask * (world_ny * inv_true_n_len) + hit_floor_mask * 1.0
         first_nz = hit_object_mask * (world_nz * inv_true_n_len)
 
+        # シャドウレイ
         shadow_start_x, shadow_start_y, shadow_start_z = px + 0.04 * self.light_dx, py + 0.04 * self.light_dy, pz + 0.04 * self.light_dz
         spx_all = shadow_start_x + self.light_dx * self.shadow_ratios
         spy_all = shadow_start_y + self.light_dy * self.shadow_ratios
@@ -183,19 +205,52 @@ class ANERayTracingCore(nn.Module):
         s_hit2 = self.check_multiview_hit(l2_spx, l2_spy, l2_spz)
         accum_shadow = torch.sum(torch.max(s_hit1, s_hit2), dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
+        # シェーディング（明暗係数）
         diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
         shading = torch.relu(diffuse) + 0.15
+        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
 
+        # 床のチェッカーボード
         sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
         sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
         checker = (sign_x * sign_z + 1.0) * 0.5
-        floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
 
-        obj1_color = obj1_mask * self.ONES
-        rgb_object_color = torch.cat([obj1_color + obj2_mask * 0.7, obj1_color + obj2_mask * 0.8, obj1_color + obj2_mask * 1.0], dim=1)
-        rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
+        # 💡 [ReLU制御] マテリアルゲートによる色の段階的な蓄積（インクリメンタル加算）
+        # 各材質のゲート条件をReLUで作り、レイのエネルギーを掛け合わせてメインカラーに直接足し算する
 
-        base_color = rgb_object_color + rgb_floor_color
-        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
+        # ① 床ゲート
+        gate_floor = torch.relu(hit_floor_mask)
+        mat_floor_color = 0.3 + 0.2 * checker
+        accum_color_r = accum_color_r + gate_floor * (mat_floor_color * light_modifier) * ray_energy_r
+        accum_color_g = accum_color_g + gate_floor * (mat_floor_color * light_modifier) * ray_energy_r
+        accum_color_b = accum_color_b + gate_floor * (mat_floor_color * light_modifier) * ray_energy_r
+        ray_energy_r = ray_energy_r * (1.0 - gate_floor) # 床に当たったら光を全吸収してレイ終了
 
-        return accum_hit * base_color * light_modifier
+        # ② オブジェクト1ゲート（白いマット球）
+        gate_obj1 = torch.relu(obj1_mask)
+        accum_color_r = accum_color_r + gate_obj1 * (1.0 * light_modifier) * ray_energy_r
+        accum_color_g = accum_color_g + gate_obj1 * (1.0 * light_modifier) * ray_energy_g
+        accum_color_b = accum_color_b + gate_obj1 * (1.0 * light_modifier) * ray_energy_b
+        ray_energy_r = ray_energy_r * (1.0 - gate_obj1) # マット素材なのでレイ終了
+
+        # ③ オブジェクト2ゲート（水色球 → ここを次のステップで鏡面反射に変更可能！）
+        gate_obj2 = torch.relu(obj2_mask)
+        # ③ オブジェクト2ゲート（水色球 → ここを次のステップで鏡面反射に変更可能！）
+        gate_obj2 = torch.relu(obj2_mask)
+        accum_color_r = accum_color_r + gate_obj2 * (0.7 * light_modifier) * ray_energy_r
+        accum_color_g = accum_color_g + gate_obj2 * (0.8 * light_modifier) * ray_energy_g
+        accum_color_b = accum_color_b + gate_obj2 * (1.0 * light_modifier) * ray_energy_b
+        
+        # 💡 [次のバウンスへの布石] 
+        # メタル（鏡面反射）にする場合は、エネルギーを0にせず「0.9」などを掛け算して
+        # 生存させたまま次の反射レイ（2次レイ）の計算へ繋ぎます
+        ray_energy_r = ray_energy_r * (1.0 - gate_obj2)
+        ray_energy_g = ray_energy_g * (1.0 - gate_obj2)
+        ray_energy_b = ray_energy_b * (1.0 - gate_obj2)
+
+        # --- 8. 最終出力カラーの結合とリターン ---
+        # ANEに載せるため、最後にRGBの3チャネルを結合して出力します
+        final_color = torch.cat([accum_color_r, accum_color_g, accum_color_b], dim=1)
+
+        # 最初にオブジェクトか床のどちらかに当たっていれば描画（accum_hitを乗算）
+        return accum_hit * final_color
