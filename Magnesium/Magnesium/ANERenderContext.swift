@@ -94,6 +94,15 @@ class ANERenderContext {
             time: currentAngle
         )
 
+        // 追加: ボクセルデータの動的更新
+        mgDevice.withVoxelDataPointer { pointer in
+            for i in 0..<64 {
+                // 時間とインデックスに基づいて動的に値を変更する例
+                let wave = sin(currentAngle * 2.0 + Float(i) * 0.1)
+                pointer[i] = Float16(wave > 0.0 ? 1.0 : 0.0)
+            }
+        }
+
         guard let mgCommandQueue = self.mgCommandQueue,
               let mgCommandBuffer = mgCommandQueue.makeCommandBuffer() else {
             self.isComputing = false
@@ -127,7 +136,6 @@ class ANERenderContext {
         if let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             renderEncoder.setRenderPipelineState(pipeline)
 
-            // Get Current Buffer
             if let singleDisplayBuffer = mgDevice.getCurrentDisplayBuffer() {
                 renderEncoder.setFragmentBuffer(singleDisplayBuffer, offset: 0, index: 0)
                 renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)

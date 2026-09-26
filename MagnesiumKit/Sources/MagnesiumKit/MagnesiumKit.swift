@@ -12,6 +12,7 @@ public protocol MGDevice: AnyObject {
     
     func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float)
     func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
+    func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) // 追加
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
@@ -55,6 +56,15 @@ internal final class MagnesiumDevice: MGDevice {
               let texBuf = renderer.multiviewTextureBuffer else { return }
         
         let rawPointer = texBuf.contents().assumingMemoryBound(to: Float16.self)
+        body(rawPointer)
+    }
+
+    // 追加: ボクセルデータへのアクセスメソッド
+    public func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
+        guard let renderer = renderer,
+              let voxelBuf = renderer.voxelBuffer else { return }
+        
+        let rawPointer = voxelBuf.contents().assumingMemoryBound(to: Float16.self)
         body(rawPointer)
     }
 }

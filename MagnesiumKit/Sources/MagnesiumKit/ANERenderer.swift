@@ -2,6 +2,7 @@
 //  ANERenderer.swift
 //  Magnesium
 //
+
 import Foundation
 import CoreAI
 import Metal
@@ -14,6 +15,7 @@ class ANERenderer {
     
     internal var cameraMatrixBuffer: MTLBuffer?
     internal var multiviewTextureBuffer: MTLBuffer?
+    internal var voxelBuffer: MTLBuffer?
     
     // Double Buffering
     private(set) var displayBuffers: [MTLBuffer] = []
@@ -22,9 +24,10 @@ class ANERenderer {
     private var metalHeap: MTLHeap?
     private let metalDevice: MTLDevice
     
-    private let matrixByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes
-    private let textureByteCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
-    private let outputImageByteCount = 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
+    private let matrixByteCount = 64 * MemoryLayout<Float16>.stride
+    private let textureByteCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride
+    private let voxelByteCount = 64 * MemoryLayout<Float16>.stride
+    private let outputImageByteCount = 3 * 256 * 256 * MemoryLayout<Float16>.stride
     
     let sharedComputeStream: ComputeStream!
     
@@ -42,13 +45,46 @@ class ANERenderer {
     }
 
     private func setupMetalBuffers() {
-        self.cameraMatrixBuffer = metalDevice.makeBuffer(length: matrixByteCount, options: .storageModeShared)
-        self.multiviewTextureBuffer = metalDevice.makeBuffer(length: textureByteCount, options: .storageModeShared)
+        let alignment = 16384
         
-        // two Buffer
+        func alignedSize(_ size: Int) -> Int {
+            return (size + alignment - 1) & ~(alignment - 1)
+        }
+        
+        let alignedMatrixSize = alignedSize(matrixByteCount)
+        let alignedTextureSize = alignedSize(textureByteCount)
+        let alignedVoxelSize = alignedSize(voxelByteCount)
+        let alignedOutputSize = alignedSize(outputImageByteCount)
+        
+        let totalHeapSize = alignedMatrixSize + alignedTextureSize + alignedVoxelSize + (alignedOutputSize * 2)
+        
+        let heapDescriptor = MTLHeapDescriptor()
+        heapDescriptor.size = totalHeapSize
+        heapDescriptor.storageMode = .shared
+        heapDescriptor.hazardTrackingMode = .untracked
+        heapDescriptor.type = .placement
+        
+        guard let heap = metalDevice.makeHeap(descriptor: heapDescriptor) else {
+            print("Failed to create MTLHeap")
+            return
+        }
+        self.metalHeap = heap
+        
+        var currentOffset = 0
+        
+        func makeAlignedBuffer(size: Int, alignedSize: Int) -> MTLBuffer? {
+            let buffer = heap.makeBuffer(length: size, options: .storageModeShared, offset: currentOffset)
+            currentOffset += alignedSize
+            return buffer
+        }
+        
+        self.cameraMatrixBuffer = makeAlignedBuffer(size: matrixByteCount, alignedSize: alignedMatrixSize)
+        self.multiviewTextureBuffer = makeAlignedBuffer(size: textureByteCount, alignedSize: alignedTextureSize)
+        self.voxelBuffer = makeAlignedBuffer(size: voxelByteCount, alignedSize: alignedVoxelSize)
+        
         self.displayBuffers = []
         for _ in 0..<2 {
-            if let buffer = metalDevice.makeBuffer(length: outputImageByteCount, options: .storageModeShared) {
+            if let buffer = makeAlignedBuffer(size: outputImageByteCount, alignedSize: alignedOutputSize) {
                 self.displayBuffers.append(buffer)
             }
         }
@@ -56,6 +92,10 @@ class ANERenderer {
         if let tPtr = multiviewTextureBuffer?.contents().assumingMemoryBound(to: Float16.self) {
             let count = 1 * 3 * 256 * 256
             for i in 0..<count { tPtr[i] = 1.0 }
+        }
+        
+        if let vPtr = voxelBuffer?.contents().assumingMemoryBound(to: Float16.self) {
+            for i in 0..<64 { vPtr[i] = 1.0 }
         }
     }
 
@@ -75,7 +115,6 @@ class ANERenderer {
         let viewMatrix = matrix_multiply(R, T)
         let invView = viewMatrix.inverse
         
-        // Object 1
         let rotAngle1 = time * 1.5
         let scaleY1 = 1.0 + sin(time * 3.0) * 0.3
         var modelRot1 = matrix_identity_float4x4
@@ -88,7 +127,6 @@ class ANERenderer {
         let modelMatrix1 = matrix_multiply(modelTrans1, matrix_multiply(modelRot1, modelScale1))
         let invModel1 = modelMatrix1.inverse
         
-        // Object 2
         let rotAngle2 = -time * 2.0
         let posY2 = 0.1 + abs(sin(time * 4.0)) * 0.4
         var modelRot2 = matrix_identity_float4x4
@@ -101,7 +139,6 @@ class ANERenderer {
         
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-        // Write Row Data
         pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
         pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
         pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
@@ -133,7 +170,6 @@ class ANERenderer {
         zeroPointer.initialize(repeating: 0, count: 16)
     }
 
-    // Get Current Buffer
     func getCurrentDisplayBuffer() -> MTLBuffer? {
         guard !displayBuffers.isEmpty else { return nil }
         return displayBuffers[currentBufferIndex]
@@ -143,17 +179,19 @@ class ANERenderer {
         guard let raytracer = raytracerFunction,
               let matrixBuf = self.cameraMatrixBuffer,
               let texBuf = self.multiviewTextureBuffer,
+              let voxelBuf = self.voxelBuffer,
               !displayBuffers.isEmpty else { return }
         
-        // Set for Write destination buffer
         let canvasBuf = displayBuffers[currentBufferIndex]
 
         let asyncTex = InferenceFunction.AsyncValue(unsafeBuffer: texBuf, scalarType: .float16, shape:[1,3,256,256])
         let asyncMat = InferenceFunction.AsyncValue(unsafeBuffer: matrixBuf, scalarType: .float16, shape:[1,64,1,1])
+        let asyncVoxel = InferenceFunction.AsyncValue(unsafeBuffer: voxelBuf, scalarType: .float16, shape:[1,64,1,1])
         
         let inputs: [String: InferenceFunction.AsyncValue] = [
             "multiview_textures": asyncTex,
-            "inv_view_matrix_64d": asyncMat
+            "inv_view_matrix_64d": asyncMat,
+            "voxel_data_64": asyncVoxel
         ]
         
         var outputViews = InferenceFunction.AsyncMutableViews()
@@ -162,11 +200,10 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_382")
+        outputViews.insert(&asyncOutputValue, for: "mul_328")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         
-        // Set Next Bufffer
         currentBufferIndex = (currentBufferIndex + 1) % displayBuffers.count
     }
 }
