@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import numpy as np
+from PIL import Image
 
 from coreai.authoring import AIModelAsset
 from coreai.runtime import InferenceFunction, NDArray
@@ -20,7 +21,7 @@ def create_colliding_galaxies(num_channels=128, size=128):
     vel_y = np.zeros((1, num_channels, size, size), dtype=np.float32)
     vel_z = np.zeros((1, num_channels, size, size), dtype=np.float32)
     
-    # すべての星の質量（均一に 1.0 に設定、中心のブラックホールだけ重くするなども可能）
+    # すべての星の質量（均一に 1.0 に設定）
     mass = np.ones((1, num_channels, size, size), dtype=np.float32) * 1.0
 
     # 210万個をフラットに扱って初期位置と回転速度を計算
@@ -79,7 +80,7 @@ async def main():
     print("Creating initial positions and velocities for 2 Colliding Galaxies...")
     px, py, pz, vx, vy, vz, mass = create_colliding_galaxies()
     
-    # あなたのハック思想通り、dtも完全横並び形状で初期化
+    # dtも完全横並び形状で初期化
     dt = np.full((1, 128, 128, 128), 0.02, dtype=np.float16)
 
     async with engine_asset.executable() as engine_model:
@@ -89,9 +90,8 @@ async def main():
         print("\n=== Start 4.4 Trillion Interactions ANE Loop ===")
         print("Running 10 frames of cosmic evolution test...")
         
-        # 💡 [ループ完全追放の実感] 
-        # モデルの内部からはループを完全に追放したため、
-        # アプリ側のこの短いタイムループが1回まわるたびに、210万×210万の全相互作用が一撃で完了します！
+        # 💡 モデルの内部で形状が [1, 128, 128, 128] に復元されて返ってくるため、
+        # 2周目以降も形状不一致のエラーを起こさず安全に回り続けます
         for frame in range(1, 11):
             inputs = {
                 "all_pos_x": NDArray(px),
@@ -108,19 +108,53 @@ async def main():
             outputs = await gravity_function(inputs)
             
             # 各出力ポートから、3本セパレートのまま次のフレームのデータを引き出す
-            # 💡 パディング排除（Valid Conv）仕様のため、出力形状は [1, 128, 65, 65] に綺麗に収縮しています
-            px = outputs[gravity_function.desc.output_names[0]].numpy()
-            py = outputs[gravity_function.desc.output_names[1]].numpy()
-            pz = outputs[gravity_function.desc.output_names[2]].numpy()
-            vx = outputs[gravity_function.desc.output_names[3]].numpy()
-            vy = outputs[gravity_function.desc.output_names[4]].numpy()
-            vz = outputs[gravity_function.desc.output_names[5]].numpy()
+            out_names = gravity_function.desc.output_names
+            px = outputs[out_names[0]].numpy()
+            py = outputs[out_names[1]].numpy()
+            pz = outputs[out_names[2]].numpy()
+            vx = outputs[out_names[3]].numpy()
+            vy = outputs[out_names[4]].numpy()
+            vz = outputs[out_names[5]].numpy()
 
-            # パフォーマンスデバッグとして、宇宙の中心付近の星の位置をトラッキング
+            # 宇宙の中心付近の星の位置をトラッキング
             print(f" Frame [{frame:02d}] ANE Physics Done. Star 0 Position -> X: {px[0, 0, 0, 0]:.4f}, Y: {py[0, 0, 0, 0]:.4f}, Z: {pz[0, 0, 0, 0]:.4f}")
 
         print("\n✨ Simulation Loop finished successfully on Apple Neural Engine!")
-        print(f"Final valid particle matrix shape: {px.shape} (Perfectly fitted to ANE NEU layout)")
+        print(f"Final shape: {px.shape} (Perfect 4D Tensor format)")
+
+        # -------------------------------------------------------------------------
+        # 📸 最終フレームの210万天体データを2D平面にプロットして画像保存
+        # -------------------------------------------------------------------------
+        print("\n📸 Rendering 2.1 Million Particles into PNG image...")
+        
+        # 256x256 の真っ黒なキャンバスを用意
+        canvas = np.zeros((256, 256), dtype=np.float32)
+        
+        # モデル内部の slice_update で書き戻した、有効な左上65x65領域の星屑（計528,125個）を抽出
+        stars_x = px[0, :, :65, :65].ravel()
+        stars_y = py[0, :, :65, :65].ravel()
+        
+        # 宇宙空間の座標（-1.0 〜 1.0）を、画像平面のピクセルインデックス（0 〜 255）に一斉変換
+        screen_x = ((stars_x + 1.0) * 127.5).astype(np.int32)
+        screen_y = ((stars_y + 1.0) * 127.5).astype(np.int32)
+        
+        # 画面の範囲内（0〜255）に収まっている星だけを抽出
+        valid_indices = (screen_x >= 0) & (screen_x < 256) & (screen_y >= 0) & (screen_y < 256)
+        plot_x = screen_x[valid_indices]
+        plot_y = screen_y[valid_indices]
+        
+        # 同じピクセルに星が密集するほど輝度が累積（np.add.at で超並列加算）
+        np.add.at(canvas, (plot_y, plot_x), 0.1)
+        
+        # 輝度を 0.0 〜 1.0 にクランプして、8bitの白黒画像（0〜255）に変換
+        final_img_data = (np.clip(canvas, 0.0, 1.0) * 255).astype(np.uint8)
+        
+        # PNGとしてカレントディレクトリに保存
+        output_img_path = "ane_galaxy_collision_final.png"
+        Image.fromarray(final_img_data, 'L').save(output_img_path)
+        
+        print(f"✨ Cosmic Snapshot saved successfully!: `{output_img_path}`")
+        print(f"Total stars plotted on screen: {len(plot_x)} / {len(stars_x)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
