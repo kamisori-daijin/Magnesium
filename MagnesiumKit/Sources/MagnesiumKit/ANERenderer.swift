@@ -26,6 +26,7 @@ class ANERenderer {
     
     private let metalDevice: MTLDevice
     private let layerByteCount = 1 * 1 * 1024 * 1024 * 2 // Float16 for 1024x1024
+    private let maxPolygons = 256
     
     let sharedComputeStream: ComputeStream!
     
@@ -44,9 +45,9 @@ class ANERenderer {
     }
 
     private func setupMetalBuffers() {
-        let vCount = 1 * 64 * 4 * 3 * MemoryLayout<Float16>.stride
-        let mCount = 1 * 64 * 4 * 4 * MemoryLayout<Float16>.stride
-        let cCount = 1 * 64 * 1 * 1 * MemoryLayout<Float16>.stride
+        let vCount = 1 * maxPolygons * 4 * 3 * MemoryLayout<Float16>.stride
+        let mCount = 1 * maxPolygons * 4 * 4 * MemoryLayout<Float16>.stride
+        let cCount = 1 * maxPolygons * 1 * 1 * MemoryLayout<Float16>.stride
         let tCount = 1 * 3 * 256 * 256 * MemoryLayout<Float16>.stride
         
         self.expandedVerticesBuffer = metalDevice.makeBuffer(length: vCount, options: .storageModeShared)
@@ -88,11 +89,11 @@ class ANERenderer {
         
         // 1.　Setup Input
         let inputs: [String: InferenceFunction.AsyncValue] = [
-            "expanded_vertices": InferenceFunction.AsyncValue(unsafeBuffer: vBuf, scalarType: .float16, shape: [1, 64, 4, 3]),
-            "mvp_weights": InferenceFunction.AsyncValue(unsafeBuffer: mBuf, scalarType: .float16, shape: [1, 64, 4, 4]),
-            "colors_r": InferenceFunction.AsyncValue(unsafeBuffer: rBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
-            "colors_g": InferenceFunction.AsyncValue(unsafeBuffer: gBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
-            "colors_b": InferenceFunction.AsyncValue(unsafeBuffer: bBuf, scalarType: .float16, shape: [1, 64, 1, 1]),
+            "expanded_vertices": InferenceFunction.AsyncValue(unsafeBuffer: vBuf, scalarType: .float16, shape: [1, maxPolygons, 4, 3]),
+            "mvp_weights": InferenceFunction.AsyncValue(unsafeBuffer: mBuf, scalarType: .float16, shape: [1, maxPolygons, 4, 4]),
+            "colors_r": InferenceFunction.AsyncValue(unsafeBuffer: rBuf, scalarType: .float16, shape: [1, maxPolygons, 1, 1]),
+            "colors_g": InferenceFunction.AsyncValue(unsafeBuffer: gBuf, scalarType: .float16, shape: [1, maxPolygons, 1, 1]),
+            "colors_b": InferenceFunction.AsyncValue(unsafeBuffer: bBuf, scalarType: .float16, shape: [1, maxPolygons, 1, 1]),
             "raw_image": InferenceFunction.AsyncValue(unsafeBuffer: tBuf, scalarType: .float16, shape: [1, 3, 256, 256])
         ]
         

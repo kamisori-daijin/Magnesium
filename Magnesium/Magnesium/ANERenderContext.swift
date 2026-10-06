@@ -25,6 +25,7 @@ class ANERenderContext {
     var isComputing = false
     
     var activeDevice: MTLDevice?
+    private let maxPolygons = 256
     
     init() {}
     
@@ -67,82 +68,87 @@ class ANERenderContext {
     }
 
     func update() {
-        guard let mgDevice = self.mgDevice, !self.isComputing else { return }
-        
-        self.isComputing = true
-        self.angle += 0.1
-        
-        let radius: Float = 6.0
-        let eyeX = radius * sin(self.angle)
-        let eyeZ = radius * cos(self.angle)
-        
-        let cameraMatrix = mgDevice.createCameraMatrix(
-            eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
-            target: SIMD3<Float>(0.0, 0.0, 0.0),
-            up: SIMD3<Float>(0.0, 1.0, 0.0)
-        )
+            guard let mgDevice = self.mgDevice, !self.isComputing else { return }
+            
+            self.isComputing = true
+            self.angle += 0.1
+            
+            let radius: Float = 6.0
+            let eyeX = radius * sin(self.angle)
+            let eyeZ = radius * cos(self.angle)
+            
+            let cameraMatrix = mgDevice.createCameraMatrix(
+                eye: SIMD3<Float>(eyeX, 4.0, eyeZ),
+                target: SIMD3<Float>(0.0, 0.0, 0.0),
+                up: SIMD3<Float>(0.0, 1.0, 0.0)
+            )
 
-        mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
-            for faceIdx in 0..<64 {
-                for v in 0..<3 {
-                    let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
-                    vertices[wIndex] = 1.0
-                }
-            }
+            // ポリゴン数を256に設定
+            let maxPolygons = 256
 
-            let faces = TorusGeometry.generateFaces()
-
-            for slot in 0..<min(faces.count, 64) {
-                let face = faces[slot]
-                colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
-                colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
-                colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
-                
-                for ch in 0..<4 {
+            mgDevice.withGeometryPointers { vertices, mvpWeights, colorsR, colorsG, colorsB in
+                // 1. バッファの初期化 (W成分を1.0に設定)
+                for faceIdx in 0..<maxPolygons {
                     for v in 0..<3 {
-                        let pIndex = (slot * 4 * 3) + (ch * 3) + v
-                        vertices[pIndex] = face[v][ch]
+                        let wIndex = (faceIdx * 4 * 3) + (3 * 3) + v
+                        vertices[wIndex] = 1.0
                     }
                 }
-                
-                for i in 0..<4 {
-                    for j in 0..<4 {
-                        let mIndex = (slot * 4 * 4) + (i * 4) + j
-                        mvpWeights[mIndex] = cameraMatrix[i * 4 + j]
+
+                let faces = TorusGeometry.generateFaces()
+
+                // 2. ジオメトリデータの書き込み (最大256ポリゴンまで)
+                for slot in 0..<min(faces.count, maxPolygons) {
+                    let face = faces[slot]
+                    colorsR[slot] = Float16(slot % 3 == 0 ? 1.0 : 0.0)
+                    colorsG[slot] = Float16(slot % 3 == 1 ? 1.0 : 0.0)
+                    colorsB[slot] = Float16(slot % 3 == 2 ? 1.0 : 0.0)
+                    
+                    for ch in 0..<4 {
+                        for v in 0..<3 {
+                            let pIndex = (slot * 4 * 3) + (ch * 3) + v
+                            vertices[pIndex] = face[v][ch]
+                        }
+                    }
+                    
+                    for i in 0..<4 {
+                        for j in 0..<4 {
+                            let mIndex = (slot * 4 * 4) + (i * 4) + j
+                            mvpWeights[mIndex] = cameraMatrix[i * 4 + j]
+                        }
                     }
                 }
             }
-        }
-        
-        guard let mgCommandQueue = self.mgCommandQueue,
-              let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
-              let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
+            
+            guard let mgCommandQueue = self.mgCommandQueue,
+                  let mgCommandBuffer = mgCommandQueue.makeCommandBuffer(),
+                  let mgEncoder = mgCommandBuffer.makeRenderCommandEncoder() else {
+                self.isComputing = false
+                return
+            }
+            
+            mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
+                for y in 0..<256 {
+                    for x in 0..<256 {
+                        let index = (y * 256 + x) * 3
+                        let u = Float16(x) / 255.0
+                        let v = Float16(y) / 255.0
+                        texturePointer[index + 0] = u
+                        texturePointer[index + 1] = v
+                        texturePointer[index + 2] = 1.0 - u
+                    }
+                }
+            }
+            
+            mgEncoder.endEncoding()
+            
+            try? mgCommandBuffer.commit()
+            
+            self.currentEventValue += 1
+            self.sharedEvent?.signaledValue = self.currentEventValue
+            
             self.isComputing = false
-            return
         }
-        
-        mgEncoder.withFragmentTexturePointer(index: 0) { texturePointer in
-            for y in 0..<256 {
-                for x in 0..<256 {
-                    let index = (y * 256 + x) * 3
-                    let u = Float16(x) / 255.0
-                    let v = Float16(y) / 255.0
-                    texturePointer[index + 0] = u
-                    texturePointer[index + 1] = v
-                    texturePointer[index + 2] = 1.0 - u
-                }
-            }
-        }
-        
-        mgEncoder.endEncoding()
-        
-        try? mgCommandBuffer.commit()
-        
-        self.currentEventValue += 1
-        self.sharedEvent?.signaledValue = self.currentEventValue
-        
-        self.isComputing = false
-    }
 
     func renderFrame(in view: MTKView) {
         view.colorPixelFormat = .bgra8Unorm

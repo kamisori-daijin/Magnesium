@@ -2,28 +2,24 @@ import torch
 import torch.nn as nn
 
 class ANETextureProcessor(nn.Module):
-    def __init__(self):
+    def __init__(self, max_polygons=256):
         super().__init__()
+        self.max_polygons = max_polygons
 
-        self.expand_conv = nn.Conv2d(3, 64, kernel_size=1, bias=None)
+        self.expand_conv = nn.Conv2d(3, self.max_polygons, kernel_size=1, bias=None)
 
         with torch.no_grad():
-            weight = torch.zeros(64, 3, 1, 1)
+            weight = torch.zeros(self.max_polygons, 3, 1, 1)
             
-            # R, G, B 
-            for i in range(64):
+            for i in range(self.max_polygons):
                 if i % 3 == 0:
-                    weight[i, 0, 0, 0] = 1.0  # Red
+                    weight[i, 0, 0, 0] = 1.0
                 elif i % 3 == 1:
-                    weight[i, 1, 0, 0] = 1.0  # Green
+                    weight[i, 1, 0, 0] = 1.0
                 else:
-                    weight[i, 2, 0, 0] = 1.0  # Blue
+                    weight[i, 2, 0, 0] = 1.0
                     
             self.expand_conv.weight.copy_(weight)
 
     def forward(self, raw_image):
-        """
-        raw_image: [Batch=1, Channel=3, H=256, W=256] 
-        """
-        # [1, 64, 256, 256] 
         return self.expand_conv(raw_image)

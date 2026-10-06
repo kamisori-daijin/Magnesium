@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
 
-class ANE3DPreProcessor64(nn.Module):
-    def __init__(self):
+class ANE3DPreProcessor(nn.Module):
+    def __init__(self, max_polygons=256):
         super().__init__()
-        self.max_raster_faces = 64
+        self.max_polygons = max_polygons
         
     def forward(self, expanded_vertices, mvp_weights, colors_r, colors_g, colors_b):
         """
-        expanded_vertices: [1, 64, 4, 3] 
-        mvp_weights:       [1, 64, 4, 4]  
-        colors_r / g / b:  [1, 64, 1, 1]
+        expanded_vertices: [1, max_polygons, 4, 3] 
+        mvp_weights:       [1, max_polygons, 4, 4]  
+        colors_r / g / b:  [1, max_polygons, 1, 1]
         """
         
         # No Reshape
@@ -19,7 +19,7 @@ class ANE3DPreProcessor64(nn.Module):
             expanded_vertices[:, :, 1:2, :] * mvp_weights[:, :, :, 1:2] +
             expanded_vertices[:, :, 2:3, :] * mvp_weights[:, :, :, 2:3] +
             expanded_vertices[:, :, 3:4, :] * mvp_weights[:, :, :, 3:4]
-        ) # Output: [1, 64, 4, 3]
+        ) # Output: [1, max_polygons, 4, 3]
         
         X_c = transformed[:, :, 0:1, :]
         Y_c = transformed[:, :, 1:2, :]
@@ -27,11 +27,14 @@ class ANE3DPreProcessor64(nn.Module):
         W_c = transformed[:, :, 3:4, :] 
         
         safe_W = torch.clamp(torch.abs(W_c), min=1e-5)
-        screen_x = X_c / safe_W 
-        screen_y = Y_c / safe_W
-        inv_Z = 1.0 / safe_W     
+    
+        inv_W = torch.reciprocal(safe_W)
         
-        # All Tensor is [1, 64, 1, 1] 
+        screen_x = X_c * inv_W
+        screen_y = Y_c * inv_W
+        inv_Z = inv_W     
+        
+        # All Tensor is [1, max_polygons, 1, 1] 
         p0_x, p1_x, p2_x = screen_x[:, :, :, 0:1], screen_x[:, :, :, 1:2], screen_x[:, :, :, 2:3]
         p0_y, p1_y, p2_y = screen_y[:, :, :, 0:1], screen_y[:, :, :, 1:2], screen_y[:, :, :, 2:3]
      
