@@ -83,11 +83,20 @@ class ANE3DRenderer(nn.Module):
         
         mask_w_low = torch.sum(z_mask, dim=1, keepdim=True)
         
-        # --- 高解像度へのアップサンプリング ---
-        R = F.interpolate(R_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
-        G = F.interpolate(G_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
-        B = F.interpolate(B_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
-        mask_w = F.interpolate(mask_w_low, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
-        max_inv_z_out = F.interpolate(max_inv_z, size=(self.target_height, self.target_width), mode='bilinear', align_corners=False)
+    # --- 高解像度へのアップサンプリング ---
+        # 1. チャンネル方向に結合 [1, 5, 256, 256]
+        combined_low = torch.cat([R_low, G_low, B_low, mask_w_low, max_inv_z], dim=1)
         
+        # 2. 一括でアップサンプリング [1, 5, 1024, 1024]
+        combined_high = F.interpolate(
+            combined_low, 
+            size=(self.target_height, self.target_width), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        
+    # 1. まず split して変数に代入
+        R, G, B, mask_w, max_inv_z_out = torch.split(combined_high, 1, dim=1)
+        
+        # 2. その後に return する
         return R, G, B, mask_w, max_inv_z_out

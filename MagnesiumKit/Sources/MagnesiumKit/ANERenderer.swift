@@ -107,11 +107,11 @@ class ANERenderer {
         var viewForMask = InferenceFunction.AsyncMutableValue(unsafeBuffer: canvasBuf, byteOffset: layerByteCount * 3, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil)
         var viewForZ = InferenceFunction.AsyncMutableValue(unsafeBuffer: canvasBuf, byteOffset: layerByteCount * 4, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil)
         
-        outputViews.insert(&viewForR, for: "upsample_bilinear2d")
-        outputViews.insert(&viewForG, for: "upsample_bilinear2d_1")
-        outputViews.insert(&viewForB, for: "upsample_bilinear2d_2")
-        outputViews.insert(&viewForMask, for: "upsample_bilinear2d_3")
-        outputViews.insert(&viewForZ, for: "upsample_bilinear2d_4")
+        outputViews.insert(&viewForR, for: "getitem_2")
+        outputViews.insert(&viewForG, for: "getitem_3")
+        outputViews.insert(&viewForB, for: "getitem_4")
+        outputViews.insert(&viewForMask, for: "getitem_5")
+        outputViews.insert(&viewForZ, for: "getitem_6")
 
         // 3. Encode
         let _ = try pipeline.encode(inputs: inputs, outputViews: outputViews, to: stream)
