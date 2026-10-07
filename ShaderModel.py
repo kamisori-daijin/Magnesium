@@ -73,7 +73,7 @@ class ANE3DRenderer(nn.Module):
         max_inv_z, _ = torch.max(pixel_inv_z, dim=1, keepdim=True)
         
         z_diff = torch.relu(max_inv_z - pixel_inv_z) 
-        z_blend_weights = torch.clamp(self.ONES_CH - (z_diff * 100.0), min=0.0, max=1.0)
+        z_blend_weights = torch.clamp(self.ONES_CH - (z_diff * 10.0), min=0.0, max=1.0)
         z_mask = mask * z_blend_weights 
 
         # --- カラーの合成 (Native reduce_sum) ---
