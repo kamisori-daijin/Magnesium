@@ -36,23 +36,20 @@ def to_ane_12ch(mat4x4, eye_pos):
     """
     ane_packed = torch.zeros(12, dtype=torch.float32)
     
-    # 1行目: 回転成分と、ダイレクトなカメラ位置X
     ane_packed[0] = mat4x4[0, 0]
     ane_packed[1] = mat4x4[0, 1]
     ane_packed[2] = mat4x4[0, 2]
-    ane_packed[3] = float(eye_pos[0]) # 確実に本物の cam_x を供給
+    ane_packed[3] = float(eye_pos[0])
     
-    # 2行目: 回転成分と、ダイレクトなカメラ位置Y
     ane_packed[4] = mat4x4[1, 0]
     ane_packed[5] = mat4x4[1, 1]
     ane_packed[6] = mat4x4[1, 2]
-    ane_packed[7] = float(eye_pos[1]) # 確実に本物の cam_y
+    ane_packed[7] = float(eye_pos[1])
     
-    # 3行目: 回転成分と、ダイレクトなカメラ位置Z
     ane_packed[8] = mat4x4[2, 0]
     ane_packed[9] = mat4x4[2, 1]
     ane_packed[10] = mat4x4[2, 2]
-    ane_packed[11] = float(eye_pos[2]) # 確実に本物の cam_z
+    ane_packed[11] = float(eye_pos[2])
     
     return ane_packed
 
@@ -66,57 +63,51 @@ def generate_test_scene_geometry():
     max_polygons = 16
 
     # --- 1. BVH用 AABB 箱データの作成 ---
-    # 箱0（中央のオブジェクトを囲うバウンディングボックス）
     box0_min = [-0.5, -0.5, -0.5]
     box0_max = [ 0.5,  0.5,  0.5]
     
     bvh_boxes_64 = torch.zeros(64, dtype=torch.float32)
-    # モデル側は [1, 6, B] として受けるため、ch0=全箱のmin_x, ch1=全箱のmin_y... と並べる
-    bvh_boxes_64[0 * max_boxes + 0] = box0_min[0] # ch0: box0_min_x
-    bvh_boxes_64[1 * max_boxes + 0] = box0_min[1] # ch1: box0_min_y
-    bvh_boxes_64[2 * max_boxes + 0] = box0_min[2] # ch2: box0_min_z
-    bvh_boxes_64[3 * max_boxes + 0] = box0_max[0] # ch3: box0_max_x
-    bvh_boxes_64[4 * max_boxes + 0] = box0_max[1] # ch4: box0_max_y
-    bvh_boxes_64[5 * max_boxes + 0] = box0_max[2] # ch5: box0_max_z
+    bvh_boxes_64[0 * max_boxes + 0] = box0_min[0]
+    bvh_boxes_64[1 * max_boxes + 0] = box0_min[1]
+    bvh_boxes_64[2 * max_boxes + 0] = box0_min[2]
+    bvh_boxes_64[3 * max_boxes + 0] = box0_max[0]
+    bvh_boxes_64[4 * max_boxes + 0] = box0_max[1]
+    bvh_boxes_64[5 * max_boxes + 0] = box0_max[2]
 
     # --- 2. ポリゴン（三角形面）データの作成 ---
-    # 三角形0 (手前の面の一部)
     v0 = [-0.4, -0.4,  0.4]
     v1 = [ 0.4, -0.4,  0.4]
     v2 = [-0.4,  0.4,  0.4]
     
-    # 三角形1 (手前の面の残り半分)
     v3 = [ 0.4, -0.4,  0.4]
     v4 = [ 0.4,  0.4,  0.4]
     v5 = [-0.4,  0.4,  0.4]
 
     poly_vertices_256 = torch.zeros(256, dtype=torch.float32)
     
-    # モデル側は [1, 9, P] として受けるため、ch0=全ポリゴンのV0_x, ch1=全ポリゴンのV0_y... と並べる
-    # --- 三角形0 (ポリゴンインデックス 0) ---
-    poly_vertices_256[0 * max_polygons + 0] = v0[0] # ch0: poly0_v0_x
-    poly_vertices_256[1 * max_polygons + 0] = v0[1] # ch1: poly0_v0_y
-    poly_vertices_256[2 * max_polygons + 0] = v0[2] # ch2: poly0_v0_z
-    poly_vertices_256[3 * max_polygons + 0] = v1[0] # ch3: poly0_v1_x
-    poly_vertices_256[4 * max_polygons + 0] = v1[1] # ch4: poly0_v1_y
-    poly_vertices_256[2 * max_polygons + 0] = v1[2] # ch5: poly0_v1_z
-    poly_vertices_256[6 * max_polygons + 0] = v2[0] # ch6: poly0_v2_x
-    poly_vertices_256[7 * max_polygons + 0] = v2[1] # ch7: poly0_v2_y
-    poly_vertices_256[8 * max_polygons + 0] = v2[2] # ch8: poly0_v2_z
+    # --- 三角形0 ---
+    poly_vertices_256[0 * max_polygons + 0] = v0[0]
+    poly_vertices_256[1 * max_polygons + 0] = v0[1]
+    poly_vertices_256[2 * max_polygons + 0] = v0[2]
+    poly_vertices_256[3 * max_polygons + 0] = v1[0]
+    poly_vertices_256[4 * max_polygons + 0] = v1[1]
+    poly_vertices_256[5 * max_polygons + 0] = v1[2] # ここを修正
+    poly_vertices_256[6 * max_polygons + 0] = v2[0]
+    poly_vertices_256[7 * max_polygons + 0] = v2[1]
+    poly_vertices_256[8 * max_polygons + 0] = v2[2]
 
-    # --- 三角形1 (ポリゴンインデックス 1) ---
-    poly_vertices_256[0 * max_polygons + 1] = v3[0] # ch0: poly1_v0_x
-    poly_vertices_256[1 * max_polygons + 1] = v3[1] # ch1: poly1_v0_y
-    poly_vertices_256[2 * max_polygons + 1] = v3[2] # ch2: poly1_v0_z
-    poly_vertices_256[3 * max_polygons + 1] = v4[0] # ch3: poly1_v1_x
-    poly_vertices_256[4 * max_polygons + 1] = v4[1] # ch4: poly1_v1_y
-    poly_vertices_256[5 * max_polygons + 1] = v4[2] # ch5: poly1_v1_z
-    poly_vertices_256[6 * max_polygons + 1] = v5[0] # ch6: poly1_v2_x
-    poly_vertices_256[7 * max_polygons + 1] = v5[1] # ch7: poly1_v2_y
-    poly_vertices_256[8 * max_polygons + 1] = v5[2] # ch8: poly1_v2_z
+    # --- 三角形1 ---
+    poly_vertices_256[0 * max_polygons + 1] = v3[0]
+    poly_vertices_256[1 * max_polygons + 1] = v3[1]
+    poly_vertices_256[2 * max_polygons + 1] = v3[2]
+    poly_vertices_256[3 * max_polygons + 1] = v4[0]
+    poly_vertices_256[4 * max_polygons + 1] = v4[1]
+    poly_vertices_256[5 * max_polygons + 1] = v4[2]
+    poly_vertices_256[6 * max_polygons + 1] = v5[0]
+    poly_vertices_256[7 * max_polygons + 1] = v5[1]
+    poly_vertices_256[8 * max_polygons + 1] = v5[2]
 
     return bvh_boxes_64, poly_vertices_256
-
 
 def main():
     print("Starting Virtual RT Core testing script...")
@@ -145,7 +136,6 @@ def main():
             cam_y = float(0.8 * np.sin(angle * 0.5))
             cam_z = float(2.5 * np.cos(angle))
             
-            # 生のカメラ3D座標(eye)を引数に追加して安全パッキング
             inv_view_12 = to_ane_12ch(create_inverse_view_matrix(
                 eye=[cam_x, cam_y, cam_z], 
                 target=[0.0, 0.0, 0.0], 
@@ -157,7 +147,6 @@ def main():
             
             inv_view_4d = inv_view_64.view(1, 64, 1, 1).to(device).half()
 
-            # 回路シミュレーション実行
             output_buffer = model(inv_view_4d, bvh_boxes_4d, poly_vertices_4d)
 
             render_mask_2d = output_buffer[:, 1:2, :, :].float().cpu()
