@@ -29,7 +29,6 @@ converter = TorchConverter().add_pytorch_module(
 )
 
 coreai_program = converter.to_coreai()
-coreai_program.optimize()
 
 # 4. Save
 output_path = Path("ane_raytracer.aimodel")

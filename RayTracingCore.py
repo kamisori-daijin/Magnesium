@@ -1,201 +1,168 @@
 import torch
 import torch.nn as nn
 
-class ANERayTracingCore(nn.Module):
-    def __init__(self, width=256, height=256, max_steps=64, shadow_steps=16):
+class ANEVirtualRTCore(nn.Module):
+    def __init__(self, width=256, height=256, max_boxes=4, max_polygons=16):
         super().__init__()
         self.w = width
         self.h = height
-        self.max_steps = max_steps
-        self.shadow_steps = shadow_steps
-        self.dt = 0.08
+        self.max_boxes = max_boxes
+        self.max_polygons = max_polygons
         
-        # 4D Tensor
-        self.register_buffer("eps", torch.tensor([[[[0.02]]]]).half())
-        self.register_buffer("floor_y", torch.tensor([[[[-0.8]]]]).half())
-        
+        # 1. カメラレイ生成用の座標グリッド (最小形状で自動ブロードキャスト)
         y_grid = torch.linspace(1.0, -1.0, self.h).view(1, 1, self.h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.w).view(1, 1, 1, self.w)
+        self.register_buffer("cam_dx", x_grid.half())
+        self.register_buffer("cam_dy", y_grid.half())
+        self.register_buffer("cam_dz", torch.tensor([[[[-1.0]]]]).half())
         
-        self.register_buffer("cam_dx", x_grid.expand(1, 1, self.h, self.w).half())
-        self.register_buffer("cam_dy", y_grid.expand(1, 1, self.h, self.w).half())
-        self.register_buffer("cam_dz", torch.full((1, 1, self.h, self.w), -1.0).half())
+        # 2. 回路定数 (無限遠の初期深度バッファ)
+        self.register_buffer("FAR_DEPTH", torch.tensor([[[[10000.0]]]]).half())
+
+    def forward(self, inv_view_matrix_64ch, bvh_boxes_64ch, poly_vertices_256ch):
+        """
+        ANEの物理特性(64chアライメント)に完全に準拠した、仮想RTコアの物理回路シミュレータ
+        Args:
+            inv_view_matrix_64ch: [1, 64, 1, 1]  (アライメント済。0~11ch: カメラ3x4行列, 12~63ch: 拡張用無料枠)
+            bvh_boxes_64ch:       [1, 64, 1, 1]  (アライメント済。0~23ch: Max4個の箱のMin/Max座標, 24~63ch: パディング)
+            poly_vertices_256ch:  [1, 256, 1, 1] (アライメント済。0~143ch: Max16個のポリゴン頂点, 144~255ch: パディング)
+        """
+        B = self.max_boxes
+        P = self.max_polygons
         
-        self.register_buffer("ONES", torch.ones(1, 1, self.h, self.w).half())
-        self.register_buffer("ZEROS", torch.zeros(1, 1, self.h, self.w).half())
+        # =====================================================================
+        # STAGE 1: 仮想レイ生成回路 (64chの太い束から連続直球読み込み)
+        # =====================================================================
+        # 64chの塊のまま入力されているため、不連続なギャザーを起こさず最速でALUへ流れます
+        r00 = inv_view_matrix_64ch[:, 0:1]
+        r01 = inv_view_matrix_64ch[:, 1:2]
+        r02 = inv_view_matrix_64ch[:, 2:3]
+        init_px = inv_view_matrix_64ch[:, 3:4]
         
-        self.register_buffer("light_dx", torch.tensor([[[[0.5773]]]]).half())
-        self.register_buffer("light_dy", torch.tensor([[[[0.5773]]]]).half())
-        self.register_buffer("light_dz", torch.tensor([[[[0.5773]]]]).half())
-
-        self.register_buffer("step_ratios", (torch.arange(self.max_steps).view(1, self.max_steps, 1, 1) * self.dt).half())
-        self.register_buffer("shadow_ratios", (torch.arange(self.shadow_steps).view(1, self.shadow_steps, 1, 1) * self.dt).half())
-
-        y_tex = torch.linspace(-1.0, 1.0, self.h).view(1, 1, self.h, 1)
-        x_tex = torch.linspace(-1.0, 1.0, self.w).view(1, 1, 1, self.w)
-        base_mask_x = torch.clamp(1.0 - (torch.abs(x_tex) - 0.4) * 100.0, min=0.0, max=1.0)
-        base_mask_y = torch.clamp(1.0 - (torch.abs(y_tex) - 0.4) * 100.0, min=0.0, max=1.0)
-        cube_2d_mask = (base_mask_x * base_mask_y).half()
-
-        self.register_buffer("base_multiview_textures", torch.cat([cube_2d_mask, cube_2d_mask, cube_2d_mask], dim=1))
-
-        # Define Conv2d for ANE cumsum
-        self.ane_cumsum_conv = nn.Conv2d(self.max_steps, self.max_steps, kernel_size=1, bias=False)
-        weight_matrix = torch.tril(torch.ones(self.max_steps, self.max_steps))
-        self.ane_cumsum_conv.weight.data = weight_matrix.view(self.max_steps, self.max_steps, 1, 1).half()
-        self.ane_cumsum_conv.weight.requires_grad = False
-
-    def check_multiview_hit(self, px, py, pz):
-        out_x = torch.relu(torch.abs(px) - 1.0)
-        out_y = torch.relu(torch.abs(py) - 1.0)
-        out_z = torch.relu(torch.abs(pz) - 1.0)
-        any_out = torch.clamp((out_x + out_y + out_z) * 100.0, min=0.0, max=1.0)
-        box_check = 1.0 - any_out
-
-        proj_xy = torch.clamp(1.0 - torch.relu(torch.abs(px) - 0.4) * 10.0, 0.0, 1.0) * \
-                  torch.clamp(1.0 - torch.relu(torch.abs(py) - 0.4) * 10.0, 0.0, 1.0)
-        proj_xz = torch.clamp(1.0 - torch.relu(torch.abs(px) - 0.4) * 10.0, 0.0, 1.0) * \
-                  torch.clamp(1.0 - torch.relu(torch.abs(pz) - 0.4) * 10.0, 0.0, 1.0)
-        proj_yz = torch.clamp(1.0 - torch.relu(torch.abs(py) - 0.4) * 10.0, 0.0, 1.0) * \
-                  torch.clamp(1.0 - torch.relu(torch.abs(pz) - 0.4) * 10.0, 0.0, 1.0)
-
-        mask_xy = self.base_multiview_textures[:, 0:1, :, :] * proj_xy
-        mask_xz = self.base_multiview_textures[:, 1:2, :, :] * proj_xz
-        mask_yz = self.base_multiview_textures[:, 2:3, :, :] * proj_yz
-
-        return mask_xy * mask_xz * mask_yz * box_check
+        r10 = inv_view_matrix_64ch[:, 4:5]
+        r11 = inv_view_matrix_64ch[:, 5:6]
+        r12 = inv_view_matrix_64ch[:, 6:7]
+        init_py = inv_view_matrix_64ch[:, 7:8]
         
-    def fast_rsqrt(self, x):
-        # Initial guess for inverse square root
-        y = 1.0
+        r20 = inv_view_matrix_64ch[:, 8:9]
+        r21 = inv_view_matrix_64ch[:, 9:10]
+        r22 = inv_view_matrix_64ch[:, 10:11]
+        init_pz = inv_view_matrix_64ch[:, 11:12]
 
-        # Newton's method step repeated 2-3 times
-        # y_new = y * (1.5 - 0.5 * x * y * y)
-        y = y * (1.5 - 0.5 * x * y * y)
-        y = y * (1.5 - 0.5 * x * y * y)
-
-        return y
-
-    def forward(self, multiview_textures, inv_view_matrix_64d):
-        def get_mat_val(mat, idx):
-            return mat[:, idx:idx+1, :, :]
-
-        r00, r01, r02 = get_mat_val(inv_view_matrix_64d, 0), get_mat_val(inv_view_matrix_64d, 1), get_mat_val(inv_view_matrix_64d, 2)
-        r10, r11, r12 = get_mat_val(inv_view_matrix_64d, 4), get_mat_val(inv_view_matrix_64d, 5), get_mat_val(inv_view_matrix_64d, 6)
-        r20, r21, r22 = get_mat_val(inv_view_matrix_64d, 8), get_mat_val(inv_view_matrix_64d, 9), get_mat_val(inv_view_matrix_64d, 10)
-
+        # 画面の全ピクセル([1,1,H,W])に、カメラパラメータが一斉にブロードキャスト掛け算(Elementwise ALU)される
         dx = r00 * self.cam_dx + r01 * self.cam_dy + r02 * self.cam_dz
         dy = r10 * self.cam_dx + r11 * self.cam_dy + r12 * self.cam_dz
         dz = r20 * self.cam_dx + r21 * self.cam_dy + r22 * self.cam_dz
 
-        inv_len = self.fast_rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
-        init_dx, init_dy, init_dz = dx * inv_len, dy * inv_len, dz * inv_len
+        # ANE専用ハードウェア命令 (Activations: rsqrt)
+        inv_len = torch.rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
+        ray_d_x, ray_d_y, ray_d_z = dx * inv_len, dy * inv_len, dz * inv_len
+        ray_o_x, ray_o_y, ray_o_z = init_px, init_py, init_pz
 
-        init_px, init_py, init_pz = get_mat_val(inv_view_matrix_64d, 3), get_mat_val(inv_view_matrix_64d, 7), get_mat_val(inv_view_matrix_64d, 11)
+        # =====================================================================
+        # STAGE 2: 仮想BVH探索回路 (AABB 不等式一括 ALU マスク処理)
+        # =====================================================================
+        # 有効な24ch（6要素×4箱）だけを抽出し、C軸（並列プロセッサ軸）に展開
+        # 残りの40chのパディングは転送単位の調整として背後で自動無視されます
+        boxes_reshaped = bvh_boxes_64ch[:, 0:24].view(1, 6, B, 1, 1)
+        b_min_x, b_min_y, b_min_z = boxes_reshaped[:, 0], boxes_reshaped[:, 1], boxes_reshaped[:, 2]
+        b_max_x, b_max_y, b_max_z = boxes_reshaped[:, 3], boxes_reshaped[:, 4], boxes_reshaped[:, 5]
 
-        px_all = init_px + init_dx * self.step_ratios
-        py_all = init_py + init_dy * self.step_ratios
-        pz_all = init_pz + init_dz * self.step_ratios
+        # 各面との交差時間を全ピクセル・全箱同時に一括並列計算 (Elementwise ALU)
+        inv_rd_x = 1.0 / (ray_d_x + 1e-5)
+        inv_rd_y = 1.0 / (ray_d_y + 1e-5)
+        inv_rd_z = 1.0 / (ray_d_z + 1e-5)
 
-        m1_00, m1_01, m1_02, m1_03 = get_mat_val(inv_view_matrix_64d, 16), get_mat_val(inv_view_matrix_64d, 17), get_mat_val(inv_view_matrix_64d, 18), get_mat_val(inv_view_matrix_64d, 19)
-        m1_10, m1_11, m1_12, m1_13 = get_mat_val(inv_view_matrix_64d, 20), get_mat_val(inv_view_matrix_64d, 21), get_mat_val(inv_view_matrix_64d, 22), get_mat_val(inv_view_matrix_64d, 23)
-        m1_20, m1_21, m1_22, m1_23 = get_mat_val(inv_view_matrix_64d, 24), get_mat_val(inv_view_matrix_64d, 25), get_mat_val(inv_view_matrix_64d, 26), get_mat_val(inv_view_matrix_64d, 27)
+        t1_x = (b_min_x - ray_o_x) * inv_rd_x
+        t2_x = (b_max_x - ray_o_x) * inv_rd_x
+        t1_y = (b_min_y - ray_o_y) * inv_rd_y
+        t2_y = (b_max_x - ray_o_y) * inv_rd_y
+        t1_z = (b_min_z - ray_o_z) * inv_rd_z
+        t2_z = (b_max_z - ray_o_z) * inv_rd_z
 
-        local1_px_all = m1_00 * px_all + m1_01 * py_all + m1_02 * pz_all + m1_03
-        local1_py_all = m1_10 * px_all + m1_11 * py_all + m1_12 * pz_all + m1_13
-        local1_pz_all = m1_20 * px_all + m1_21 * py_all + m1_22 * pz_all + m1_23
+        # 箱の入り口(t_near)と出口(t_far)を ANE ネイティブの min/max ユニットで判定
+        t_min_x = torch.minimum(t1_x, t2_x)
+        t_max_x = torch.maximum(t1_x, t2_x)
+        t_min_y = torch.minimum(t1_y, t2_y)
+        t_max_y = torch.maximum(t1_y, t2_y)
+        t_min_z = torch.minimum(t1_z, t2_z)
+        t_max_z = torch.maximum(t1_z, t2_z)
 
-        m2_00, m2_01, m2_02, m2_03 = get_mat_val(inv_view_matrix_64d, 32), get_mat_val(inv_view_matrix_64d, 33), get_mat_val(inv_view_matrix_64d, 34), get_mat_val(inv_view_matrix_64d, 35)
-        m2_10, m2_11, m2_12, m2_13 = get_mat_val(inv_view_matrix_64d, 36), get_mat_val(inv_view_matrix_64d, 37), get_mat_val(inv_view_matrix_64d, 38), get_mat_val(inv_view_matrix_64d, 39)
-        m2_20, m2_21, m2_22, m2_23 = get_mat_val(inv_view_matrix_64d, 40), get_mat_val(inv_view_matrix_64d, 41), get_mat_val(inv_view_matrix_64d, 42), get_mat_val(inv_view_matrix_64d, 43)
+        t_near = torch.maximum(torch.maximum(t_min_x, t_min_y), t_min_z)
+        t_far  = torch.maximum(torch.minimum(t_max_x, t_max_y), t_max_z)
 
-        local2_px_all = m2_00 * px_all + m2_01 * py_all + m2_02 * pz_all + m2_03
-        local2_py_all = m2_10 * px_all + m2_11 * py_all + m2_12 * pz_all + m2_13
-        local2_pz_all = m2_20 * px_all + m2_21 * py_all + m2_22 * pz_all + m2_23
+        # 【条件分岐の大改造】 不等式をビットマスク（ワイヤー電圧）に変換するReLU回路
+        box_hit_all = torch.clamp(torch.relu((t_far - t_near) * 1000.0), min=0.0, max=1.0) * \
+                      torch.clamp(torch.relu(t_far * 1000.0), min=0.0, max=1.0) # [1, B, H, W]
 
-        hit1_all = self.check_multiview_hit(local1_px_all, local1_py_all, local1_pz_all)
-        hit2_all = self.check_multiview_hit(local2_px_all, local2_py_all, local2_pz_all)
-        object_hit_all = torch.max(hit1_all, hit2_all)
+        # =====================================================================
+        # STAGE 3: 仮想レイトライアングル交差テスト回路 (Möller-Trumbore ベクトル化)
+        # =====================================================================
+        # 有効な144ch（9要素×16ポリゴン）を抽出し、C軸（プロセッサ軸）に展開
+        # 144〜255chのパディングはアライメント整合用として完全にスルーされます
+        v_reshaped = poly_vertices_256ch[:, 0:144].view(1, 9, P, 1, 1)
+        v0_x, v0_y, v0_z = v_reshaped[:, 0], v_reshaped[:, 1], v_reshaped[:, 2]
+        v1_x, v1_y, v1_z = v_reshaped[:, 3], v_reshaped[:, 4], v_reshaped[:, 5]
+        v2_x, v2_y, v2_z = v_reshaped[:, 6], v_reshaped[:, 7], v_reshaped[:, 8]
 
-        floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
-        any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
+        # エッジベクトルの計算
+        e1_x, e1_y, e1_z = v1_x - v0_x, v1_y - v0_y, v1_z - v0_z
+        e2_x, e2_y, e2_z = v2_x - v0_x, v2_y - v0_y, v2_z - v0_z
 
-        # Run Conv2d for ANE cumsum
-        cum_hit = self.ane_cumsum_conv(any_hit_all)
+        # 外積 (pvec = ray_d × e2)
+        pvec_x = ray_d_y * e2_z - ray_d_z * e2_y
+        pvec_y = ray_d_z * e2_x - ray_d_x * e2_z
+        pvec_z = ray_d_x * e2_y - ray_d_y * e2_x
 
-        prior_hit = torch.cat([torch.zeros_like(cum_hit[:, :1, :, :]), cum_hit[:, :-1, :, :]], dim=1)
-        not_hit_yet_all = torch.clamp(1.0 - prior_hit, min=0.0, max=1.0)
+        # 内積 (det = e1 ⋅ pvec)
+        det = e1_x * pvec_x + e1_y * pvec_y + e1_z * pvec_z
+        inv_det = 1.0 / (det + 1e-5) # Dedicated Hardware Reciprocal
 
-        is_first_object_all = not_hit_yet_all * object_hit_all
-        is_first_floor_all = not_hit_yet_all * (1.0 - object_hit_all) * floor_hit_all
+        # 交点座標へのアプローチ (tvec = ray_o - v0)
+        tvec_x = ray_o_x - v0_x
+        tvec_y = ray_o_y - v0_y
+        tvec_z = ray_o_z - v0_z
 
-        hit_object_mask = torch.sum(is_first_object_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-        hit_floor_mask = torch.sum(is_first_floor_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-        accum_hit = torch.clamp(hit_object_mask + hit_floor_mask, min=0.0, max=1.0)
+        # 重心座標 u の計算と範囲判定マスク
+        u = (tvec_x * pvec_x + tvec_y * pvec_y + tvec_z * pvec_z) * inv_det
+        u_valid = torch.clamp(torch.relu(u) * 1000.0, 0.0, 1.0) * torch.clamp(torch.relu(1.0 - u) * 1000.0, 0.0, 1.0)
 
-        px = torch.sum(is_first_object_all * px_all + is_first_floor_all * px_all, dim=1, keepdim=True)
-        py = torch.sum(is_first_object_all * py_all + is_first_floor_all * py_all, dim=1, keepdim=True)
-        pz = torch.sum(is_first_object_all * pz_all + is_first_floor_all * pz_all, dim=1, keepdim=True)
+        # 外積 (qvec = tvec × e1)
+        qvec_x = tvec_y * e1_z - tvec_z * e1_y
+        qvec_y = tvec_z * e1_x - tvec_x * e1_z
+        qvec_z = tvec_x * e1_y - tvec_y * e1_x
 
-        local1_px = m1_00 * px + m1_01 * py + m1_02 * pz + m1_03
-        local1_py = m1_10 * px + m1_11 * py + m1_12 * pz + m1_13
-        local1_pz = m1_20 * px + m1_21 * py + m1_22 * pz + m1_23
+        # 重心座標 v の計算と範囲判定マスク
+        v = (ray_d_x * qvec_x + ray_d_y * qvec_y + ray_d_z * qvec_z) * inv_det
+        v_valid = torch.clamp(torch.relu(v) * 1000.0, 0.0, 1.0) * torch.clamp(torch.relu(1.0 - (u + v)) * 1000.0, 0.0, 1.0)
 
-        local2_px = m2_00 * px + m2_01 * py + m2_02 * pz + m2_03
-        local2_py = m2_10 * px + m2_11 * py + m2_12 * pz + m2_13
-        local2_pz = m2_20 * px + m2_21 * py + m2_22 * pz + m2_23
+        poly_hit_mask = u_valid * v_valid # 三角形の内側にいるピクセル [1, P, H, W]
 
-        f1_c, f2_c = self.check_multiview_hit(local1_px, local1_py, local1_pz), self.check_multiview_hit(local2_px, local2_py, local2_pz)
-        f1_x, f2_x = self.check_multiview_hit(local1_px + self.eps, local1_py, local1_pz), self.check_multiview_hit(local2_px + self.eps, local2_py, local2_pz)
-        f1_y, f2_y = self.check_multiview_hit(local1_px, local1_py + self.eps, local1_pz), self.check_multiview_hit(local2_px, local2_py + self.eps, local2_pz)
-        f1_z, f2_z = self.check_multiview_hit(local1_px, local1_py, local1_pz + self.eps), self.check_multiview_hit(local2_px, local2_py, local2_pz + self.eps)
-
-        obj1_mask = torch.sum(is_first_object_all * hit1_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-        obj2_mask = torch.sum(is_first_object_all * (1.0 - hit1_all) * hit2_all, dim=1, keepdim=True).clamp(0.0, 1.0)
-
-        raw_nx1, raw_ny1, raw_nz1 = f1_c - f1_x, f1_c - f1_y, f1_c - f1_z
-        raw_nx2, raw_ny2, raw_nz2 = f2_c - f2_x, f2_c - f2_y, f2_c - f2_z
-
-        world_nx = obj1_mask * (m1_00 * raw_nx1 + m1_10 * raw_ny1 + m1_20 * raw_nz1) + obj2_mask * (m2_00 * raw_nx2 + m2_10 * raw_ny2 + m2_20 * raw_nz2)
-        world_ny = obj1_mask * (m1_01 * raw_nx1 + m1_11 * raw_ny1 + m1_21 * raw_nz1) + obj2_mask * (m2_01 * raw_nx2 + m2_11 * raw_ny2 + m2_21 * raw_nz2)
-        world_nz = obj1_mask * (m1_02 * raw_nx1 + m1_12 * raw_ny1 + m1_22 * raw_nz1) + obj2_mask * (m2_02 * raw_nx2 + m2_12 * raw_ny2 + m2_22 * raw_nz2)
-
-        inv_true_n_len = self.fast_rsqrt(world_nx*world_nx + world_ny*world_ny + world_nz*world_nz + 1e-5)
+        # 衝突深度 t の計算
+        t = (e2_x * qvec_x + e2_y * qvec_y + e2_z * qvec_z) * inv_det
         
-        first_nx = hit_object_mask * (world_nx * inv_true_n_len)
-        first_ny = hit_object_mask * (world_ny * inv_true_n_len) + hit_floor_mask * 1.0
-        first_nz = hit_object_mask * (world_nz * inv_true_n_len)
+        # =====================================================================
+        # STAGE 4: マルチプレクス（BVHフラグとの物理配線結合）
+        # =====================================================================
+        # 16個のポリゴンに対して、どの箱（4個）に属しているかの親子配線を固定化
+        # [1, 4, H, W] -> repeatで [1, 16, H, W] へ（ノーコストview＆ブロードキャスト）
+        box_mask_for_polys = box_hit_all.repeat(1, P // B, 1, 1)
+        
+        # 箱に当たっていなければ（0.0）、その中にある全ポリゴンのフラグを一瞬で電気的に強制遮断（0.0）
+        final_poly_hit_valid = torch.clamp(torch.relu(t) * 1000.0, 0.0, 1.0) * poly_hit_mask * box_mask_for_polys
 
-        shadow_start_x, shadow_start_y, shadow_start_z = px + 0.04 * self.light_dx, py + 0.04 * self.light_dy, pz + 0.04 * self.light_dz
-        spx_all = shadow_start_x + self.light_dx * self.shadow_ratios
-        spy_all = shadow_start_y + self.light_dy * self.shadow_ratios
-        spz_all = shadow_start_z + self.light_dz * self.shadow_ratios
+        # =====================================================================
+        # STAGE 5: Z-Buffer 出力（Native Reductions）
+        # =====================================================================
+        # 当たらなかったポリゴンの深度は無限遠（10000.0）にする
+        t_final_buffer = t * final_poly_hit_valid + self.FAR_DEPTH * (1.0 - final_poly_hit_valid)
 
-        l1_spx = m1_00 * spx_all + m1_01 * spy_all + m1_02 * spz_all + m1_03
-        l1_spy = m1_10 * spx_all + m1_11 * spy_all + m1_12 * spz_all + m1_13
-        l1_spz = m1_20 * spx_all + m1_21 * spy_all + m1_22 * spz_all + m1_23
+        # ANEの最強 Reduce (min) ユニットを駆動し、最も手前のポリゴン深度を全ピクセル一瞬で特定
+        min_depth, _ = torch.min(t_final_buffer, dim=1, keepdim=True)
 
-        l2_spx = m2_00 * spx_all + m2_01 * spy_all + m2_02 * spz_all + m2_03
-        l2_spy = m2_10 * spx_all + m2_11 * spy_all + m2_12 * spz_all + m2_13
-        l2_spz = m2_20 * spx_all + m2_21 * spy_all + m2_22 * spz_all + m2_23
+        # 背景（何も当たっていないピクセル）をはじく最終描画マスク
+        render_mask = torch.clamp(torch.relu((self.FAR_DEPTH - 1.0) - min_depth) * 1000.0, 0.0, 1.0)
 
-        s_hit1 = self.check_multiview_hit(l1_spx, l1_spy, l1_spz)
-        s_hit2 = self.check_multiview_hit(l2_spx, l2_spy, l2_spz)
-        accum_shadow = torch.sum(torch.max(s_hit1, s_hit2), dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
-
-        diffuse = first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz
-        shading = torch.relu(diffuse) + 0.15
-
-        sign_x = torch.clamp(px * 3.0 * 100.0, min=-1.0, max=1.0)
-        sign_z = torch.clamp(pz * 3.0 * 100.0, min=-1.0, max=1.0)
-        checker = (sign_x * sign_z + 1.0) * 0.5
-        floor_color = hit_floor_mask * (0.3 + 0.2 * checker)
-
-        obj1_color = obj1_mask * self.ONES
-        rgb_object_color = torch.cat([obj1_color + obj2_mask * 0.7, obj1_color + obj2_mask * 0.8, obj1_color + obj2_mask * 1.0], dim=1)
-        rgb_floor_color = torch.cat([floor_color, floor_color, floor_color], dim=1)
-
-        base_color = rgb_object_color + rgb_floor_color
-        light_modifier = (self.ONES - accum_shadow) * shading + accum_shadow * 0.15
-
-        return accum_hit * base_color * light_modifier
+        # 5ch一括返しに合わせるため、出力もアライメントを意識して4ch（または64ch）にパッキングして返すのが本来の理想ですが、
+        # ここでは描画テストがしやすいように [深度、マスク] の最小限のチャンネル結合でリターンします
+        return torch.cat([min_depth, render_mask], dim=1)

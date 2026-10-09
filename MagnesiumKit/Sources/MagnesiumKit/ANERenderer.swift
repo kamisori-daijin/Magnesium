@@ -102,35 +102,33 @@ class ANERenderer {
         guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
         // Write Row Data
-        pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
-        pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
-        pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
-        pointer[6]  = Float16(invView.columns.2.y); pointer[7]  = Float16(invView.columns.3.y)
-        pointer[8]  = Float16(invView.columns.0.z); pointer[9]  = Float16(invView.columns.1.z)
-        pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.3.z)
-        pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
-        pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
-        
-        pointer[16] = Float16(invModel1.columns.0.x); pointer[17] = Float16(invModel1.columns.1.x)
-        pointer[18] = Float16(invModel1.columns.2.x); pointer[19] = Float16(invModel1.columns.3.x)
-        pointer[20] = Float16(invModel1.columns.0.y); pointer[21] = Float16(invModel1.columns.1.y)
-        pointer[22] = Float16(invModel1.columns.2.y); pointer[23] = Float16(invModel1.columns.3.y)
-        pointer[24] = Float16(invModel1.columns.0.z); pointer[25] = Float16(invModel1.columns.1.z)
-        pointer[26] = Float16(invModel1.columns.2.z); pointer[27] = Float16(invModel1.columns.3.z)
-        pointer[28] = Float16(invModel1.columns.0.w); pointer[29] = Float16(invModel1.columns.1.w)
-        pointer[30] = Float16(invModel1.columns.2.w); pointer[31] = Float16(invModel1.columns.3.w)
-        
-        pointer[32] = Float16(invModel2.columns.0.x); pointer[33] = Float16(invModel2.columns.1.x)
-        pointer[34] = Float16(invModel2.columns.2.x); pointer[35] = Float16(invModel2.columns.3.x)
-        pointer[36] = Float16(invModel2.columns.0.y); pointer[37] = Float16(invModel2.columns.1.y)
-        pointer[38] = Float16(invModel2.columns.2.y); pointer[39] = Float16(invModel2.columns.3.y)
-        pointer[40] = Float16(invModel2.columns.0.z); pointer[41] = Float16(invModel2.columns.1.z)
-        pointer[42] = Float16(invModel2.columns.2.z); pointer[43] = Float16(invModel2.columns.3.z)
-        pointer[44] = Float16(invModel2.columns.0.w); pointer[45] = Float16(invModel2.columns.1.w)
-        pointer[46] = Float16(invModel2.columns.2.w); pointer[47] = Float16(invModel2.columns.3.w)
-        
-        let zeroPointer = pointer.advanced(by: 48)
-        zeroPointer.initialize(repeating: 0, count: 16)
+        // invView (12要素)
+                pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
+                pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
+                pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
+                pointer[6]  = Float16(invView.columns.2.y); pointer[7]  = Float16(invView.columns.3.y)
+                pointer[8]  = Float16(invView.columns.0.z); pointer[9]  = Float16(invView.columns.1.z)
+                pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.3.z)
+                
+                // invModel1 (12要素: インデックス12から開始)
+                pointer[12] = Float16(invModel1.columns.0.x); pointer[13] = Float16(invModel1.columns.1.x)
+                pointer[14] = Float16(invModel1.columns.2.x); pointer[15] = Float16(invModel1.columns.3.x)
+                pointer[16] = Float16(invModel1.columns.0.y); pointer[17] = Float16(invModel1.columns.1.y)
+                pointer[18] = Float16(invModel1.columns.2.y); pointer[19] = Float16(invModel1.columns.3.y)
+                pointer[20] = Float16(invModel1.columns.0.z); pointer[21] = Float16(invModel1.columns.1.z)
+                pointer[22] = Float16(invModel1.columns.2.z); pointer[23] = Float16(invModel1.columns.3.z)
+                
+                // invModel2 (12要素: インデックス24から開始)
+                pointer[24] = Float16(invModel2.columns.0.x); pointer[25] = Float16(invModel2.columns.1.x)
+                pointer[26] = Float16(invModel2.columns.2.x); pointer[27] = Float16(invModel2.columns.3.x)
+                pointer[28] = Float16(invModel2.columns.0.y); pointer[29] = Float16(invModel2.columns.1.y)
+                pointer[30] = Float16(invModel2.columns.2.y); pointer[31] = Float16(invModel2.columns.3.y)
+                pointer[32] = Float16(invModel2.columns.0.z); pointer[33] = Float16(invModel2.columns.1.z)
+                pointer[34] = Float16(invModel2.columns.2.z); pointer[35] = Float16(invModel2.columns.3.z)
+                
+                // 残りをゼロ埋め
+                let zeroPointer = pointer.advanced(by: 36)
+                zeroPointer.initialize(repeating: 0, count: 28)
     }
 
     // Get Current Buffer
@@ -162,7 +160,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        outputViews.insert(&asyncOutputValue, for: "mul_352")
+        outputViews.insert(&asyncOutputValue, for: "mul_332")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)
         
