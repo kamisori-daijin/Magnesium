@@ -9,33 +9,27 @@ class ANEVirtualRTCore(nn.Module):
         self.max_boxes = max_boxes
         self.max_polygons = max_polygons
         
-        # 1. カメラレイ生成用の座標グリッド (最小形状で自動ブロードキャスト)
+        # 1. カメラレイ生成用の座標グリッド
         y_grid = torch.linspace(1.0, -1.0, self.h).view(1, 1, self.h, 1)
         x_grid = torch.linspace(-1.0, 1.0, self.w).view(1, 1, 1, self.w)
         self.register_buffer("cam_dx", x_grid.half())
         self.register_buffer("cam_dy", y_grid.half())
         self.register_buffer("cam_dz", torch.tensor([[[[-1.0]]]]).half())
         
-        # 2. 回路定数 (無限遠の初期深度バッファ)
+        # 2. 回路定数
         self.register_buffer("FAR_DEPTH", torch.tensor([[[[10000.0]]]]).half())
 
     def forward(self, inv_view_matrix_64ch, bvh_boxes_64ch, poly_vertices_256ch):
         B = self.max_boxes
         P = self.max_polygons
         
-        print("\n--- ANE Virtual RT Core Wire Diagnostics ---")
-        
         # =====================================================================
         # STAGE 1: 仮想レイ生成回路
         # =====================================================================
-        r00 = inv_view_matrix_64ch[:, 0:1]
-        init_px = inv_view_matrix_64ch[:, 3:4]
-        print(f"[Log] inv_view_matrix_64ch (r00)  -> min: {r00.min().item():.4f}, max: {r00.max().item():.4f}")
-        print(f"[Log] inv_view_matrix_64ch (cam_x)-> min: {init_px.min().item():.4f}, max: {init_px.max().item():.4f}")
-
-        r01, r02 = inv_view_matrix_64ch[:, 1:2], inv_view_matrix_64ch[:, 2:3]
-        r10, r11, r12, init_py = inv_view_matrix_64ch[:, 4:5], inv_view_matrix_64ch[:, 5:6], inv_view_matrix_64ch[:, 6:7], inv_view_matrix_64ch[:, 7:8]
-        r20, r21, r22, init_pz = inv_view_matrix_64ch[:, 8:9], inv_view_matrix_64ch[:, 9:10], inv_view_matrix_64ch[:, 10:11], inv_view_matrix_64ch[:, 11:12]
+        r00, r01, r02 = inv_view_matrix_64ch[:, 0:1], inv_view_matrix_64ch[:, 1:2], inv_view_matrix_64ch[:, 2:3]
+        r10, r11, r12 = inv_view_matrix_64ch[:, 4:5], inv_view_matrix_64ch[:, 5:6], inv_view_matrix_64ch[:, 6:7]
+        r20, r21, r22 = inv_view_matrix_64ch[:, 8:9], inv_view_matrix_64ch[:, 9:10], inv_view_matrix_64ch[:, 10:11]
+        ray_o_x, ray_o_y, ray_o_z = inv_view_matrix_64ch[:, 3:4], inv_view_matrix_64ch[:, 7:8], inv_view_matrix_64ch[:, 11:12]
 
         dx = r00 * self.cam_dx + r01 * self.cam_dy + r02 * self.cam_dz
         dy = r10 * self.cam_dx + r11 * self.cam_dy + r12 * self.cam_dz
@@ -43,8 +37,6 @@ class ANEVirtualRTCore(nn.Module):
 
         inv_len = torch.rsqrt(dx*dx + dy*dy + dz*dz + 1e-5)
         ray_d_x, ray_d_y, ray_d_z = dx * inv_len, dy * inv_len, dz * inv_len
-        ray_o_x, ray_o_y, ray_o_z = init_px, init_py, init_pz
-        print(f"[Log] Ray Direction X            -> min: {ray_d_x.min().item():.4f}, max: {ray_d_x.max().item():.4f}")
 
         # =====================================================================
         # STAGE 2: 仮想BVH探索回路
@@ -52,27 +44,18 @@ class ANEVirtualRTCore(nn.Module):
         boxes_reshaped = bvh_boxes_64ch[:, 0:24].view(1, 6, B, 1, 1)
         b_min_x, b_min_y, b_min_z = boxes_reshaped[:, 0], boxes_reshaped[:, 1], boxes_reshaped[:, 2]
         b_max_x, b_max_y, b_max_z = boxes_reshaped[:, 3], boxes_reshaped[:, 4], boxes_reshaped[:, 5]
-        
-        print(f"[Log] BVH Box0 Min X             -> {b_min_x[:, 0].mean().item():.4f}")
-        print(f"[Log] BVH Box0 Max X             -> {b_max_x[:, 0].mean().item():.4f}")
 
-        inv_rd_x = 1.0 / (ray_d_x + 1e-5)
-        inv_rd_y = 1.0 / (ray_d_y + 1e-5)
-        inv_rd_z = 1.0 / (ray_d_z + 1e-5)
+        inv_rd_x, inv_rd_y, inv_rd_z = 1.0 / (ray_d_x + 1e-5), 1.0 / (ray_d_y + 1e-5), 1.0 / (ray_d_z + 1e-5)
 
-        t1_x = (b_min_x - ray_o_x) * inv_rd_x
-        t2_x = (b_max_x - ray_o_x) * inv_rd_x
-        t1_y = (b_min_y - ray_o_y) * inv_rd_y
-        t2_y = (b_max_y - ray_o_y) * inv_rd_y
-        t1_z = (b_min_z - ray_o_z) * inv_rd_z
-        t2_z = (b_max_z - ray_o_z) * inv_rd_z
+        t1_x, t2_x = (b_min_x - ray_o_x) * inv_rd_x, (b_max_x - ray_o_x) * inv_rd_x
+        t1_y, t2_y = (b_min_y - ray_o_y) * inv_rd_y, (b_max_y - ray_o_y) * inv_rd_y
+        t1_z, t2_z = (b_min_z - ray_o_z) * inv_rd_z, (b_max_z - ray_o_z) * inv_rd_z
 
         t_near = torch.maximum(torch.maximum(torch.minimum(t1_x, t2_x), torch.minimum(t1_y, t2_y)), torch.minimum(t1_z, t2_z))
         t_far  = torch.minimum(torch.minimum(torch.maximum(t1_x, t2_x), torch.maximum(t1_y, t2_y)), torch.maximum(t1_z, t2_z))
 
         box_hit_all = torch.clamp(torch.relu((t_far - t_near) * 1000.0), min=0.0, max=1.0) * \
                       torch.clamp(torch.relu(t_far * 1000.0), min=0.0, max=1.0)
-        print(f"[Log] BVH Box Hit Mask (Box0)    -> min: {box_hit_all[:, 0].min().item():.4f}, max: {box_hit_all[:, 0].max().item():.4f}")
 
         # =====================================================================
         # STAGE 3: 仮想レイトライアングル交差テスト回路
@@ -90,17 +73,10 @@ class ANEVirtualRTCore(nn.Module):
         pvec_z = ray_d_x * e2_y - ray_d_y * e2_x
 
         det = e1_x * pvec_x + e1_y * pvec_y + e1_z * pvec_z
-        print(f"[Log] Matrix Determinant (Poly0) -> min: {det[:, 0].min().item():.4f}, max: {det[:, 0].max().item():.4f}")
-        
-        # 【完全安全化】whereを全廃。ピュアなALU（signとclamp）だけでNaNの発生を100%遮断
-        det_sign = torch.sign(det)
-        # 絶対値を取り、極小値を1e-4にクランプしたあと、元の符号を掛け直す
-        safe_det = det_sign * torch.clamp(torch.abs(det), min=1e-4)
+        safe_det = torch.sign(det) * torch.clamp(torch.abs(det), min=1e-4)
         inv_det = 1.0 / safe_det
 
-        tvec_x = ray_o_x - v0_x
-        tvec_y = ray_o_y - v0_y
-        tvec_z = ray_o_z - v0_z
+        tvec_x, tvec_y, tvec_z = ray_o_x - v0_x, ray_o_y - v0_y, ray_o_z - v0_z
 
         u = (tvec_x * pvec_x + tvec_y * pvec_y + tvec_z * pvec_z) * inv_det
         u_valid = torch.clamp(torch.relu(u) * 1000.0, 0.0, 1.0) * torch.clamp(torch.relu(1.0 - u) * 1000.0, 0.0, 1.0)
@@ -113,30 +89,45 @@ class ANEVirtualRTCore(nn.Module):
         v_valid = torch.clamp(torch.relu(v) * 1000.0, 0.0, 1.0) * torch.clamp(torch.relu(1.0 - (u + v)) * 1000.0, 0.0, 1.0)
 
         poly_hit_mask = u_valid * v_valid
-        print(f"[Log] Triangle Hit Mask (Poly0)  -> min: {poly_hit_mask[:, 0].min().item():.4f}, max: {poly_hit_mask[:, 0].max().item():.4f}")
 
-        t = (e2_x * qvec_x + e2_y * qvec_y + e2_z * qvec_z) * inv_det
+        safe_qvec_x = torch.clamp(qvec_x, min=-1000.0, max=1000.0)
+        safe_qvec_y = torch.clamp(qvec_y, min=-1000.0, max=1000.0)
+        safe_qvec_z = torch.clamp(qvec_z, min=-1000.0, max=1000.0)
+        t = (e2_x * safe_qvec_x + e2_y * safe_qvec_y + e2_z * safe_qvec_z) * inv_det
         
-        # =====================================================================
-        # STAGE 4: マルチプレクス
-        # =====================================================================
         box_mask_for_polys = box_hit_all.repeat(1, P // B, 1, 1)
         final_poly_hit_valid = torch.clamp(torch.relu(t) * 1000.0, 0.0, 1.0) * poly_hit_mask * box_mask_for_polys
-        print(f"[Log] Final Combined Mask (Poly0)-> min: {final_poly_hit_valid[:, 0].min().item():.4f}, max: {final_poly_hit_valid[:, 0].max().item():.4f}")
 
         # =====================================================================
-        # STAGE 5: Z-Buffer 出力
+        # STAGE 4: シェーディング & UV補間
         # =====================================================================
-        t_final_buffer = t * final_poly_hit_valid + self.FAR_DEPTH * (1.0 - final_poly_hit_valid)
+        n_x = e1_y * e2_z - e1_z * e2_y
+        n_y = e1_z * e2_x - e1_x * e2_z
+        n_z = e1_x * e2_y - e1_y * e2_x
+        n_len = torch.rsqrt(n_x*n_x + n_y*n_y + n_z*n_z + 1e-5)
+        n_x, n_y, n_z = n_x * n_len, n_y * n_len, n_z * n_len
+
+        l_x, l_y, l_z = 0.5773, 0.5773, 0.5773
+        diffuse = torch.clamp(n_x*l_x + n_y*l_y + n_z*l_z, min=0.0, max=1.0)
+
+        w = 1.0 - (u + v)
+        uv_u = u * 1.0 + v * 0.0 + w * 0.0
+        uv_v = u * 0.0 + v * 1.0 + w * 0.0
+
+        # =====================================================================
+        # STAGE 5: Z-Buffer 出力 & 属性の統合
+        # =====================================================================
+        safe_t = torch.clamp(t, min=-10000.0, max=10000.0)
+        t_final_buffer = (safe_t * final_poly_hit_valid) + (self.FAR_DEPTH * (1.0 - final_poly_hit_valid))
 
         min_depth, _ = torch.min(t_final_buffer, dim=1, keepdim=True)
         render_mask = torch.clamp(torch.relu((self.FAR_DEPTH - 1.0) - min_depth) * 1000.0, 0.0, 1.0)
-        
-        # 【安全化】クラッシュを避けるため、表示側のキャスト処理を安全に記述
-        hit_sum = render_mask.sum().item()
-        if torch.isnan(torch.tensor(hit_sum)):
-            print("[Log] Output Render Mask Pixels -> hit count: NaN / 65536")
-        else:
-            print(f"[Log] Output Render Mask Pixels -> hit count: {int(hit_sum)} / {self.w * self.h}")
 
-        return torch.cat([min_depth, render_mask], dim=1)
+        # 【ANEネイティブ対応】One-Hotマスクによる属性の抽出
+        is_min = torch.clamp(torch.relu(1.0 - torch.abs(t_final_buffer - min_depth) * 1000.0), 0.0, 1.0)
+        
+        diffuse_out = torch.sum(diffuse * is_min, dim=1, keepdim=True) * render_mask
+        uv_u_out = torch.sum(uv_u * is_min, dim=1, keepdim=True) * render_mask
+        uv_v_out = torch.sum(uv_v * is_min, dim=1, keepdim=True) * render_mask
+
+        return torch.cat([min_depth, render_mask, diffuse_out, uv_u_out, uv_v_out], dim=1)
