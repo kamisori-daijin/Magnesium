@@ -8,17 +8,19 @@ from coreai.authoring import AIModelAsset
 from coreai.runtime import InferenceFunction, NDArray
 
 def create_voxel_data(grid_size=8):
-    """
-    8x8x8 のボクセルデータを作成し、ANEのメモリレイアウトに合わせてリシェイプ
-    """
     voxel_data = np.zeros((grid_size, grid_size, grid_size), dtype=np.float16)
-    voxel_data[2:6, 2:6, 2:6] = 1.0
+    center = (grid_size - 1) / 2.0
+    radius = 2.5  # 半径
     
-    # ANEのConv2dが期待する並び順 (Z, Y, X) に転置してからフラット化
-    # これにより、空間的な隣接関係が保たれます
+    for z in range(grid_size):
+        for y in range(grid_size):
+            for x in range(grid_size):
+                if (x - center)**2 + (y - center)**2 + (z - center)**2 <= radius**2:
+                    voxel_data[z, y, x] = 1.0
+                    
     voxel_flat = voxel_data.transpose(2, 1, 0).flatten()
     return voxel_flat.reshape(1, grid_size**3, 1, 1)
-
+    
 def create_inverse_view_matrix(eye, target, up):
     eye = np.array(eye, dtype=np.float32)
     target = np.array(target, dtype=np.float32)
