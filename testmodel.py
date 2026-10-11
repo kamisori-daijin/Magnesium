@@ -65,7 +65,8 @@ def main():
             output_mask = model(voxel_data, inv_view_4d)
 
             # 白黒画像として保存
-            output_image = torch.cat([output_mask] * 3, dim=1).float().cpu()
+            # 【変更】モデルが3チャンネル(RGB)を返すようになったので、そのまま保存します
+            output_image = output_mask.float().cpu()
             output_filename = f"anim_frames/frame_{frame:03d}.png"
             vutils.save_image(output_image, output_filename, normalize=False)
             print(f" Frame {frame+1}/{num_frames} Success -> {output_filename}")
