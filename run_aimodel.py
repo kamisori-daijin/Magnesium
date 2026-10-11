@@ -9,12 +9,15 @@ from coreai.runtime import InferenceFunction, NDArray
 
 def create_voxel_data(grid_size=8):
     """
-    8x8x8 のボクセルデータを作成し、ANEが期待する [1, 512, 1, 1] にリシェイプ
+    8x8x8 のボクセルデータを作成し、ANEのメモリレイアウトに合わせてリシェイプ
     """
-    voxel_data = np.zeros((1, 1, grid_size, grid_size, grid_size), dtype=np.float16)
-    voxel_data[:, :, 2:6, 2:6, 2:6] = 1.0
-    # 8x8x8 = 512 チャンネルとしてフラット化
-    return voxel_data.reshape(1, grid_size**3, 1, 1)
+    voxel_data = np.zeros((grid_size, grid_size, grid_size), dtype=np.float16)
+    voxel_data[2:6, 2:6, 2:6] = 1.0
+    
+    # ANEのConv2dが期待する並び順 (Z, Y, X) に転置してからフラット化
+    # これにより、空間的な隣接関係が保たれます
+    voxel_flat = voxel_data.transpose(2, 1, 0).flatten()
+    return voxel_flat.reshape(1, grid_size**3, 1, 1)
 
 def create_inverse_view_matrix(eye, target, up):
     eye = np.array(eye, dtype=np.float32)
@@ -50,7 +53,6 @@ async def main():
     async with raytracer_asset.executable() as raytracer_model:
         raytracer_function: InferenceFunction = raytracer_model.load_function("main")
         
-        print("Creating Dynamic Voxel Data...")
         grid_size = 8
         voxel_data_np = create_voxel_data(grid_size)
         
