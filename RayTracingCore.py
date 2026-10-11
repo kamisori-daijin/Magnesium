@@ -44,19 +44,16 @@ class ANEDynamicRayTracingCore(nn.Module):
         self.lookup_conv.weight.requires_grad = False
 
     def check_voxel_hit(self, voxel_data, px, py, pz):
-        eps = 2.0 / self.grid_size
+        eps = torch.tensor([[[[2.0 / self.grid_size]]]], device=px.device, dtype=px.dtype)
+        inv_eps = torch.reciprocal(eps)
         
-        # 1. 座標からOne-Hotマスクを作成 (出力は [1, num_voxels, H, W])
-        mask_x = torch.relu(1.0 - torch.abs(px - self.grid_x) / eps)
-        mask_y = torch.relu(1.0 - torch.abs(py - self.grid_y) / eps)
-        mask_z = torch.relu(1.0 - torch.abs(pz - self.grid_z) / eps)
+        mask_x = torch.relu(1.0 - torch.abs(px - self.grid_x) * inv_eps)
+        mask_y = torch.relu(1.0 - torch.abs(py - self.grid_y) * inv_eps)
+        mask_z = torch.relu(1.0 - torch.abs(pz - self.grid_z) * inv_eps)
         
         indices = mask_x * mask_y * mask_z
         
-        # 2. 動的データを 1x1 Conv の重みとしてセット
         self.lookup_conv.weight.data = voxel_data.view(1, self.num_voxels, 1, 1)
-        
-        # 3. Conv2d で高速ルックアップ
         return self.lookup_conv(indices)
 
     def forward(self, voxel_data, inv_view_matrix_64d):
