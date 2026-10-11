@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import torchvision.utils as vutils
+from PIL import Image
 from RayTracingCore import ANEDynamicSDFCore
 
 def create_inverse_view_matrix(eye, target, up):
@@ -24,18 +25,19 @@ def create_inverse_view_matrix(eye, target, up):
     return torch.from_numpy(inv_view).float()
 
 def main():
-    print("Starting Dynamic SDF Combination Test...")
+    print("Starting Ultimate 8-Shape ANE SDF Test...")
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"-> Using Device: {device}")
 
     os.makedirs("anim_frames", exist_ok=True)
 
-    # 動的SDFモデルを初期化
     model = ANEDynamicSDFCore(max_steps=16).to(device).half()
     model.eval()
 
     num_frames = 60
-    print(f"Rendering {num_frames} frames with dynamic shapes...")
+    print(f"Rendering {num_frames} frames with 8 dynamic shapes...")
+
+    frames_for_gif = []
 
     with torch.no_grad():
         for frame in range(num_frames):
@@ -55,38 +57,40 @@ def main():
             inv_view_64[:16] = inv_view_2d
             inv_view_4d = inv_view_64.view(1, 64, 1, 1).to(device).half()
 
-            # --- 動的SDFパラメータの構築 ---
+            # --- 動的SDFパラメータの構築 (8つすべて使用) ---
             sdf_params = torch.zeros(1, 64, 1, 1, dtype=torch.float16, device=device)
             
-            # 図形1: 中央の大きな球体 (常に表示)
-            sdf_params[0, 0] = 0.0  # Type: Sphere
-            sdf_params[0, 1] = 0.0  # Op: Union
-            sdf_params[0, 5] = 0.5  # Size
+            # 図形1: 中央の大きな球体 (ベース)
+            sdf_params[0, 0] = 0.0; sdf_params[0, 1] = 0.0; sdf_params[0, 5] = 0.4
             
-            # 図形2: 動く直方体 (フレーム30までは合体、以降はくり抜き)
-            sdf_params[0, 8] = 1.0  # Type: Box
-            sdf_params[0, 9] = 1.0 if frame > 30 else 0.0 # Op: Difference or Union
-            sdf_params[0, 10] = 0.4 * np.sin(angle * 2) # X
-            sdf_params[0, 11] = 0.4 * np.cos(angle * 2) # Y
-            sdf_params[0, 13] = 0.3  # Size
+            # 図形2: くり抜く用の動く直方体
+            sdf_params[0, 8] = 1.0; sdf_params[0, 9] = 1.0
+            sdf_params[0, 10] = 0.5 * np.sin(angle); sdf_params[0, 13] = 0.25
             
-            # 図形3: フレーム15から45の間だけ出現する小さな球
-            # 図形3: フレーム15から45の間だけ出現する小さな球
-            if 15 <= frame <= 45:
-                sdf_params[0, 16] = 0.0  # Type: Sphere
-                sdf_params[0, 17] = 0.0  # Op: Union
-                sdf_params[0, 18] = -0.5 # X
-                sdf_params[0, 20] = 0.5  # Z
-                sdf_params[0, 21] = 0.2  # Size
-            else:
-                            # 【修正】サイズを0にして、合体(Union)にすることで無効化
-                sdf_params[0, 17] = 0.0  # Op: Union
-                sdf_params[0, 21] = 0.0  # Size
-                            
-                        # 図形4: 未使用
-                        # 【修正】こちらもサイズ0、合体(Union)で無効化
-            sdf_params[0, 25] = 0.0  # Op: Union
-            sdf_params[0, 29] = 0.0  # Size
+            # 図形3: 周回するカプセル
+            sdf_params[0, 16] = 2.0; sdf_params[0, 17] = 0.0
+            sdf_params[0, 18] = 0.7 * np.cos(angle); sdf_params[0, 20] = 0.7 * np.sin(angle)
+            sdf_params[0, 21] = 0.15
+            
+            # 図形4: 上下するトーラス
+            sdf_params[0, 24] = 3.0; sdf_params[0, 25] = 0.0
+            sdf_params[0, 27] = 0.5 * np.sin(angle * 3); sdf_params[0, 29] = 0.2
+            
+            # 図形5: 小さな球（合体）
+            sdf_params[0, 32] = 0.0; sdf_params[0, 33] = 0.0
+            sdf_params[0, 34] = -0.4; sdf_params[0, 35] = 0.4 * np.cos(angle); sdf_params[0, 37] = 0.15
+            
+            # 図形6: 小さな直方体（くり抜き）
+            sdf_params[0, 40] = 1.0; sdf_params[0, 41] = 1.0
+            sdf_params[0, 42] = 0.4; sdf_params[0, 43] = -0.4; sdf_params[0, 45] = 0.15
+            
+            # 図形7: 斜めに動くカプセル
+            sdf_params[0, 48] = 2.0; sdf_params[0, 49] = 0.0
+            sdf_params[0, 50] = 0.3 * np.sin(angle); sdf_params[0, 51] = 0.3 * np.sin(angle); sdf_params[0, 53] = 0.1
+            
+            # 図形8: 中心をくり抜く小さなトーラス
+            sdf_params[0, 56] = 3.0; sdf_params[0, 57] = 1.0
+            sdf_params[0, 61] = 0.3
             # -----------------------------
 
             output_mask = model(inv_view_4d, sdf_params)
@@ -94,9 +98,20 @@ def main():
             output_image = output_mask.float().cpu()
             output_filename = f"anim_frames/frame_{frame:03d}.png"
             vutils.save_image(output_image, output_filename, normalize=False)
-            print(f" Frame {frame+1}/{num_frames} Success -> {output_filename}")
+            
+            frames_for_gif.append(Image.open(output_filename))
+            print(f" Frame {frame+1}/{num_frames} Success")
 
-        print("All dynamic frames rendered successfully!")
+        gif_path = "anim_frames/output.gif"
+        frames_for_gif[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames_for_gif[1:],
+            optimize=False,
+            duration=50,
+            loop=0
+        )
+        print(f"\nSuccess! GIF saved at: {gif_path}")
     
 if __name__ == "__main__":
     main()
