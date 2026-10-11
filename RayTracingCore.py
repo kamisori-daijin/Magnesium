@@ -8,6 +8,7 @@ class ANEDynamicRayTracingCore(nn.Module):
         self.max_steps = max_steps
         self.dt = 0.05
         self.grid_size = grid_size
+        self.num_voxels = grid_size ** 3
         
         self.register_buffer("eps", torch.tensor([[[[0.05]]]]).half())
         self.register_buffer("floor_y", torch.tensor([[[[-0.8]]]]).half())
@@ -26,31 +27,37 @@ class ANEDynamicRayTracingCore(nn.Module):
         self.register_buffer("step_ratios", (torch.arange(self.max_steps).view(1, self.max_steps, 1, 1) * self.dt).half())
         self.register_buffer("shadow_ratios", (torch.arange(16).view(1, 16, 1, 1) * self.dt).half())
 
-        # 座標グリッドを1次元のチャネルとして定義
+        # 座標グリッド
         coords = torch.linspace(-1.0, 1.0, self.grid_size).half()
         grid_z, grid_y, grid_x = torch.meshgrid(coords, coords, coords, indexing='ij')
-        
         self.register_buffer("grid_x", grid_x.reshape(1, -1, 1, 1))
         self.register_buffer("grid_y", grid_y.reshape(1, -1, 1, 1))
         self.register_buffer("grid_z", grid_z.reshape(1, -1, 1, 1))
 
+        # ANE用 累積和 Conv2d
         self.ane_cumsum_conv = nn.Conv2d(self.max_steps, self.max_steps, kernel_size=1, bias=False)
         self.ane_cumsum_conv.weight.data = torch.tril(torch.ones(self.max_steps, self.max_steps)).view(self.max_steps, self.max_steps, 1, 1).half()
         self.ane_cumsum_conv.weight.requires_grad = False
 
+        # 動的ルックアップ用 1x1 Conv2d
+        self.lookup_conv = nn.Conv2d(self.num_voxels, 1, kernel_size=1, bias=False)
+        self.lookup_conv.weight.requires_grad = False
+
     def check_voxel_hit(self, voxel_data, px, py, pz):
         eps = 2.0 / self.grid_size
         
-        # px, py, pz は [1, max_steps, H, W] -> これをチャネル方向にブロードキャスト
-        mask_x = torch.relu(1.0 - torch.abs(px.unsqueeze(2) - self.grid_x.unsqueeze(1)) / eps)
-        mask_y = torch.relu(1.0 - torch.abs(py.unsqueeze(2) - self.grid_y.unsqueeze(1)) / eps)
-        mask_z = torch.relu(1.0 - torch.abs(pz.unsqueeze(2) - self.grid_z.unsqueeze(1)) / eps)
+        # 1. 座標からOne-Hotマスクを作成 (出力は [1, num_voxels, H, W])
+        mask_x = torch.relu(1.0 - torch.abs(px - self.grid_x) / eps)
+        mask_y = torch.relu(1.0 - torch.abs(py - self.grid_y) / eps)
+        mask_z = torch.relu(1.0 - torch.abs(pz - self.grid_z) / eps)
         
-        # full_mask: [1, max_steps, grid_size^3, H, W] のような形になるのを防ぎ、4次元に収める
-        full_mask = mask_x * mask_y * mask_z
+        indices = mask_x * mask_y * mask_z
         
-        masked_data = voxel_data.view(1, -1, 1, 1) * full_mask
-        return torch.sum(masked_data, dim=2, keepdim=False)
+        # 2. 動的データを 1x1 Conv の重みとしてセット
+        self.lookup_conv.weight.data = voxel_data.view(1, self.num_voxels, 1, 1)
+        
+        # 3. Conv2d で高速ルックアップ
+        return self.lookup_conv(indices)
 
     def forward(self, voxel_data, inv_view_matrix_64d):
         def get_mat_val(mat, idx): return mat[:, idx:idx+1, :, :]
@@ -69,7 +76,9 @@ class ANEDynamicRayTracingCore(nn.Module):
 
         px_all, py_all, pz_all = init_px + init_dx * self.step_ratios, init_py + init_dy * self.step_ratios, init_pz + init_dz * self.step_ratios
 
-        object_hit_all = self.check_voxel_hit(voxel_data, px_all, py_all, pz_all)
+        # 各ステップのボクセル判定
+        object_hit_all = torch.cat([self.check_voxel_hit(voxel_data, px_all[:, i:i+1], py_all[:, i:i+1], pz_all[:, i:i+1]) for i in range(self.max_steps)], dim=1)
+        
         floor_hit_all = torch.clamp(torch.relu(self.floor_y - py_all) * 100.0, min=0.0, max=1.0)
         any_hit_all = torch.clamp(object_hit_all + floor_hit_all, min=0.0, max=1.0)
 
@@ -102,7 +111,7 @@ class ANEDynamicRayTracingCore(nn.Module):
         spy_all = py + 0.04 * self.light_dy + self.light_dy * self.shadow_ratios
         spz_all = pz + 0.04 * self.light_dz + self.light_dz * self.shadow_ratios
         
-        s_hit = self.check_voxel_hit(voxel_data, spx_all, spy_all, spz_all)
+        s_hit = torch.cat([self.check_voxel_hit(voxel_data, spx_all[:, i:i+1], spy_all[:, i:i+1], spz_all[:, i:i+1]) for i in range(16)], dim=1)
         accum_shadow = torch.sum(s_hit, dim=1, keepdim=True).clamp(0.0, 1.0) * hit_floor_mask
 
         diffuse = torch.relu(first_nx * self.light_dx + first_ny * self.light_dy + first_nz * self.light_dz)
