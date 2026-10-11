@@ -52,7 +52,9 @@ class ANEDynamicRayTracingCore(nn.Module):
         mask_z = torch.relu(1.0 - torch.abs(pz - self.grid_z) * inv_eps)
         
         indices = mask_x * mask_y * mask_z
-        w = voxel_data.view(1, self.num_voxels, 1, 1, 1)
+        
+        # 入力が [1, 512, 1, 1] であっても、ここで5次元に安全に変形する
+        w = voxel_data.reshape(1, self.num_voxels, 1, 1, 1)
         
         return torch.sum(indices * w, dim=1)
 
