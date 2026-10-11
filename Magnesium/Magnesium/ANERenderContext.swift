@@ -87,11 +87,11 @@ class ANERenderContext {
         let eyeY = radius * cosHalfAngle * 0.3 + 1.2
         let eyeZ = radius * cosAngle
         
+        // 【修正】time 引数を削除
         mgDevice.updateCamera(
             eye: SIMD3<Float>(eyeX, eyeY, eyeZ),
             target: SIMD3<Float>(0.0, 0.0, 0.0),
-            up: SIMD3<Float>(0.0, 1.0, 0.0),
-            time: currentAngle
+            up: SIMD3<Float>(0.0, 1.0, 0.0)
         )
 
         guard let mgCommandQueue = self.mgCommandQueue,

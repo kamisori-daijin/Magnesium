@@ -10,8 +10,11 @@ public protocol MGDevice: AnyObject {
     // Double Buffering
     func getCurrentDisplayBuffer() -> MTLBuffer?
     
-    func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float)
-    func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
+    // 【修正】time 引数を削除
+    func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>)
+    
+    // 【修正】ボクセルデータ操作用にリネーム
+    func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
@@ -41,20 +44,21 @@ internal final class MagnesiumDevice: MGDevice {
     
     public func makeCommandQueue() -> MGCommandQueue? { MagnesiumCommandQueue(device: self) }
     
-
     public func getCurrentDisplayBuffer() -> MTLBuffer? {
         renderer?.getCurrentDisplayBuffer()
     }
     
-    public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>, time: Float) {
-        renderer?.updateCamera(eye: eye, target: target, up: up, time: time)
+    // 【修正】time 引数を削除
+    public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) {
+        renderer?.updateCamera(eye: eye, target: target, up: up)
     }
 
-    public func withMultiviewTexturePointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
+    // 【修正】ボクセルデータ操作用にリネーム
+    public func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer,
-              let texBuf = renderer.multiviewTextureBuffer else { return }
+              let voxelBuf = renderer.voxelDataBuffer else { return }
         
-        let rawPointer = texBuf.contents().assumingMemoryBound(to: Float16.self)
+        let rawPointer = voxelBuf.contents().assumingMemoryBound(to: Float16.self)
         body(rawPointer)
     }
 }
