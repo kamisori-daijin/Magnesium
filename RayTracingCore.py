@@ -22,19 +22,24 @@ class ANEDynamicSDFCore(nn.Module):
         # Sphere
         d_sphere = torch.sqrt(px*px + py*py + pz*pz + 1e-5) - size
         
-        # Box (ANEに最適化: ReLUと算術演算のみ)
+        # Box
         dx = torch.abs(px) - size
         dy = torch.abs(py) - size
         dz = torch.abs(pz) - size
-        
-        # 外部の距離
+    
         outside = torch.sqrt(torch.relu(dx)**2 + torch.relu(dy)**2 + torch.relu(dz)**2)
         
-        # 内部の距離 (maximumを使わずに表現)
-        # dx, dy, dz の中で最大のものに近い値を近似的に計算、または単純なmaxの代替
-        d_max = dx + torch.relu(dy - dx)
-        d_max = d_max + torch.relu(dz - d_max)
-        inside = d_max - torch.relu(d_max) # 0以下にクランプ
+        # dx, dy, dz Max
+        m_xy = torch.relu((dx - dy) * 10000.0)
+        m_xy = torch.clamp(m_xy, 0.0, 1.0) # dx > dy -> 1
+        max_xy = m_xy * dx + (1.0 - m_xy) * dy
+        
+        m_xyz = torch.relu((max_xy - dz) * 10000.0)
+        m_xyz = torch.clamp(m_xyz, 0.0, 1.0)
+        max_xyz = m_xyz * max_xy + (1.0 - m_xyz) * dz
+        m_inside = torch.relu(-max_xyz * 10000.0)
+        m_inside = torch.clamp(m_inside, 0.0, 1.0)
+        inside = m_inside * max_xyz
         
         d_box = outside + inside
         

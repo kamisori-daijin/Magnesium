@@ -87,35 +87,45 @@ class ANERenderContext {
             )
 
 
-                    mgDevice.withSDFDataPointer { ptr in
-                        // Initialize
-                        for i in 0..<64 { ptr[i] = 0.0 }
-                        
-                        // Big Sphere
-                        ptr[0] = 0.0; ptr[1] = 0.0
-                        ptr[0+3] = Float16(0.1 * sin(currentAngle * 2.0)); ptr[0+5] = 0.3
-                        
-                        // Box1
-                        ptr[8] = 1.0; ptr[9] = 0.0
-                        ptr[8+2] = Float16(0.6 * cos(currentAngle)); ptr[8+4] = Float16(0.6 * sin(currentAngle))
-                        ptr[8+5] = 0.15
-                        
-                        // Box2
-                        ptr[16] = 1.0; ptr[17] = 0.0
-                        ptr[16+2] = Float16(0.6 * cos(-currentAngle)); ptr[16+4] = Float16(0.6 * sin(-currentAngle))
-                        ptr[16+5] = 0.15
-                        
-                        // Small Sphere
-                        ptr[24] = 0.0; ptr[25] = 0.0
-                        ptr[24+3] = Float16(0.5 * sin(currentAngle * 3.0)); ptr[24+5] = 0.1
-                        
-                        // None
-                        for i in 4..<8 {
-                            let idx = i * 8
-                            ptr[idx] = 0.0; ptr[idx+2] = 100.0; ptr[idx+5] = -10.0
-                        }
-                    }
-
+        mgDevice.withSDFDataPointer { ptr in
+            // Initialize
+            for i in 0..<64 { ptr[i] = 0.0 }
+            
+            let angle = Float16(currentAngle)
+            
+            // 1. Sphere
+            ptr[0] = 0.0; ptr[1] = 0.0
+            ptr[0+5] = 0.4
+            
+            // 2. Shape2 (Box)
+            ptr[8] = 1.0; ptr[9] = 1.0
+            ptr[8+2] = Float16(0.5 * sin(Float(angle))); ptr[8+5] = 0.25
+            
+            // 3. Capsule
+            ptr[16] = 2.0; ptr[17] = 0.0
+            ptr[16+2] = Float16(0.7 * cos(Float(angle))); ptr[16+4] = Float16(0.7 * sin(Float(angle)))
+            ptr[16+5] = 0.15
+            
+            // 4. Torus
+            ptr[24] = 3.0; ptr[25] = 0.0
+            ptr[24+3] = Float16(0.5 * sin(Float(angle) * 3.0)); ptr[24+5] = 0.2
+            
+            // 5. Small Sphere
+            ptr[32] = 0.0; ptr[33] = 0.0
+            ptr[32+2] = -0.4; ptr[32+3] = Float16(0.4 * cos(Float(angle))); ptr[32+5] = 0.15
+            
+            // 6. Small Box
+            ptr[40] = 1.0; ptr[41] = 1.0
+            ptr[40+2] = 0.4; ptr[40+3] = -0.4; ptr[40+5] = 0.15
+            
+            // 7. Capsule 2
+            ptr[48] = 2.0; ptr[49] = 0.0
+            ptr[48+2] = Float16(0.3 * sin(Float(angle))); ptr[48+3] = Float16(0.3 * sin(Float(angle))); ptr[48+5] = 0.1
+            
+            // 8. Torus 2
+            ptr[56] = 3.0; ptr[57] = 1.0
+            ptr[56+5] = 0.3
+        }
             guard let mgCommandQueue = self.mgCommandQueue,
                   let mgCommandBuffer = mgCommandQueue.makeCommandBuffer() else {
                 self.isComputing = false
