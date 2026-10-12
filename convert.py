@@ -1,23 +1,23 @@
 import coreai_torch
 from coreai_torch import TorchConverter
 import torch
-from RayTracingCore import ANEDynamicRayTracingCore
+from RayTracingCore import ANEDynamicSDFCore
 from pathlib import Path
 
 # 1. Instance
-grid_size = 8
-model = ANEDynamicRayTracingCore(grid_size=grid_size).to(dtype=torch.float16)
+# 【修正】新しいSDFモデルを使用
+model = ANEDynamicSDFCore(max_steps=16).to(dtype=torch.float16)
 model.eval()
 
 # 2. Inputs
-# ボクセルデータ: grid_size^3 の要素数を持つ4次元テンソル
-num_voxels = grid_size ** 3
-voxel_input_shape = torch.zeros(1, num_voxels, 1, 1, dtype=torch.float16)
-
-# Camera Matrix
+# Camera Matrix (64チャンネル)
 matrix_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
 
-args = (voxel_input_shape, matrix_input_shape)
+# 【修正】SDFパラメータ (8図形 × 8パラメータ = 64チャンネル)
+sdf_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
+
+# 【注意】モデルの forward の引数の順番に合わせる
+args = (matrix_input_shape, sdf_input_shape)
 
 # 3. Convert
 print("Tracing...")

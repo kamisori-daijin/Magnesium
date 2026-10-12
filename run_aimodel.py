@@ -7,20 +7,31 @@ from PIL import Image
 from coreai.authoring import AIModelAsset
 from coreai.runtime import InferenceFunction, NDArray
 
-def create_voxel_data(grid_size=8):
-    voxel_data = np.zeros((grid_size, grid_size, grid_size), dtype=np.float16)
-    center = (grid_size - 1) / 2.0
-    radius = 2.5  # 半径
+def create_sdf_params():
+    """
+    8つの図形パラメータを作成 (64チャンネル)
+    """
+    sdf_params = np.zeros((1, 64, 1, 1), dtype=np.float16)
     
-    for z in range(grid_size):
-        for y in range(grid_size):
-            for x in range(grid_size):
-                if (x - center)**2 + (y - center)**2 + (z - center)**2 <= radius**2:
-                    voxel_data[z, y, x] = 1.0
-                    
-    voxel_flat = voxel_data.transpose(2, 1, 0).flatten()
-    return voxel_flat.reshape(1, grid_size**3, 1, 1)
+    # 図形1: 中央の大きな球体
+    sdf_params[0, 0, 0, 0] = 0.0  # Type: Sphere
+    sdf_params[0, 1, 0, 0] = 0.0  # Op: Union
+    sdf_params[0, 5, 0, 0] = 0.4  # Size
     
+    # 図形2: くり抜く用の直方体
+    sdf_params[0, 8, 0, 0] = 1.0  # Type: Box
+    sdf_params[0, 9, 0, 0] = 1.0  # Op: Difference
+    sdf_params[0, 10, 0, 0] = 0.2 # X
+    sdf_params[0, 13, 0, 0] = 0.25 # Size
+    
+    # 残りの図形はサイズ0で無効化
+    for i in range(2, 8):
+        idx = i * 8
+        sdf_params[0, idx+1, 0, 0] = 0.0 # Op: Union
+        sdf_params[0, idx+5, 0, 0] = 0.0 # Size
+        
+    return sdf_params
+
 def create_inverse_view_matrix(eye, target, up):
     eye = np.array(eye, dtype=np.float32)
     target = np.array(target, dtype=np.float32)
@@ -55,11 +66,9 @@ async def main():
     async with raytracer_asset.executable() as raytracer_model:
         raytracer_function: InferenceFunction = raytracer_model.load_function("main")
         
-        grid_size = 8
-        voxel_data_np = create_voxel_data(grid_size)
-        
-        input_voxel_name = raytracer_function.desc.input_names[0]
-        input_mat_name = raytracer_function.desc.input_names[1]
+        # 入力名の取得
+        input_mat_name = raytracer_function.desc.input_names[0]
+        input_sdf_name = raytracer_function.desc.input_names[1]
         output_port_name = raytracer_function.desc.output_names[0]
         
         num_frames = 30
@@ -82,9 +91,13 @@ async def main():
             inv_view_64[:16] = inv_view_16
             inv_view_4d_np = inv_view_64.reshape(1, 64, 1, 1)
             
+            # 動的にパラメータを更新
+            sdf_params_np = create_sdf_params()
+            sdf_params_np[0, 10, 0, 0] = 0.4 * np.sin(angle) # 直方体を動かす
+            
             inputs = {
-                input_voxel_name: NDArray(voxel_data_np),
-                input_mat_name: NDArray(inv_view_4d_np)
+                input_mat_name: NDArray(inv_view_4d_np),
+                input_sdf_name: NDArray(sdf_params_np)
             }
             
             outputs = await raytracer_function(inputs)

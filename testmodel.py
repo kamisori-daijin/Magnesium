@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import torchvision.utils as vutils
 from PIL import Image
+import resource
 from RayTracingCore import ANEDynamicSDFCore
 
 def create_inverse_view_matrix(eye, target, up):
@@ -93,14 +94,22 @@ def main():
             sdf_params[0, 61] = 0.3
             # -----------------------------
 
+            # 推論の実行
             output_mask = model(inv_view_4d, sdf_params)
+
+            if device.type == "mps":
+                torch.mps.synchronize()
+
+            # プロセス全体のメモリ使用量(MB)を取得
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            mem_used_mb = usage.ru_maxrss / (1024 * 1024)
 
             output_image = output_mask.float().cpu()
             output_filename = f"anim_frames/frame_{frame:03d}.png"
             vutils.save_image(output_image, output_filename, normalize=False)
             
             frames_for_gif.append(Image.open(output_filename))
-            print(f" Frame {frame+1}/{num_frames} Success")
+            print(f" Frame {frame+1}/{num_frames} Success | Process Memory: {mem_used_mb:.2f} MB")
 
         gif_path = "anim_frames/output.gif"
         frames_for_gif[0].save(
