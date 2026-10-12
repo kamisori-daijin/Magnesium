@@ -14,33 +14,26 @@ class ANEDynamicSDFCore(nn.Module):
         self.register_buffer("cam_dy", y_grid.expand(1, 1, self.h, self.w).half())
         self.register_buffer("cam_dz", torch.full((1, 1, self.h, self.w), -1.0).half())
 
-        # Cumsum を実行するための 1x1 Conv2d
         self.cumsum_conv = nn.Conv2d(max_steps, max_steps, kernel_size=1, bias=False)
-        
-        # 下三角行列の重みを作成して固定
         weight = torch.tril(torch.ones(max_steps, max_steps)).view(max_steps, max_steps, 1, 1)
         self.cumsum_conv.weight = nn.Parameter(weight.half(), requires_grad=False)
 
     def get_sdf(self, px, py, pz, type_val, size):
-        # Sphere
         d_sphere = torch.sqrt(px*px + py*py + pz*pz + 1e-5) - size
         
-        # Box
-        dx, dy, dz = torch.abs(px) - size, torch.abs(py) - size, torch.abs(pz) - size
-        max_d = torch.max(torch.max(dx, dy), dz)
-        inside = -torch.relu(-max_d)
+        dx = torch.abs(px) - size
+        dy = torch.abs(py) - size
+        dz = torch.abs(pz) - size
         outside = torch.sqrt(torch.relu(dx)**2 + torch.relu(dy)**2 + torch.relu(dz)**2)
-        d_box = inside + outside
+        inside = torch.minimum(torch.maximum(torch.maximum(dx, dy), dz), torch.zeros_like(dx))
+        d_box = outside + inside
         
-        # Capsule
         py_clamped = torch.maximum(torch.minimum(py, size), -size)
         d_capsule = torch.sqrt(px*px + (py - py_clamped)**2 + pz*pz + 1e-5) - (size * 0.5)
         
-        # Torus
         q_x = torch.sqrt(px*px + pz*pz + 1e-5) - size
         d_torus = torch.sqrt(q_x*q_x + py*py + 1e-5) - (size * 0.3)
 
-        # ReLUによる形状選択マスク
         m0 = torch.relu(1.0 - torch.abs(type_val - 0.0))
         m1 = torch.relu(1.0 - torch.abs(type_val - 1.0))
         m2 = torch.relu(1.0 - torch.abs(type_val - 2.0))
@@ -69,18 +62,24 @@ class ANEDynamicSDFCore(nn.Module):
 
         op = op_val.transpose(1, 2)
         
-        # ReLUによるUnion/Differenceマスク
-        mask_union = 1.0 - torch.relu(op)
-        mask_diff  = torch.relu(op)
+        # ペア処理: 8つの図形を4つのペアに分ける
+        d_even = d[:, :, 0::2, :, :] # 0, 2, 4, 6
+        d_odd  = d[:, :, 1::2, :, :] # 1, 3, 5, 7
+        op_odd = op[:, :, 1::2, :, :]
         
-        inf_val = 1000.0
-        val_union = (d * mask_union) + (1.0 - mask_union) * inf_val
-        val_diff  = ((-d) * mask_diff) + (1.0 - mask_diff) * (-inf_val)
+        mask_union = 1.0 - torch.relu(op_odd)
+        mask_diff  = torch.relu(op_odd)
         
-        min_union, _ = torch.min(val_union, dim=2, keepdim=False)
-        max_diff, _  = torch.max(val_diff,  dim=2, keepdim=False)
+        # Union の場合は min(even, odd)、 Difference の場合は max(even, -odd)
+        pair_union = torch.minimum(d_even, d_odd)
+        pair_diff  = torch.maximum(d_even, -d_odd)
         
-        return torch.max(min_union, max_diff)
+        pair_d = (pair_union * mask_union) + (pair_diff * mask_diff)
+        
+        # 最後に4つのペアをすべて合体
+        final_d, _ = torch.min(pair_d, dim=2, keepdim=False)
+        
+        return final_d
 
     def forward(self, inv_view_matrix_64d, sdf_params):
         def get_mat_val(mat, idx): return mat[:, idx:idx+1, :, :]
@@ -98,14 +97,13 @@ class ANEDynamicSDFCore(nn.Module):
         
         px, py, pz = get_mat_val(inv_view_matrix_64d, 3), get_mat_val(inv_view_matrix_64d, 7), get_mat_val(inv_view_matrix_64d, 11)
 
-        # あらかじめステップごとの初期位置を少しずつズラして配置
-        step_offsets = torch.linspace(0.0, 2.0, self.max_steps, device=px.device).view(1, self.max_steps, 1, 1).half()
+        step_offsets = torch.linspace(0.0, 1.0, self.max_steps, device=px.device).view(1, self.max_steps, 1, 1).half()
         
         px_c = px.expand(1, self.max_steps, self.h, self.w) + init_dx * step_offsets
         py_c = py.expand(1, self.max_steps, self.h, self.w) + init_dy * step_offsets
         pz_c = pz.expand(1, self.max_steps, self.h, self.w) + init_dz * step_offsets
 
-        dists = self.scene_sdf(px_c, py_c, pz_c, sdf_params) * 0.5
+        dists = self.scene_sdf(px_c, py_c, pz_c, sdf_params) * 0.3
         accumulated_dists = self.cumsum_conv(dists)
 
         px_final = px_c + init_dx * accumulated_dists
