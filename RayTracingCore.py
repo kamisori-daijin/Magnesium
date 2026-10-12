@@ -19,46 +19,51 @@ class ANEDynamicSDFCore(nn.Module):
         self.cumsum_conv.weight = nn.Parameter(weight.half(), requires_grad=False)
 
     def get_sdf(self, px, py, pz, type_val, size):
-        # Sphere
+        # 1. Sphere
         d_sphere = torch.sqrt(px*px + py*py + pz*pz + 1e-5) - size
         
-        # Box
+        # 2. Box 
         dx = torch.abs(px) - size
         dy = torch.abs(py) - size
         dz = torch.abs(pz) - size
-    
+        
         outside = torch.sqrt(torch.relu(dx)**2 + torch.relu(dy)**2 + torch.relu(dz)**2)
         
-        # dx, dy, dz Max
-        m_xy = torch.relu((dx - dy) * 10000.0)
-        m_xy = torch.clamp(m_xy, 0.0, 1.0) # dx > dy -> 1
+        m_xy = torch.clamp((dx - dy) * 10000.0 + 0.5, 0.0, 1.0)
         max_xy = m_xy * dx + (1.0 - m_xy) * dy
         
-        m_xyz = torch.relu((max_xy - dz) * 10000.0)
-        m_xyz = torch.clamp(m_xyz, 0.0, 1.0)
-        max_xyz = m_xyz * max_xy + (1.0 - m_xyz) * dz
-        m_inside = torch.relu(-max_xyz * 10000.0)
-        m_inside = torch.clamp(m_inside, 0.0, 1.0)
-        inside = m_inside * max_xyz
+        m_xyz = torch.clamp((max_xy - dz) * 10000.0 + 0.5, 0.0, 1.0)
+        inside = m_xyz * max_xy + (1.0 - m_xyz) * dz
         
-        d_box = outside + inside
+        m_out = torch.clamp(inside * 10000.0 + 0.5, 0.0, 1.0)
+        d_box = m_out * outside + (1.0 - m_out) * inside
         
-        # Capsule
+        # 3. Capsule
         half_len = size * 0.5
         py_clamped = torch.clamp(py, -half_len, half_len)
         d_capsule = torch.sqrt(px*px + (py - py_clamped)**2 + pz*pz + 1e-5) - (size * 0.3)
         
-        # Torus
+        # 4. Torus
         q_x = torch.sqrt(px*px + pz*pz + 1e-5) - size
         d_torus = torch.sqrt(q_x*q_x + py*py + 1e-5) - (size * 0.3)
 
-        # ReLU Mask
-        m0 = torch.relu(1.0 - torch.abs(type_val - 0.0))
-        m1 = torch.relu(1.0 - torch.abs(type_val - 1.0))
-        m2 = torch.relu(1.0 - torch.abs(type_val - 2.0))
-        m3 = torch.relu(1.0 - torch.abs(type_val - 3.0))
+        # ReLU Mask (0 or 1)
+        m0 = torch.clamp((1.0 - torch.abs(type_val - 0.0)) * 10000.0, 0.0, 1.0)
+        m1 = torch.clamp((1.0 - torch.abs(type_val - 1.0)) * 10000.0, 0.0, 1.0)
+        m2 = torch.clamp((1.0 - torch.abs(type_val - 2.0)) * 10000.0, 0.0, 1.0)
+        m3 = torch.clamp((1.0 - torch.abs(type_val - 3.0)) * 10000.0, 0.0, 1.0)
         
-        return m0 * d_sphere + m1 * d_box + m2 * d_capsule + m3 * d_torus
+        # 100.0 
+        inf_val = 100.0
+        d_sphere_safe  = d_sphere  + (1.0 - m0) * inf_val
+        d_box_safe     = d_box     + (1.0 - m1) * inf_val
+        d_capsule_safe = d_capsule + (1.0 - m2) * inf_val
+        d_torus_safe   = d_torus   + (1.0 - m3) * inf_val
+        
+        # Min
+        d1 = torch.minimum(d_sphere_safe, d_box_safe)
+        d2 = torch.minimum(d_capsule_safe, d_torus_safe)
+        return torch.minimum(d1, d2)
 
     def scene_sdf(self, px, py, pz, sdf_params):
         B, _, H, W = sdf_params.shape
@@ -78,9 +83,7 @@ class ANEDynamicSDFCore(nn.Module):
             size.transpose(1, 2)
         )
 
-        # Min Fusion
         final_d, _ = torch.min(d, dim=2, keepdim=False)
-        
         return final_d
 
     def forward(self, inv_view_matrix_64d, sdf_params):
