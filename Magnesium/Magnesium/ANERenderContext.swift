@@ -68,10 +68,8 @@ class ANERenderContext {
             guard let mgDevice = self.mgDevice, !self.isComputing else { return }
             
             self.isComputing = true
-            
-            // Pythonのテストコードに合わせたAngleの計算
-            // 60フレームで1周するアニメーションを再現
-            let numFrames: Float = 60.0
+        
+            let numFrames: Float = 180.0
             self.angle += 1.0
             if self.angle >= numFrames { self.angle = 0.0 }
             
@@ -88,42 +86,35 @@ class ANERenderContext {
                 up: SIMD3<Float>(0.0, 1.0, 0.0)
             )
 
-            // --- 動的SDFパラメータの更新 ---
-        mgDevice.withSDFDataPointer { ptr in
-            // 初期化
-            for i in 0..<64 { ptr[i] = 0.0 }
-            
-            // 図形1: 中央の大きな球体
-            ptr[0] = 0.0; ptr[1] = 0.0; ptr[5] = 0.4
-            
-            // 図形2: くり抜く用の動く直方体
-            ptr[8] = 1.0; ptr[9] = 1.0
-            ptr[8+2] = Float16(0.5 * sin(currentAngle)); ptr[8+5] = 0.25
-            
-            // 図形3: 周回するカプセル
-            ptr[16] = 2.0; ptr[17] = 0.0
-            ptr[16+2] = Float16(0.7 * cos(currentAngle)); ptr[16+4] = Float16(0.7 * sin(currentAngle)); ptr[16+5] = 0.15
-            
-            // 図形4: 上下するトーラス
-            ptr[24] = 3.0; ptr[25] = 0.0
-            ptr[24+3] = Float16(0.5 * sin(currentAngle * 3)); ptr[24+5] = 0.2
-            
-            // 図形5: 小さな球（合体）
-            ptr[32] = 0.0; ptr[33] = 0.0
-            ptr[32+2] = -0.4; ptr[32+3] = Float16(0.4 * cos(currentAngle)); ptr[32+5] = 0.15
-            
-            // 図形6: 小さな直方体（くり抜き）
-            ptr[40] = 1.0; ptr[41] = 1.0
-            ptr[40+2] = 0.4; ptr[40+3] = -0.4; ptr[40+5] = 0.15
-            
-            // 図形7: 斜めに動くカプセル
-            ptr[48] = 2.0; ptr[49] = 0.0
-            ptr[48+2] = Float16(0.3 * sin(currentAngle)); ptr[48+3] = Float16(0.3 * sin(currentAngle)); ptr[48+5] = 0.1
-            
-            // 図形8: 中心をくり抜く小さなトーラス
-            ptr[56] = 3.0; ptr[57] = 1.0
-            ptr[56+5] = 0.3
-        }
+
+                    mgDevice.withSDFDataPointer { ptr in
+                        // Initialize
+                        for i in 0..<64 { ptr[i] = 0.0 }
+                        
+                        // Big Sphere
+                        ptr[0] = 0.0; ptr[1] = 0.0
+                        ptr[0+3] = Float16(0.1 * sin(currentAngle * 2.0)); ptr[0+5] = 0.3
+                        
+                        // Box1
+                        ptr[8] = 1.0; ptr[9] = 0.0
+                        ptr[8+2] = Float16(0.6 * cos(currentAngle)); ptr[8+4] = Float16(0.6 * sin(currentAngle))
+                        ptr[8+5] = 0.15
+                        
+                        // Box2
+                        ptr[16] = 1.0; ptr[17] = 0.0
+                        ptr[16+2] = Float16(0.6 * cos(-currentAngle)); ptr[16+4] = Float16(0.6 * sin(-currentAngle))
+                        ptr[16+5] = 0.15
+                        
+                        // Small Sphere
+                        ptr[24] = 0.0; ptr[25] = 0.0
+                        ptr[24+3] = Float16(0.5 * sin(currentAngle * 3.0)); ptr[24+5] = 0.1
+                        
+                        // None
+                        for i in 4..<8 {
+                            let idx = i * 8
+                            ptr[idx] = 0.0; ptr[idx+2] = 100.0; ptr[idx+5] = -10.0
+                        }
+                    }
 
             guard let mgCommandQueue = self.mgCommandQueue,
                   let mgCommandBuffer = mgCommandQueue.makeCommandBuffer() else {

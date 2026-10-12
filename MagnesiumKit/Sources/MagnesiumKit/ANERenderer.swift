@@ -13,7 +13,7 @@ class ANERenderer {
     private var raytracerFunction: InferenceFunction?
     
     internal var cameraMatrixBuffer: MTLBuffer?
-    internal var sdfDataBuffer: MTLBuffer? // voxelDataBuffer からリネーム
+    internal var sdfDataBuffer: MTLBuffer?
     
     // Double Buffering
     private(set) var displayBuffers: [MTLBuffer] = []
@@ -22,7 +22,7 @@ class ANERenderer {
     private let metalDevice: MTLDevice
     
     private let matrixByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes
-    private let sdfParamByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes (8図形 × 8パラメータ)
+    private let sdfParamByteCount = 64 * MemoryLayout<Float16>.stride // 128 Bytes (8Shape × 8Param)
     private let outputImageByteCount = 3 * 256 * 256 * MemoryLayout<Float16>.stride // 393,216 Bytes
     
     let sharedComputeStream: ComputeStream!
@@ -52,7 +52,7 @@ class ANERenderer {
             }
         }
         
-        // 初期化 (ゼロ埋め)
+        // Zero Pad
         if let ptr = sdfDataBuffer?.contents().assumingMemoryBound(to: Float16.self) {
             for i in 0..<64 {
                 ptr[i] = 0.0
@@ -80,7 +80,7 @@ class ANERenderer {
             
             guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-            // 【修正】Pythonの flatten() と同じ並び（Row-Major）になるように転置して書き込む
+            // Row Major
             pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
             pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
             
@@ -110,7 +110,7 @@ class ANERenderer {
         
         let canvasBuf = displayBuffers[currentBufferIndex]
 
-        // ANEに渡す入力データの設定 (Shapeを [1, 64, 1, 1] に統一)
+
         let asyncSDF = InferenceFunction.AsyncValue(unsafeBuffer: sdfBuf, scalarType: .float16, shape:[1, 64, 1, 1])
         let asyncMat = InferenceFunction.AsyncValue(unsafeBuffer: matrixBuf, scalarType: .float16, shape:[1, 64, 1, 1])
         
@@ -125,7 +125,7 @@ class ANERenderer {
             unsafeBuffer: canvasBuf, byteOffset: 0, scalarType: .float16, shape: shape, strides: [], interleaveLayout: nil
         )
         
-        // 出力ポート名（モデルの出力名に合わせてください）
+
         outputViews.insert(&asyncOutputValue, for: "expand_3")
         
         let _ = try raytracer.encode(inputs: inputs, outputViews: outputViews, to: stream)

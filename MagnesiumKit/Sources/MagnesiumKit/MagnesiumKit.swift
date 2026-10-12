@@ -12,7 +12,7 @@ public protocol MGDevice: AnyObject {
     
     func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>)
     
-    // 【修正】SDFデータ操作用にリネーム
+
     func withSDFDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
 }
 
@@ -51,7 +51,7 @@ internal final class MagnesiumDevice: MGDevice {
         renderer?.updateCamera(eye: eye, target: target, up: up)
     }
 
-    // 【修正】SDFデータ操作用にリネームし、sdfDataBufferを参照
+
     public func withSDFDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer,
               let sdfBuf = renderer.sdfDataBuffer else { return }

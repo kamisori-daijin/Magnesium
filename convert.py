@@ -5,18 +5,16 @@ from RayTracingCore import ANEDynamicSDFCore
 from pathlib import Path
 
 # 1. Instance
-# 【修正】新しいSDFモデルを使用
-model = ANEDynamicSDFCore(max_steps=16).to(dtype=torch.float16)
+model = ANEDynamicSDFCore(max_steps=32).to(dtype=torch.float16)
 model.eval()
 
 # 2. Inputs
-# Camera Matrix (64チャンネル)
+# Camera Matrix (64Channel)
 matrix_input_shape = torch.randn(1, 64, 1, 1, dtype=torch.float16)
 
-# 【修正】SDFパラメータ (8図形 × 8パラメータ = 64チャンネル)
+# 【修正】SDFパラメータ (8Shape × 8 Param= 64Channel)
 sdf_input_shape = torch.randn(1, 64, 1, 1, dtype=torch.float16)
 
-# 【注意】モデルの forward の引数の順番に合わせる
 args = (matrix_input_shape, sdf_input_shape)
 
 # 3. Convert

@@ -43,7 +43,7 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint pixelOffset = coord.y * width + coord.x;
     uint planeSize = width * height;
     
-    // CHW (Channel, Height, Width) 形式での読み込み
+    // CHW (Channel, Height, Width) load
     half r = currentBuffer[pixelOffset + 0 * planeSize];
     half g = currentBuffer[pixelOffset + 1 * planeSize];
     half b = currentBuffer[pixelOffset + 2 * planeSize];

@@ -60,14 +60,14 @@ async def main():
             cam_y = 1.0
             cam_z = 2.5 * np.cos(angle)
             
-            # 転置せずにそのまま flatten
+            # Flatten
             inv_view_16 = create_inverse_view_matrix(
                 eye=[cam_x, cam_y, cam_z],
                 target=[0.0, 0.0, 0.0],
                 up=[0.0, 1.0, 0.0]
             ).flatten()
             
-            # 64要素の配列に、4要素ずつ適切にパッキング
+            # Packing
             inv_view_64 = np.zeros(64, dtype=np.float16)
             inv_view_64[0:4]   = inv_view_16[0:4]
             inv_view_64[4:8]   = inv_view_16[4:8]
@@ -76,30 +76,30 @@ async def main():
             
             inv_view_4d_np = inv_view_64.reshape(1, 64, 1, 1)
             
-            # --- 動的SDFパラメータの構築 (PyTorch版と完全一致) ---
+            # 
             sdf_params_np = np.zeros((1, 64, 1, 1), dtype=np.float16)
             
-            # 図形1: 中央の大きな球体
+            # Big Sphere
             sdf_params_np[0, 0] = 0.0; sdf_params_np[0, 1] = 0.0; sdf_params_np[0, 5] = 0.4
-            # 図形2: くり抜く用の動く直方体
+            # Box
             sdf_params_np[0, 8] = 1.0; sdf_params_np[0, 9] = 1.0
             sdf_params_np[0, 10] = 0.5 * np.sin(angle); sdf_params_np[0, 13] = 0.25
-            # 図形3: 周回するカプセル
+            # Capsule
             sdf_params_np[0, 16] = 2.0; sdf_params_np[0, 17] = 0.0
             sdf_params_np[0, 18] = 0.7 * np.cos(angle); sdf_params_np[0, 20] = 0.7 * np.sin(angle); sdf_params_np[0, 21] = 0.15
-            # 図形4: 上下するトーラス
+            # Torus
             sdf_params_np[0, 24] = 3.0; sdf_params_np[0, 25] = 0.0
             sdf_params_np[0, 27] = 0.5 * np.sin(angle * 3); sdf_params_np[0, 29] = 0.2
-            # 図形5: 小さな球（合体）
+            # Small Sphere
             sdf_params_np[0, 32] = 0.0; sdf_params_np[0, 33] = 0.0
             sdf_params_np[0, 34] = -0.4; sdf_params_np[0, 35] = 0.4 * np.cos(angle); sdf_params_np[0, 37] = 0.15
-            # 図形6: 小さな直方体（くり抜き）
+            # Small Box
             sdf_params_np[0, 40] = 1.0; sdf_params_np[0, 41] = 1.0
             sdf_params_np[0, 42] = 0.4; sdf_params_np[0, 43] = -0.4; sdf_params_np[0, 45] = 0.15
-            # 図形7: 斜めに動くカプセル
+            # Capsule
             sdf_params_np[0, 48] = 2.0; sdf_params_np[0, 49] = 0.0
             sdf_params_np[0, 50] = 0.3 * np.sin(angle); sdf_params_np[0, 51] = 0.3 * np.sin(angle); sdf_params_np[0, 53] = 0.1
-            # 図形8: 中心をくり抜く小さなトーラス
+            # Torus
             sdf_params_np[0, 56] = 3.0; sdf_params_np[0, 57] = 1.0
             sdf_params_np[0, 61] = 0.3
             # --------------------------------------------------
@@ -112,11 +112,11 @@ async def main():
             outputs = await raytracer_function(inputs)
             rendered_output_np = outputs[output_port_name].numpy()
             
-            # testmodel.py (PyTorch) の [C, H, W] 形式に合わせる
+            #[C, H, W] 
             img_data = rendered_output_np[0]
             final_img_data = (np.clip(img_data, 0.0, 1.0) * 255).astype(np.uint8)
             
-            # PILで保存するために [C, H, W] から [H, W, C] に変換
+            # Save [C, H, W] to [H, W, C] 
             final_img_data = np.transpose(final_img_data, (1, 2, 0))
             
             output_filename = f"ane_anim_frames/frame_{frame:03d}.png"
@@ -132,7 +132,7 @@ async def main():
         avg_fps = num_frames / total_time
         print(f"\nAverage FPS: {avg_fps:.2f}")
         
-        # GIFの保存
+        # Save GIF
         gif_path = "ane_anim_frames/output.gif"
         frames_for_gif[0].save(
             gif_path,

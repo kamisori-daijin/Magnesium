@@ -32,7 +32,7 @@ def main():
 
     os.makedirs("anim_frames", exist_ok=True)
 
-    model = ANEDynamicSDFCore(max_steps=16).to(device).half()
+    model = ANEDynamicSDFCore(max_steps=32).to(device).half()
     model.eval()
 
     num_frames = 60
@@ -58,49 +58,48 @@ def main():
             inv_view_64[:16] = inv_view_2d
             inv_view_4d = inv_view_64.view(1, 64, 1, 1).to(device).half()
 
-            # --- 動的SDFパラメータの構築 (8つすべて使用) ---
             sdf_params = torch.zeros(1, 64, 1, 1, dtype=torch.float16, device=device)
             
-            # 図形1: 中央の大きな球体 (ベース)
+            # Sphere
             sdf_params[0, 0] = 0.0; sdf_params[0, 1] = 0.0; sdf_params[0, 5] = 0.4
             
-            # 図形2: くり抜く用の動く直方体 (インデックス 8〜)
+            # Shape2
             sdf_params[0, 8] = 1.0; sdf_params[0, 9] = 1.0
             sdf_params[0, 8+2] = 0.5 * np.sin(angle); sdf_params[0, 8+5] = 0.25
             
-            # 図形3: 周回するカプセル (インデックス 16〜)
+            # Capsule
             sdf_params[0, 16] = 2.0; sdf_params[0, 17] = 0.0
             sdf_params[0, 16+2] = 0.7 * np.cos(angle); sdf_params[0, 16+4] = 0.7 * np.sin(angle)
             sdf_params[0, 16+5] = 0.15
             
-            # 図形4: 上下するトーラス (インデックス 24〜)
+            # Torus
             sdf_params[0, 24] = 3.0; sdf_params[0, 25] = 0.0
             sdf_params[0, 24+3] = 0.5 * np.sin(angle * 3); sdf_params[0, 24+5] = 0.2
             
-            # 図形5: 小さな球（合体） (インデックス 32〜)
+            # Small Sphere
             sdf_params[0, 32] = 0.0; sdf_params[0, 33] = 0.0
             sdf_params[0, 32+2] = -0.4; sdf_params[0, 32+3] = 0.4 * np.cos(angle); sdf_params[0, 32+5] = 0.15
             
-            # 図形6: 小さな直方体（くり抜き） (インデックス 40〜)
+            # Small Box
             sdf_params[0, 40] = 1.0; sdf_params[0, 41] = 1.0
             sdf_params[0, 40+2] = 0.4; sdf_params[0, 40+3] = -0.4; sdf_params[0, 40+5] = 0.15
             
-            # 図形7: 斜めに動くカプセル (インデックス 48〜)
+            # Capsule
             sdf_params[0, 48] = 2.0; sdf_params[0, 49] = 0.0
             sdf_params[0, 48+2] = 0.3 * np.sin(angle); sdf_params[0, 48+3] = 0.3 * np.sin(angle); sdf_params[0, 48+5] = 0.1
             
-            # 図形8: 中心をくり抜く小さなトーラス (インデックス 56〜)
+            # Torus
             sdf_params[0, 56] = 3.0; sdf_params[0, 57] = 1.0
             sdf_params[0, 56+5] = 0.3
             # -----------------------------
 
-            # 推論の実行
+            # Run
             output_mask = model(inv_view_4d, sdf_params)
 
             if device.type == "mps":
                 torch.mps.synchronize()
 
-            # プロセス全体のメモリ使用量(MB)を取得
+            # MB
             usage = resource.getrusage(resource.RUSAGE_SELF)
             mem_used_mb = usage.ru_maxrss / (1024 * 1024)
 

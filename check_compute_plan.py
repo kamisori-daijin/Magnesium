@@ -15,7 +15,6 @@ async def analyze_compute_plan():
     # Load the AIModel with ANE as preferred compute unit
     model_path = Path("ane_raytracer.aimodel")
     
-    # ANE を優先的に使うように設定
     specialization_options = SpecializationOptions.from_preferred_compute_unit_kind(
         ComputeUnitKind.neural_engine()
     )
@@ -35,8 +34,8 @@ async def analyze_compute_plan():
     print(f"Total entries: {data['entry_count']}")
     print(f"Device histogram: {data['device_histogram']}")
     
-    # 各エントリの詳細を見る
-    for entry in data['entries'][:10]:  # 最初の10個
+  
+    for entry in data['entries'][:10]:  #
         print(f"Operation {entry['operation_id']}: {entry['devices']} ({entry['residency']})")
 
 
