@@ -38,7 +38,6 @@ converter = TorchConverter().add_pytorch_module(
 )
 
 coreai_program = converter.to_coreai()
-coreai_program.optimize()
 
 # save
 output_path = Path("ane_monolithic_pipeline.aimodel")
