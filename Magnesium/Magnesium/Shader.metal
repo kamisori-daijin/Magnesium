@@ -39,15 +39,14 @@ fragment float4 textureFragment(VertexOut in [[stage_in]],
     uint width = 256;
     uint height = 256;
     
-    // UV座標からピクセル位置を計算
     uint2 coord = uint2(in.uv.x * (width - 1), (1.0 - in.uv.y) * (height - 1));
+    uint pixelOffset = coord.y * width + coord.x;
+    uint planeSize = width * height;
     
-    // HWC (Height, Width, Channel) 形式でのインデックス計算
-    uint pixelIndex = (coord.y * width + coord.x) * 3;
-    
-    half r = currentBuffer[pixelIndex + 0];
-    half g = currentBuffer[pixelIndex + 1];
-    half b = currentBuffer[pixelIndex + 2];
+    // CHW (Channel, Height, Width) 形式での読み込み
+    half r = currentBuffer[pixelOffset + 0 * planeSize];
+    half g = currentBuffer[pixelOffset + 1 * planeSize];
+    half b = currentBuffer[pixelOffset + 2 * planeSize];
     
     half3 rgbColor = clamp(half3(r, g, b), 0.0h, 1.0h);
     

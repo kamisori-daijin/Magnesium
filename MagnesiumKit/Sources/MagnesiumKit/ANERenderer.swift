@@ -61,15 +61,11 @@ class ANERenderer {
     }
 
     func updateCamera(eye: simd_float3, target: simd_float3, up: simd_float3) {
-            // Python: z_axis = (eye - target) / norm(eye - target)
             let zAxis = normalize(eye - target)
-            // Python: x_axis = cross(up, z_axis) / norm(...)
             let xAxis = normalize(cross(up, zAxis))
-            // Python: y_axis = cross(z_axis, x_axis)
             let yAxis = cross(zAxis, xAxis)
             
             var R = matrix_identity_float4x4
-            // Pythonの R[0, :3] = x_axis に対応
             R.columns.0.x = xAxis.x; R.columns.1.x = xAxis.y; R.columns.2.x = xAxis.z
             R.columns.0.y = yAxis.x; R.columns.1.y = yAxis.y; R.columns.2.y = yAxis.z
             R.columns.0.z = zAxis.x; R.columns.1.z = zAxis.y; R.columns.2.z = zAxis.z
@@ -84,16 +80,18 @@ class ANERenderer {
             
             guard let pointer = cameraMatrixBuffer?.contents().assumingMemoryBound(to: Float16.self) else { return }
 
-            // 行優先（Row-Major）で書き込み
-        // 行優先（Row-Major）で正しく書き込むために、columns のインデックスを入れ替えます
-        pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.0.y)
-        pointer[2]  = Float16(invView.columns.0.z); pointer[3]  = Float16(invView.columns.0.w)
-        pointer[4]  = Float16(invView.columns.1.x); pointer[5]  = Float16(invView.columns.1.y)
-        pointer[6]  = Float16(invView.columns.1.z); pointer[7]  = Float16(invView.columns.1.w)
-        pointer[8]  = Float16(invView.columns.2.x); pointer[9]  = Float16(invView.columns.2.y)
-        pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.2.w)
-        pointer[12] = Float16(invView.columns.3.x); pointer[13] = Float16(invView.columns.3.y)
-        pointer[14] = Float16(invView.columns.3.z); pointer[15] = Float16(invView.columns.3.w)
+            // 【修正】Pythonの flatten() と同じ並び（Row-Major）になるように転置して書き込む
+            pointer[0]  = Float16(invView.columns.0.x); pointer[1]  = Float16(invView.columns.1.x)
+            pointer[2]  = Float16(invView.columns.2.x); pointer[3]  = Float16(invView.columns.3.x)
+            
+            pointer[4]  = Float16(invView.columns.0.y); pointer[5]  = Float16(invView.columns.1.y)
+            pointer[6]  = Float16(invView.columns.2.y); pointer[7]  = Float16(invView.columns.3.y)
+            
+            pointer[8]  = Float16(invView.columns.0.z); pointer[9]  = Float16(invView.columns.1.z)
+            pointer[10] = Float16(invView.columns.2.z); pointer[11] = Float16(invView.columns.3.z)
+            
+            pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
+            pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
             
             let zeroPointer = pointer.advanced(by: 16)
             zeroPointer.initialize(repeating: 0, count: 48)

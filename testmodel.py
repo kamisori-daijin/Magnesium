@@ -64,34 +64,34 @@ def main():
             # 図形1: 中央の大きな球体 (ベース)
             sdf_params[0, 0] = 0.0; sdf_params[0, 1] = 0.0; sdf_params[0, 5] = 0.4
             
-            # 図形2: くり抜く用の動く直方体
+            # 図形2: くり抜く用の動く直方体 (インデックス 8〜)
             sdf_params[0, 8] = 1.0; sdf_params[0, 9] = 1.0
-            sdf_params[0, 10] = 0.5 * np.sin(angle); sdf_params[0, 13] = 0.25
+            sdf_params[0, 8+2] = 0.5 * np.sin(angle); sdf_params[0, 8+5] = 0.25
             
-            # 図形3: 周回するカプセル
+            # 図形3: 周回するカプセル (インデックス 16〜)
             sdf_params[0, 16] = 2.0; sdf_params[0, 17] = 0.0
-            sdf_params[0, 18] = 0.7 * np.cos(angle); sdf_params[0, 20] = 0.7 * np.sin(angle)
-            sdf_params[0, 21] = 0.15
+            sdf_params[0, 16+2] = 0.7 * np.cos(angle); sdf_params[0, 16+4] = 0.7 * np.sin(angle)
+            sdf_params[0, 16+5] = 0.15
             
-            # 図形4: 上下するトーラス
+            # 図形4: 上下するトーラス (インデックス 24〜)
             sdf_params[0, 24] = 3.0; sdf_params[0, 25] = 0.0
-            sdf_params[0, 27] = 0.5 * np.sin(angle * 3); sdf_params[0, 29] = 0.2
+            sdf_params[0, 24+3] = 0.5 * np.sin(angle * 3); sdf_params[0, 24+5] = 0.2
             
-            # 図形5: 小さな球（合体）
+            # 図形5: 小さな球（合体） (インデックス 32〜)
             sdf_params[0, 32] = 0.0; sdf_params[0, 33] = 0.0
-            sdf_params[0, 34] = -0.4; sdf_params[0, 35] = 0.4 * np.cos(angle); sdf_params[0, 37] = 0.15
+            sdf_params[0, 32+2] = -0.4; sdf_params[0, 32+3] = 0.4 * np.cos(angle); sdf_params[0, 32+5] = 0.15
             
-            # 図形6: 小さな直方体（くり抜き）
+            # 図形6: 小さな直方体（くり抜き） (インデックス 40〜)
             sdf_params[0, 40] = 1.0; sdf_params[0, 41] = 1.0
-            sdf_params[0, 42] = 0.4; sdf_params[0, 43] = -0.4; sdf_params[0, 45] = 0.15
+            sdf_params[0, 40+2] = 0.4; sdf_params[0, 40+3] = -0.4; sdf_params[0, 40+5] = 0.15
             
-            # 図形7: 斜めに動くカプセル
+            # 図形7: 斜めに動くカプセル (インデックス 48〜)
             sdf_params[0, 48] = 2.0; sdf_params[0, 49] = 0.0
-            sdf_params[0, 50] = 0.3 * np.sin(angle); sdf_params[0, 51] = 0.3 * np.sin(angle); sdf_params[0, 53] = 0.1
+            sdf_params[0, 48+2] = 0.3 * np.sin(angle); sdf_params[0, 48+3] = 0.3 * np.sin(angle); sdf_params[0, 48+5] = 0.1
             
-            # 図形8: 中心をくり抜く小さなトーラス
+            # 図形8: 中心をくり抜く小さなトーラス (インデックス 56〜)
             sdf_params[0, 56] = 3.0; sdf_params[0, 57] = 1.0
-            sdf_params[0, 61] = 0.3
+            sdf_params[0, 56+5] = 0.3
             # -----------------------------
 
             # 推論の実行
