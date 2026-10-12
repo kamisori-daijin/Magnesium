@@ -32,7 +32,7 @@ class ANEDynamicSDFCore(nn.Module):
         outside = torch.sqrt(torch.relu(dx)**2 + torch.relu(dy)**2 + torch.relu(dz)**2)
         d_box = inside + outside
         
-        # Capsule (ANEに優しい clamp 処理)
+        # Capsule
         py_clamped = torch.maximum(torch.minimum(py, size), -size)
         d_capsule = torch.sqrt(px*px + (py - py_clamped)**2 + pz*pz + 1e-5) - (size * 0.5)
         
@@ -98,11 +98,13 @@ class ANEDynamicSDFCore(nn.Module):
         
         px, py, pz = get_mat_val(inv_view_matrix_64d, 3), get_mat_val(inv_view_matrix_64d, 7), get_mat_val(inv_view_matrix_64d, 11)
 
-        px_c = px.expand(1, self.max_steps, self.h, self.w)
-        py_c = py.expand(1, self.max_steps, self.h, self.w)
-        pz_c = pz.expand(1, self.max_steps, self.h, self.w)
+        # あらかじめステップごとの初期位置を少しずつズラして配置
+        step_offsets = torch.linspace(0.0, 2.0, self.max_steps, device=px.device).view(1, self.max_steps, 1, 1).half()
+        
+        px_c = px.expand(1, self.max_steps, self.h, self.w) + init_dx * step_offsets
+        py_c = py.expand(1, self.max_steps, self.h, self.w) + init_dy * step_offsets
+        pz_c = pz.expand(1, self.max_steps, self.h, self.w) + init_dz * step_offsets
 
-        # ステップごとの距離を計算し、0.5を掛けて突き抜けを防止
         dists = self.scene_sdf(px_c, py_c, pz_c, sdf_params) * 0.5
         accumulated_dists = self.cumsum_conv(dists)
 

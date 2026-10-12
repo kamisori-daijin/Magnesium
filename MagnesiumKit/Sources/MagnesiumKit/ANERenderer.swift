@@ -93,8 +93,8 @@ class ANERenderer {
             pointer[12] = Float16(invView.columns.0.w); pointer[13] = Float16(invView.columns.1.w)
             pointer[14] = Float16(invView.columns.2.w); pointer[15] = Float16(invView.columns.3.w)
             
-            let zeroPointer = pointer.advanced(by: 16)
-            zeroPointer.initialize(repeating: 0, count: 48)
+            //let zeroPointer = pointer.advanced(by: 16)
+            //zeroPointer.initialize(repeating: 0, count: 48)
         }
 
     func getCurrentDisplayBuffer() -> MTLBuffer? {
