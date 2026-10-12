@@ -11,10 +11,10 @@ model.eval()
 
 # 2. Inputs
 # Camera Matrix (64チャンネル)
-matrix_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
+matrix_input_shape = torch.randn(1, 64, 1, 1, dtype=torch.float16)
 
 # 【修正】SDFパラメータ (8図形 × 8パラメータ = 64チャンネル)
-sdf_input_shape = torch.zeros(1, 64, 1, 1, dtype=torch.float16)
+sdf_input_shape = torch.randn(1, 128, 1, 1, dtype=torch.float16)
 
 # 【注意】モデルの forward の引数の順番に合わせる
 args = (matrix_input_shape, sdf_input_shape)

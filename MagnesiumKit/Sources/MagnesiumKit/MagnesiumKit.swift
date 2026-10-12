@@ -10,11 +10,10 @@ public protocol MGDevice: AnyObject {
     // Double Buffering
     func getCurrentDisplayBuffer() -> MTLBuffer?
     
-    // 【修正】time 引数を削除
     func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>)
     
-    // 【修正】ボクセルデータ操作用にリネーム
-    func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
+    // 【修正】SDFデータ操作用にリネーム
+    func withSDFDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void)
 }
 
 @MainActor public protocol MGCommandQueue: AnyObject { func makeCommandBuffer() -> MGCommandBuffer? }
@@ -48,17 +47,16 @@ internal final class MagnesiumDevice: MGDevice {
         renderer?.getCurrentDisplayBuffer()
     }
     
-    // 【修正】time 引数を削除
     public func updateCamera(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) {
         renderer?.updateCamera(eye: eye, target: target, up: up)
     }
 
-    // 【修正】ボクセルデータ操作用にリネーム
-    public func withVoxelDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
+    // 【修正】SDFデータ操作用にリネームし、sdfDataBufferを参照
+    public func withSDFDataPointer(_ body: (UnsafeMutablePointer<Float16>) -> Void) {
         guard let renderer = renderer,
-              let voxelBuf = renderer.voxelDataBuffer else { return }
+              let sdfBuf = renderer.sdfDataBuffer else { return }
         
-        let rawPointer = voxelBuf.contents().assumingMemoryBound(to: Float16.self)
+        let rawPointer = sdfBuf.contents().assumingMemoryBound(to: Float16.self)
         body(rawPointer)
     }
 }

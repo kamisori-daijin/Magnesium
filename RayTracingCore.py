@@ -44,7 +44,7 @@ class ANEDynamicSDFCore(nn.Module):
 
     def scene_sdf(self, px, py, pz, sdf_params):
         B, _, H, W = sdf_params.shape
-        params = sdf_params.view(B, 8, 8, H, W)
+        params = sdf_params.view(B, 8, 16, H, W)
         
         type_val = params[:, :, 0:1, :, :]
         op_val   = params[:, :, 1:2, :, :]
