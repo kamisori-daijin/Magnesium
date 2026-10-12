@@ -77,7 +77,7 @@ async def main():
             inv_view_4d_np = inv_view_64.reshape(1, 64, 1, 1)
             
             # --- 動的SDFパラメータの構築 (PyTorch版と完全一致) ---
-            sdf_params_np = np.zeros((1, 128, 1, 1), dtype=np.float16)
+            sdf_params_np = np.zeros((1, 64, 1, 1), dtype=np.float16)
             
             # 図形1: 中央の大きな球体
             sdf_params_np[0, 0] = 0.0; sdf_params_np[0, 1] = 0.0; sdf_params_np[0, 5] = 0.4
